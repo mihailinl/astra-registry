@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "e8pNQf16CtmdVjkDdontwnCbDG+LwPhJYWCwlwtzjEQ8qUUqiaUadS8u9NG4M9RXsvKJMtsUp32WpWemnUqxAA=="
+      "sig": "pZFyJe2ChFVN3i+qeF8vnU4IP/OMNelkYTQ7pCBZYc3o1z7PPXHVzMAhcmXmPmUIj9P3TZN5KVxG3nJaquqcBQ=="
     }
   ],
   "signed": {
-    "expires_at": "2026-11-24T10:00:55Z",
-    "issued_at": "2026-10-25T10:00:55Z",
+    "expires_at": "2026-11-24T10:29:05Z",
+    "issued_at": "2026-10-25T10:29:05Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
@@ -598,6 +598,60 @@
         "stars": 0,
         "updated_at": "2026-09-07T16:01:40Z",
         "version": "1.1.7"
+      },
+      {
+        "added_at": "2026-10-25",
+        "author": "Voltur",
+        "capabilities": [
+          "tools"
+        ],
+        "description": "Solve procedurally generated crimes with many suspects and evidence-based probabilities, in Astra or Telegram chat.",
+        "download_url": "https://github.com/Voltur792/detective-game/releases/download/v0.4.2/detective-game-0.4.2-noarch.astraplugin",
+        "downloads": 0,
+        "icon_url": "data:image/png;base64,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",
+        "id": "detective-game",
+        "license": "MIT",
+        "name": "Detective Case",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/Voltur792/detective-game/releases/download/v0.4.2/detective-game-0.4.2-noarch.astraplugin",
+          "noarch": "https://github.com/Voltur792/detective-game/releases/download/v0.4.2/detective-game-0.4.2-noarch.astraplugin",
+          "windows-x64": "https://github.com/Voltur792/detective-game/releases/download/v0.4.2/detective-game-0.4.2-noarch.astraplugin"
+        },
+        "readme": "# Детектив для Astra\n\n## Совместимость\n\nLinux и macOS — **экспериментальные**. Проверки Python и автоматические тесты не заменяют проверку графики, звука и работы внутри Astra на реальной ОС. Windows сохраняет прежние возможности.\n\nОфициальные хосты Astra сейчас доступны для Windows x64 и Linux x64. Код подготовлен также под macOS, но официального хоста Astra для Mac и ARM пока нет: установить и полноценно проверить плагин там внутри Astra нельзя. См. [платформы Astra](https://github.com/mihailinl/AstraPlugins/blob/master/docs/en/1-orientation/platforms.md).\n\nИгровые правила и сохранения не требуют Windows API. На Linux используется `$XDG_DATA_HOME/detective-game` (по умолчанию `~/.local/share/detective-game`), на macOS — `~/Library/Application Support/detective-game`. Существующие сохранения в прежней папке продолжают использоваться. `ASTRA_DETECTIVE_DATA_DIR` имеет приоритет. На Windows путь `%APPDATA%/detective-game` сохранён.\n\nИгра-расследование в чате с Астрой. Попросите начать дело, осматривайте места, допрашивайте подозреваемых, оценивайте версии по найденным уликам и предъявляйте обвинение. Можно играть в окне Astra или через [официальный Telegram Bot](https://github.com/mihailinl/AstraPlugins/tree/master/examples/telegram-client), который пересылает сообщения в беседу Astra.\n\n❗❗❗ Важно: Для использования всех функций загрузите Source code (zip) через режим разработки Astra. Подробные шаги — в разделе [«Установка из исходников»](#установка-из-исходников).\n\n## Как играть\n\nНапишите Астре, например:\n\n1. «Начни новое детективное дело с 10 подозреваемыми» или «Хочу расследовать саботаж».\n2. «Покажи дело» — Астра назовёт места, подозреваемых и собранные улики.\n3. «Осмотри пультовую», «Допроси Сергея об алиби» или «Спроси Марину про мотив».\n4. «Оцени версии» или «Дай подсказку».\n5. «Обвиняю Сергея», когда соберёте доказательства.\n\nКаждое дело получает код. Сохраняйте его: если одновременно открыто несколько дел, он помогает Астре выбрать нужное. Когда тема допроса не указана, вопрос будет об алиби. Если код опущен и подозреваемый встречается только в одном сохранённом деле, плагин найдёт его сам; при нескольких совпадениях попросит код. Неверное обвинение не заканчивает расследование.\n\n## Какие бывают дела\n\nПо умолчанию создаётся новое процедурное дело: кража, убийство, саботаж, вымогательство или подлог. Генератор выбирает от 10 до 18 подозреваемых; по запросу можно задать от 8 до 24. Для каждой партии отдельно выбираются виновный, ложный след, свидетель, мотив, предмет, физический след, пропуск и улики. Комбинаций очень много, хотя буквальная математическая бесконечность невозможна.\n\nВ процедурном деле нужна цепочка из следа на месте, записи доступа и предмета со совпадающим следом. Версии рассчитываются из равных начальных шансов: каждая открытая улика умножает правдоподобие соответствующих подозреваемых, затем значения нормируются до 100%. Это игровая оценка, а не криминалистическая статистика; зависимые улики могут завышать уверенность.\n\nКаждое дело получает случайный код и сохраняется в `%APPDATA%\\detective-game\\games.json` (на Linux — в `~/.local/share/detective-game/`). \n\n## Установка\n\nСкачайте файл `detective-game-<версия>-noarch.astraplugin` из [Releases](https://github.com/Voltur792/detective-game/releases) и импортируйте его в Astra через интерфейс плагинов. Для игры в Telegram отдельно установите и настройте официальный Telegram Bot для Astra: ему нужны бот, группа с темами и доступ к Telegram API. Сам «Детектив» токен Telegram не запрашивает.\n\n### Установка из исходников\n\nИнструкция для Windows.\n\n1. Откройте [последний релиз](https://github.com/Voltur792/detective-game/releases/latest), раскройте **Assets** и скачайте **Source code (zip)**. Архив исходников загружается как папка через Dev; выбирать его в окне импорта `.astraplugin` не нужно.\n2. Распакуйте ZIP полностью в постоянную папку, например `C:\\AstraPlugins\\detective-game`. Откройте распакованную папку и найдите **`plugin.toml`** рядом с **`src`** и **`requirements.txt`**. Если архив создал ещё одну вложенную папку, выбирайте именно её.\n3. В Astra откройте **Настройки → Приватность** и включите **«Разрешить неподписанные плагины»** для загрузки исходников.\n4. Перейдите в **Плагины → Разработка (Plugins → Dev) → Загрузить плагин → Обзор**. Выберите папку с `plugin.toml` либо вставьте её полный путь в поле **Load a plugin** и нажмите загрузку.\n5. Подтвердите запрашиваемые разрешения и дождитесь подготовки Python и зависимостей. Для первой установки нужен интернет; не закрывайте Astra до завершения.\n6. Найдите плагин в **Установленных (Installed)** и включите его, если он выключен. После перезапуска Astra плагин из папки нужно включать снова.\n\nПлагин запускается прямо из исходников Python; отдельная сборка не требуется. Если Astra сообщает, что Python не найден, установите 64-разрядный Python **3.10 или новее** и полностью перезапустите Astra.\n\n**Если загрузка не удалась:** проверьте, что ZIP распакован целиком и выбрана папка с `plugin.toml`. При ошибке установки зависимостей проверьте интернет и откройте журнал в карточке плагина; ошибка `No module named ...` означает, что зависимости не подготовились. Установка пакетов в другой Python на компьютере не исправит окружение, которым Astra запускает плагин.\n\nПосле загрузки напишите в чате Astra: **«Начни новое детективное дело»**. Для игры через Telegram отдельно настройте официальный Telegram Bot; у самого «Детектива» нет поля для Telegram-токена.\n\n**Обновление из исходников:** распакуйте новый архив в отдельную постоянную папку, выключите старую копию, загрузите новую через Dev и включите плагин. Если настройки хранились в папке старой копии, сохраните её до переноса настроек. Не перемещайте и не удаляйте активную папку: Astra продолжает запускать код из неё.\n\n## Лицензия\n\n[MIT](LICENSE)\n\n## Поддержать автора\n\nЕсли плагин оказался полезным, можно поддержать разработку:\n\n**[boosty.to/voltur/donate](https://boosty.to/voltur/donate)**\n",
+        "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "detective-game-0.4.2-noarch.astraplugin",
+                "sha256": "3689dc9116bb8f7478f33f9b2ff09deb19e09e1af155e5d37c30ad7bcddf67b9",
+                "size": 33164,
+                "url": "https://github.com/Voltur792/detective-game/releases/download/v0.4.2/detective-game-0.4.2-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools"
+            ],
+            "permissions": {},
+            "protocol": 1,
+            "published_at": "2026-10-25T10:22:19Z",
+            "release": {
+              "commit": "04912a85f1b2a7d1be4ba5b502a67341bc83a281",
+              "kind": "github_release",
+              "repo": "Voltur792/detective-game",
+              "tag": "v0.4.2"
+            },
+            "review": "unreviewed",
+            "version": "0.4.2"
+          }
+        ],
+        "repository_url": "https://github.com/Voltur792/detective-game",
+        "source": {
+          "kind": "github",
+          "repo": "Voltur792/detective-game"
+        },
+        "stars": 0,
+        "updated_at": "2026-10-25T10:22:19Z",
+        "version": "0.4.2"
       },
       {
         "added_at": "2026-08-10",
@@ -1897,6 +1951,143 @@
         "version": "1.4.1"
       },
       {
+        "added_at": "2026-10-25",
+        "author": "Voltur",
+        "capabilities": [
+          "actions",
+          "dom_access",
+          "tools",
+          "ui_contributions"
+        ],
+        "description": "Original pixel Nayu follows local music with four instruments, vocal detection, a concert stage and desktop adventures.",
+        "download_url": "https://github.com/Voltur792/pixel-drummer/releases/download/v0.5.2/pixel-drummer-0.5.2-noarch.astraplugin",
+        "downloads": 0,
+        "i18n": {
+          "ru": {
+            "description": "Nayu играет на барабанах, гитаре, микрофоне и синтезаторе под вашу музыку, выступает на сцене и гуляет по рабочему столу.",
+            "name": "Pixel Drummer"
+          }
+        },
+        "icon_url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgc2hhcGUtcmVuZGVyaW5nPSJjcmlzcEVkZ2VzIj4KPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTIiIGZpbGw9IiMyOTIzM2UiLz4KPHBhdGggZmlsbD0iIzQwMzU1MiIgZD0iTTggOGg0OHYySDh6TTYgMTBoMnY0NEg2ek04IDU0aDQ4djJIOHpNNTYgMTBoMnY0NGgtMnoiLz4KPHBhdGggZmlsbD0iIzhjYjljNyIgZD0iTTQ3IDloM3YxMWgtM3pNNTAgOWg3djNoLTd6TTQzIDE5aDd2NGgtN3pNNTQgMTJoM3Y3aC0zek01MCAxOGg3djRoLTd6Ii8+CjxwYXRoIGZpbGw9IiM1MTQ2NWQiIGQ9Ik04IDI5aDIwdjVIOHpNMTYgMzRoM3YxNmgtM3pNOSA1MGgxN3YzSDl6TTI4IDI0aDI4djRIMjh6TTM5IDI4aDN2MjRoLTN6Ii8+CjxwYXRoIGZpbGw9IiNkYWM2OGUiIGQ9Ik0xMSAyNmgxM3YySDExek04IDI4aDIwdjNIOHpNMzAgMjFoMjN2MkgzMHpNMjggMjNoMjh2M0gyOHoiLz4KPHBhdGggZmlsbD0iI2Y1ZGY5YiIgZD0iTTEyIDI2aDl2MmgtOXpNMzEgMjFoMTZ2MkgzMXoiLz4KPHBhdGggZmlsbD0iIzE2MTUyMiIgZD0iTTE5IDM2aDR2LTRoMjF2NGg0djE1aC00djRIMjN2LTRoLTR6Ii8+CjxwYXRoIGZpbGw9IiNiOWE4YzciIGQ9Ik0yMyAzNWgyMXYzaDN2MTJoLTN2M0gyM3YtM2gtM1YzOGgzeiIvPgo8cGF0aCBmaWxsPSIjZWVlOGYyIiBkPSJNMjYgMzdoMTV2M2gzdjhoLTN2M0gyNnYtM2gtM3YtOGgzeiIvPgo8cGF0aCBmaWxsPSIjZDhjYmRjIiBkPSJNMjYgNDhoMTV2M0gyNnpNNDEgNDBoM3Y4aC0zeiIvPgo8cGF0aCBmaWxsPSIjZWRiMzdhIiBkPSJtMTQgMTIgMy0yIDE1IDE3LTMgMnpNMzcgMTBsMyAyLTE3IDE4LTMtMnoiLz4KPHBhdGggZmlsbD0iIzUxNDY1ZCIgZD0iTTQ1IDMwaDV2Nmg0djNoNHYxMGgtNHY0SDQzdi00aC00VjM5aDR2LTNoMnoiLz4KPHBhdGggZmlsbD0iI2M5NTM2OCIgZD0iTTQ2IDMyaDN2N2g0djJoM3Y3aC00djNoLTh2LTNoLTN2LTdoM3YtMmgyeiIvPgo8cGF0aCBmaWxsPSIjZjE4ZDk5IiBkPSJNNDQgNDFoM3Y3aC0zek00NyAzOWgzdjNoLTN6Ii8+CjxwYXRoIGZpbGw9IiNlZWU4ZjIiIGQ9Ik00NiA0MGgzdjNoLTN6TTQ4IDQ2aDR2MmgtNHoiLz4KPHBhdGggZmlsbD0iIzhjYjljNyIgZD0iTTkgMzhoM3Y2SDl6TTYgNDRoNnYzSDZ6Ii8+Cjwvc3ZnPgo=",
+        "id": "pixel-drummer",
+        "license": "MIT",
+        "name": "Pixel Drummer",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/Voltur792/pixel-drummer/releases/download/v0.5.2/pixel-drummer-0.5.2-noarch.astraplugin",
+          "noarch": "https://github.com/Voltur792/pixel-drummer/releases/download/v0.5.2/pixel-drummer-0.5.2-noarch.astraplugin",
+          "windows-x64": "https://github.com/Voltur792/pixel-drummer/releases/download/v0.5.2/pixel-drummer-0.5.2-noarch.astraplugin"
+        },
+        "readme": "# Pixel Drummer\n\n## Совместимость\n\nLinux и macOS — **экспериментальные**. Проверки Python и автоматические тесты не заменяют проверку графики, звука и работы внутри Astra на реальной ОС. Windows сохраняет прежние возможности.\n\nОфициальные хосты Astra сейчас доступны для Windows x64 и Linux x64. Код подготовлен также под macOS, но официального хоста Astra для Mac и ARM пока нет: установить и полноценно проверить плагин там внутри Astra нельзя. См. [платформы Astra](https://github.com/mihailinl/AstraPlugins/blob/master/docs/en/1-orientation/platforms.md).\n\nСцена, выбор инструментов, анимации и деморежимы подготовлены для Linux/macOS. Нужен Python 3.12 или новее и зависимости плагина. Нативные окна и звук вне Windows вручную не проверялись.\n\n- Windows: прежний захват воспроизводимого звука, прогулки по окнам и игра с копиями значков сохранены.\n- Linux: для реакции на музыку нужен PulseAudio либо совместимый сервер PulseAudio в PipeWire и библиотека `libpulse`. Для Qt нужны библиотеки вашей графической среды. Под X11 доступно перемещение собственной сцены; взаимодействие с чужими окнами и значками отключено.\n- Wayland: X11 принудительно не включается; используется выбранный Qt backend. Автоматические прогулки между экранами отключены. Положение прозрачного окна и показ поверх остальных зависят от композитора.\n- macOS: SoundCard не предоставляет встроенный loopback CoreAudio. Для реакции на музыку самостоятельно настройте виртуальный звуковой маршрут и задайте точное имя либо ID его входа в `PIXEL_DRUMMER_LOOPBACK_DEVICE`. Указывайте именно настроенный виртуальный вход для музыки. Без него физический микрофон автоматически не выбирается; доступны деморежимы `slow`, `mid`, `fast`. Перемещение по чужим окнам и игра со значками отключены.\n\nПакет персонажа находится в конфигурации Astra: Linux — `$XDG_CONFIG_HOME/astra/companion/pack` (по умолчанию `~/.config/astra/companion/pack`), macOS — `~/Library/Application Support/com.astra.astra/companion/pack`. Для нестандартной установки задайте `PIXEL_DRUMMER_PACK`; данные самого плагина можно перенести через `PIXEL_DRUMMER_DATA`. На Windows прежние каталоги сохранены.\n\nМузыкальный компаньон для **Astra**: включите любимую песню — и пиксельная Nayu достанет инструмент и начнёт играть. Без музыки она гуляет по рабочему столу; в Windows иногда забирается на открытые окна.\n\n## Музыка оживает на рабочем столе\n\n- **Четыре инструмента:** барабаны, красная электрогитара, микрофон и синтезатор.\n- **Автоматический выбор:** Nayu подбирает инструмент по звучанию музыки; его можно выбрать и вручную.\n- **Живые движения:** палочки и руки, спокойные кивки головы, покачивание тела и движения видимых ног.\n- **Музыкальные эффекты:** волны от ударов, искры и маленькие летящие ноты. Эффекты работают и у одной Nayu, и на сцене.\n- **Вокал:** певица открывает рот, когда распознаётся голос в музыке.\n- **Концерт:** четыре Nayu выходят на общую сцену, каждая со своим инструментом.\n- **Прогулки:** переходы между мониторами и отдых на верхнем крае окна.\n\nПостоянной панели нет. Правый клик по персонажу открывает меню инструментов, эффектов и прогулок. Левой кнопкой Nayu можно перетаскивать.\n\n## Установка\n\nНужна **Astra 0.2.6 или новее** с включённым 2D-компаньоном. Windows x64 — основной вариант, остальные ОС экспериментальные; ограничения описаны выше.\n\n1. Скачайте **Source code (zip)** на странице [релизов](https://github.com/Voltur792/pixel-drummer/releases/latest) и распакуйте архив.\n2. В Astra откройте **Плагины → Разработка** и укажите распакованную папку, в которой находится `plugin.toml`.\n3. Нажмите **Загрузить**. Если Astra предлагает подготовить Python и зависимости плагина, дождитесь окончания установки.\n4. Разрешите плагину управлять компаньоном в интерфейсе Astra.\n5. Включите музыку. Окно Astra можно свернуть, оставив приложение работающим.\n\nПока плагин устанавливается из папки: обычный импорт файла `.astraplugin` не предоставляет нужное разрешение на управление компаньоном. Если загрузка из папки недоступна, включите режим разработчика в настройках Astra.\n\n## Попросите Astra\n\n- **«Собери группу на сцене»** — появится сцена с четырьмя музыкантами.\n- **«Убери сцену»** — группа уйдёт, одна Nayu вернётся в автоматический режим.\n- **«Пусть Nayu играет на гитаре»** — выбор инструмента.\n- **«Выбирай инструмент автоматически»** — возвращение автоматического выбора.\n- **«Верни обычную Nayu»** — штатный компаньон Astra.\n\nЗапросы можно отправлять голосом или в чате. Инструменты также доступны через меню по правому клику.\n\n## Звук и совместимость\n\nПлагин слушает воспроизводимый на компьютере звук. Физический микрофон автоматически не выбирается; звук анализируется локально, без сохранения аудиозаписей и отправки на сервер. Для анимаций не нужны API-ключи или платные запросы к ИИ.\n\nРитм и вокал определяются по музыке, поэтому в сложных композициях возможны пропуски или неверное распознавание. Плагин не выделяет отдельные инструментальные дорожки и не распознаёт текст песни.\n\nНа время выступления Nayu использует музыкальные анимации. Для штатных сна, погоды и напоминаний выберите **«Вернуть обычную Nayu»**. Прогулки проверены на нескольких мониторах; смешанный масштаб экранов может влиять на положение персонажа.\n\n## Поддержка и лицензия\n\nНашли проблему или придумали новое движение? Напишите в [Issues](https://github.com/Voltur792/pixel-drummer/issues).\n\nАвтор: **Voltur**. Код и новые элементы — [MIT](LICENSE). Исходная Nayu принадлежит её автору; сторонние материалы и лицензии перечислены в [NOTICE](NOTICE).\n",
+        "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "pixel-drummer-0.5.2-noarch.astraplugin",
+                "sha256": "12fc245fd9c5c09311bcd84315446f63d549e6a4b13dfe26be949ed8c0e876f8",
+                "size": 14429460,
+                "url": "https://github.com/Voltur792/pixel-drummer/releases/download/v0.5.2/pixel-drummer-0.5.2-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "actions",
+              "dom_access",
+              "tools",
+              "ui_contributions"
+            ],
+            "min_astra_version": "0.2.6",
+            "permissions": {
+              "dom_access": {
+                "reason": "Show Nayu playing music, switch her instruments and restore the ordinary companion when the performance ends."
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-10-25T10:22:10Z",
+            "release": {
+              "commit": "1cc367d00028cd5f488894e9039028fc8146e9e0",
+              "kind": "github_release",
+              "repo": "Voltur792/pixel-drummer",
+              "tag": "v0.5.2"
+            },
+            "review": "unreviewed",
+            "version": "0.5.2"
+          }
+        ],
+        "repository_url": "https://github.com/Voltur792/pixel-drummer",
+        "source": {
+          "kind": "github",
+          "repo": "Voltur792/pixel-drummer"
+        },
+        "stars": 0,
+        "updated_at": "2026-10-25T10:22:10Z",
+        "version": "0.5.2"
+      },
+      {
+        "added_at": "2026-10-25",
+        "author": "Voltur",
+        "capabilities": [
+          "tools",
+          "ui_contributions"
+        ],
+        "description": "Play Battleship in Astra: local or AI games, private online rooms, and random opponent search.",
+        "download_url": "https://github.com/Voltur792/astra-sea-battle/releases/download/v0.5.1/sea-battle-0.5.1-noarch.astraplugin",
+        "downloads": 0,
+        "i18n": {
+          "ru": {
+            "description": "Морской бой в Astra: локальные игры или партии с ИИ, приватные сетевые комнаты и поиск случайного соперника.",
+            "name": "Морской бой"
+          }
+        },
+        "icon_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAMAAADVRocKAAADAFBMVEVMaXEBNYQAMYIANocBN4sAL34ALHgBMJ0AK3YBL3oBO5IITKwBM4ACPZUEQpgBOo8AKXMALHsGRZ0AMYcMUa0FRqENT6kBPZoBMn0COYgCO4wDQZsFSqgOWbcMSaGqs88FP5MKS6YDTrAAJ2wMVrMCKW8UZMQDQaAOWrwFRqYBNI8AOZ8QVa/q6+/i5OwAOrkBAT4JUbYSMHgSYL0CVLsFYcsANpi0u9Klr8scbtABS7UCJmcBVsQCQaXb3urO1OUDRq0DGU4AFIAAQKwYKVEOXcABWNCfqcgAQbIXassXXMAhedcBTcEZVLeTpMsAN6m9xNgAEGYbTK0CYtHW2eWapMAMT7EJL3K1v9sAEn0SLmmPnMEAMZSAlL/x8fIkOGYldM0ORZn0+voARboAGZETcNNVZ5QAKoIJJFkvT7IEeegAMa4Fg/YACGMADnYAMa0Ccd8jZ782U44wQ3BEX5vHzeEggd4ACmgOP47FydkAL6gEF0QEYNB60PoAKo0ymvM8THcaRqEAYb8ADTdhfrdwib4AKp5nzfwfL31KcLF2hq8Ff91AU4EpRoSouNoAE4DNz91jd6hbK2dQYIwFadgADEAxgdEAE4EAQcY1Ragqh+FXo+Nve6EtVqIADHATOH+BjrQBPbesI0UCctMANcA3cr7faWhib5hHWYknOZABYNsAZ+QmP5mDm80DiOwUmu1av/oALalEgMZGqvcASsYAFocAJZwACDCbrNEDTcs9t/mLxu9uKmB1uewVi+hLKWr5nocAGmoLaNLCM0omXrIVO5WN4P0xK3TQSVQgnvgFFzwDVMg6YKzD6/ulKEzxkYCv8v/sg3eQJlR4HlY/Km4lifICYdAIaNIAGY2c2vkAXdSq5/z8tJdAneWzyepYPpVWUriLlrhTtfBli9CMlKwmrPgAEHk/PJORtd1LkdWkSogAMKgzqPAAH3z+zKw7X8s6k+N6PIJOY9f9+dYWkecAIZ8ASdEGlfgAMLQAKKgQqfwAWuE9xP8BbPIguf9I1v+t4POzAAAA+HRSTlMA/f39/f39Av39/f39/f39/P39/f39/f39/f39/f39/f39/f39/f39/f39/f39/fsL/f39/fz9/f39/f39/f3+/f0p/f39/f39/f39/f39+/0X/f39/f39/U/9/f39/f39/f39/f39/f39/vz+PI6X/f39/f39/G79/cv9d/39/f39/P39/fv9/f39+v39/az9/f39+/392v79/fj9/b79/bH9/P79/f39/fz9/f3++/10/f3Q/WT9/fX9/f39+v39/Z79/f3+/f39/U79/f39/f39/f39v+Do/dX9/v39/f39/f39/Pr9/f395/v9/f39/f39w////vNkFxUAAAAJcEhZcwAACxIAAAsSAdLdfvwAABXGSURBVGiB7Vl3fBN3stdKu6tdaSWt2kq76r3LuPfeu3HvvUOIK9gY043pmN5L6B0CIaETegkkpPfec0kud/dcKEneZ00u7xEbLne5f9773PwlrfSZ7858Z+Y38xsG4z/yH/n/IewHMvrjf4N2xq8fR338BzHYbAY76oUpU6a8EMX+Vdnwi499YcqFC1NeGPuHINhsxphn3zh796e7d+8e+q8XxvziFwaD/cKFFY3jBwcHB89eiPrXEdhsRsEzBwcPbps5c+a2wZ9+Xj9lDIPNYDPGvPBGU+OCQ73fLti24O7Pn0yhn/2Lr/9kXOOCaWdnKnl8kXHb57evrL8wZcqUC282Nm7z3XawxkcpFelrvr37xth/HmHYE1GT43z1em/vmTNVeqV+5raDJ3++/9NPd+8Om0SjShVaShEqaXpn7D/lpgdeZrCf/VNIhIPDYsoxSukjFREzt21bsGDBgm0z9UofrlRLUQKpTUBRJMjzfYcm4ndCPPjfmKinJ6cEycQWDobJ5XJQz+eQpICn10ulCr5WoZdxOAIBJbWRAAaQHH2I75QxvzNk2WzG2GcvvPHmir1ZnlydNFalpsWZKHEShIRITDQanU6nsdxqdEokhNlMEISOMCabfZvenPK/Avkx+hnsp99sbMoK8bUp+HwezyrR0iI1S/l8vkjq7S2VikRSZSJXJOKLFCorn36sSwyK8AzJWvHOlH/IBZsx5qm7gys8QyNiLTyOgAIlNhYAAKTCm0dRJCUwGjkCiqL4VhlFkiSLKyFJkhLbm498dUSp92kaP/Efhiz7qfuHgngsyhJrkck4HNCoJEmAHAYgAZIyGikSAyitN4/EMBIgcilKDM473t5euj7a8+sa38a7F+hUeYwBTw8uCGUROjnfKgO9y0GBUcmikvkA35sHqMsBGgAoVwN8q1bubJYDhFPM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",
+        "id": "sea-battle",
+        "license": "MIT",
+        "name": "Sea Battle",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/Voltur792/astra-sea-battle/releases/download/v0.5.1/sea-battle-0.5.1-noarch.astraplugin",
+          "noarch": "https://github.com/Voltur792/astra-sea-battle/releases/download/v0.5.1/sea-battle-0.5.1-noarch.astraplugin",
+          "windows-x64": "https://github.com/Voltur792/astra-sea-battle/releases/download/v0.5.1/sea-battle-0.5.1-noarch.astraplugin"
+        },
+        "readme": "# Морской бой для Astra\n\nИнтерактивные карты, сохранение партий и три режима: быстрая игра, соперник Astra и игра по сети.\n\n**Linux и macOS — экспериментальные.** Нативные интерфейс, звук и уведомления на этих ОС вручную не проверялись. Официального хоста Astra для macOS/ARM пока нет. Подробности — [PLATFORMS.md](PLATFORMS.md).\n\n## Установка\n\nСкачайте обновление на странице [Releases](https://github.com/Voltur792/astra-sea-battle/releases/latest).\n\n**Для игры с выбранной моделью и голосовых оповещений используйте Source code (zip) через режим разработки Astra.** При ручном импорте `.astraplugin` доступ к чату ограничен.\n\n1. Скачайте **Source code (zip)** из Assets и полностью распакуйте в постоянную папку, например `C:\\AstraPlugins\\astra-sea-battle`.\n2. Найдите папку с `plugin.toml`, `src` и `requirements.txt`. Если ZIP создал вложенную папку, выбирайте её.\n3. В Astra: **Настройки → Приватность → Разрешить неподписанные плагины**.\n4. Откройте **Плагины → Разработка (Plugins → Dev) → Загрузить плагин → Обзор** и выберите эту папку.\n5. Разрешите запрашиваемый доступ и дождитесь установки зависимостей. Для первой установки нужен интернет.\n6. Включите плагин и откройте вкладку **«Морской бой»**. После перезапуска Astra копию из Dev может потребоваться включить снова.\n\nЕсли Python не найден, установите 64-разрядный Python **3.11+** и перезапустите Astra. При ошибке установки проверьте интернет и журнал плагина; установка пакетов в другой Python не меняет окружение Astra.\n\nДля обновления выключите старую копию, распакуйте новую в отдельную постоянную папку и загрузите через Dev. Не удаляйте активную папку. Партии и настройки хранятся отдельно; путь можно изменить через `SEA_BATTLE_DATA_DIR`.\n\n## Режимы игры\n\n- **Быстрая игра** — соперник без расхода ИИ.\n- **Против ИИ Astra** — выбранная в Astra модель расставляет свой флот и выбирает ответные выстрелы через обычный чат. Расход зависит от модели и числа ходов.\n- **Другой игрок · сеть** — приглашение другу или подбор случайного соперника из другой Astra. Отдельная регистрация и аренда сервера игрокам не нужны. Сетевой режим экспериментальный.\n\nПеред началом расставьте свои корабли вручную или нажмите **«Расставить случайно»**. Нужно 10 кораблей длиной 4, 3, 3, 2, 2, 2, 1, 1, 1, 1; касание запрещено даже углами. После попадания ход продолжается, после промаха переходит сопернику.\n\nРежим запоминается при переключении вкладок. Локальные/AI-партии сохраняются между перезапусками; история ограничена пятью играми. Если модель дважды предложила неправильную расстановку или недопустимый выстрел, плагин использует явно обозначенное исправление или запасной ход. Ошибку связи с провайдером можно повторить.\n\n## Сетевая игра\n\nОбоим игрокам нужна новая версия. В режиме **«Другой игрок · сеть»**:\n\n- **«Создать комнату»** — скопируйте приглашение и отправьте другу личным сообщением. Друг вставляет его и входит в комнату.\n- **«Найти игру»** — общая очередь Metered подбирает другого ожидающего игрока и создаёт отдельную комнату автоматически.\n\nПосле соединения каждый расставляет флот и нажимает **«Готов»**. Соперник не видит вашу расстановку до конца партии. Потопленные корабли раскрываются во время игры. После завершения сверяются исходная фиксация флота и результаты выстрелов; это проверка результата, а не полная защита от изменённых клиентов.\n\n**Поиск работает в фоне**, даже если страницу игры закрыли или выбрали другую вкладку/режим. Он прекращается кнопкой **«Отменить поиск»**, через 3 минуты или при выключении Astra/плагина. После перезапуска приложения поиск нужно включить заново. Индикатор **«В поиске»** считает ожидающих игроков этой версии протокола, включая вас; уже играющие и остальные установки Astra в него не входят. При отсутствии связи показывается неизвестное состояние. Если никто другой не ищет игру, соперник не появится.\n\n### Ник и оповещения\n\nВ разделе **«Ник и оповещения»** задайте ник до 32 символов, системное уведомление и один из вариантов: обычный сигнал, голос Astra или без звука. Пустой ник отображается как «Игрок». Ник видит выбранный соперник; в общую очередь он не публикуется и не является проверенным именем аккаунта.\n\nГолос использует выбранные в Astra модель и голос через обычный чат: это дополнительный запрос к провайдеру и запись в чате. При ошибке или таймауте звучит системный сигнал. Уведомление может подавляться режимом «Не беспокоить». На Linux для уведомления нужен `notify-send`, для сигнала — `paplay` и системный звук; работа на реальном Linux/macOS не проверена.\n\nПосле фонового подбора вернитесь в Морской бой и расставьте корабли. Если второй игрок вернулся позже, может понадобиться **«Переподключиться»**.\n\n**Для передачи самих ходов держите страницу партии открытой.** Закрытие страницы ставит связь на паузу; комната, флот и неподтверждённый выстрел сохраняются локально. Не открывайте одну комнату одновременно в нескольких окнах.\n\n### Соединение и ограничения\n\nАвтоматические маршруты: **Metered → PeerJS → ручной резерв WebRTC**. Если сервисы комнат недоступны, создатель передаёт резервное предложение, второй игрок возвращает ответ, создатель принимает его. Коды можно переслать любым мессенджером. Поиск случайных игроков требует работающей общей очереди Metered; резервное приглашение не заменяет её.\n\nWebRTC пытается соединить игроков напрямую, при сложном NAT использует TURN. Без доступного TURN прямое соединение возможно не во всех сетях. Бесплатные сервисы имеют квоты и не гарантируют доступность, в том числе у всех операторов РФ. У общего TURN-проекта пробный лимит **500 МБ в месяц** с остановкой по лимиту;\n\nПередавайте приглашение только сопернику: оно содержит секрет комнаты. В общую очередь отправляются случайный идентификатор и статус ожидания; приглашение доставляется выбранному игроку адресно. Аккаунт Astra, переписка и флот для поиска не нужны.\n\n## Лицензия и поддержка\n\nMIT — [LICENSE](LICENSE). Клиент PeerJS 1.5.5 включён с MIT-лицензией; [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).\n\nПоддержать автора: https://boosty.to/voltur/donate\n",
+        "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "sea-battle-0.5.1-noarch.astraplugin",
+                "sha256": "0c168921f335f04fcd7bd95425fd2d5372ca63635e6be776a4b47fb3dbb9ff75",
+                "size": 107458,
+                "url": "https://github.com/Voltur792/astra-sea-battle/releases/download/v0.5.1/sea-battle-0.5.1-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "send_chat_message": {
+                "reason": "Allows the selected Astra model to play Battleship and optionally announce a found opponent using Astra voice."
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-10-25T10:22:18Z",
+            "release": {
+              "commit": "d7cb9cb055b83167094bd1fb5ba12e2933fcd070",
+              "kind": "github_release",
+              "repo": "Voltur792/astra-sea-battle",
+              "tag": "v0.5.1"
+            },
+            "review": "unreviewed",
+            "version": "0.5.1"
+          }
+        ],
+        "repository_url": "https://github.com/Voltur792/astra-sea-battle",
+        "source": {
+          "kind": "github",
+          "repo": "Voltur792/astra-sea-battle"
+        },
+        "stars": 0,
+        "updated_at": "2026-10-25T10:22:18Z",
+        "version": "0.5.1"
+      },
+      {
         "added_at": "2026-09-06",
         "author": "Voltur",
         "capabilities": [
@@ -3007,6 +3198,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 80
+    "serial": 81
   }
 }
