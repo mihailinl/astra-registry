@@ -3,26 +3,27 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "O4sG8HxiDNHHBbefY7nr0yLZflg7fsaPkZCPZk9eK8OteLZBZjz8CVDwc57ysN9o486wlCWja3j1aupsC4kFDg=="
+      "sig": "ceYTyPgmey9LWiIBeFGp1PpQ+VZTLl2eP2qUF8fXZSysljcZZBrAFtby+IQnrdwWrVh8iV7525NYAtavdIN3Bg=="
     }
   ],
   "signed": {
-    "expires_at": "2026-11-24T14:53:32Z",
-    "issued_at": "2026-10-25T14:53:32Z",
+    "expires_at": "2026-11-24T16:49:50Z",
+    "issued_at": "2026-10-25T16:49:50Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
         "author": "Taill",
         "capabilities": [
           "tools",
+          "triggers",
           "ui_contributions"
         ],
-        "description": "Add your own avatar animations (VRMA, Mixamo FBX, GLB) and choose when she plays them: when bored, to music, or on a trigger.",
-        "download_url": "https://github.com/FluffyTaill/astra-anim-studio/releases/download/v1.0.5/anim-studio-1.0.5-noarch.astraplugin",
+        "description": "Add your own avatar animations (VRMA, Mixamo FBX, GLB) and choose when she plays them: when bored, to music, by time of day, or on a trigger.",
+        "download_url": "https://github.com/FluffyTaill/astra-anim-studio/releases/download/v1.1.1/anim-studio-1.1.1-noarch.astraplugin",
         "downloads": 0,
         "i18n": {
           "ru": {
-            "description": "Добавляй аватару свои анимации (VRMA, FBX из Mixamo, GLB) и выбирай, когда она их играет: от скуки, под музыку или по триггеру.",
+            "description": "Добавляй аватару свои анимации (VRMA, FBX из Mixamo, GLB) и выбирай, когда она их играет: от скуки, под музыку, по времени суток или по триггеру.",
             "name": "Anim Studio"
           }
         },
@@ -31,12 +32,42 @@
         "license": "MIT",
         "name": "Anim Studio",
         "platform_downloads": {
-          "linux-x64": "https://github.com/FluffyTaill/astra-anim-studio/releases/download/v1.0.5/anim-studio-1.0.5-noarch.astraplugin",
-          "noarch": "https://github.com/FluffyTaill/astra-anim-studio/releases/download/v1.0.5/anim-studio-1.0.5-noarch.astraplugin",
-          "windows-x64": "https://github.com/FluffyTaill/astra-anim-studio/releases/download/v1.0.5/anim-studio-1.0.5-noarch.astraplugin"
+          "linux-x64": "https://github.com/FluffyTaill/astra-anim-studio/releases/download/v1.1.1/anim-studio-1.1.1-noarch.astraplugin",
+          "noarch": "https://github.com/FluffyTaill/astra-anim-studio/releases/download/v1.1.1/anim-studio-1.1.1-noarch.astraplugin",
+          "windows-x64": "https://github.com/FluffyTaill/astra-anim-studio/releases/download/v1.1.1/anim-studio-1.1.1-noarch.astraplugin"
         },
-        "readme": "# Anim Studio — плагин для Astra\n\nДобавляй аватару Astra свои анимации без ручной правки файлов и выбирай, когда она их играет.\n\n## Установка\n\n1. Скачай `anim-studio.astraplugin`.\n2. Astra → **Мастерская** → **Разработка** → **Импорт плагина** → **Выбрать файл…** → выбери файл → **Установить**.\n3. Страница плагина: меню **☰ (Навигация)** справа вверху → **Плагины** → **Anim Studio**.\n\n## Как пользоваться\n\n1. **＋ Добавить анимацию** → выбери файл:\n   - `.vrma` — VRM Animation (VRoid, BOOTH);\n   - `.fbx` — из [Mixamo](https://www.mixamo.com): Download → *FBX Binary, Without Skin, 30 fps*;\n   - `.glb` — паки вроде Quaternius Universal Animation Library (при добавлении выбери нужные анимации).\n2. У каждой анимации выбери, когда её играть:\n   - **Сама, от скуки** — иногда играет, когда стоит без дела (ползунок «редко — часто»);\n   - **Под музыку** — медленная / средняя / быстрая музыка;\n   - **На месте** (для FBX) — убирает скольжение в сторону, чтобы она не уходила за край окна;\n   - **Скорость**.\n3. Нажми **Применить** — аватар перезапустится на пару секунд.\n\nКаждая анимация получает своё состояние `as_…`:\n- посмотреть: Astra → **Модель** → **Анимации** → **Показать**;\n- реакция на событие: **Модель** → **Триггеры**;\n- голосовая команда: создай команду с действием «Анимация компаньона», режим **state**, имя `as_…`.\n\n## Как это устроено\n\nПлагин ведёт отдельный набор-дополнение `animpacks/anim-studio` и подключает его к отмеченным персонажам строкой\n`addons = [\"anim-studio\"]` в их `character.toml` (копия до изменения сохраняется как `character.toml.before-anim-studio`).\nСобственный набор анимаций персонажа не меняется. Встроенные персонажи дополнения не поддерживают — сделай копию персонажа\n(Модель → Персонажи → Добавить персонажа) и отметь её.\n\n## Сборка из исходников\n\nНужны [bun](https://bun.sh) и [astra-plugin](https://github.com/mihailinl/AstraPlugins/blob/HEAD/docs/en/install-cli.md) 0.5.0+.\n\n```\nbun install\nbun run test\nastra-plugin check . --strict\nastra-plugin test .\nastra-plugin build .\n```\n\nРелизы собирает и подписывает GitHub Actions (`.github/workflows/release.yml`) по тегу `vX.Y.Z`.\n\n---\n\n# Anim Studio — an Astra plugin\n\nAdd your own animations to the Astra avatar without editing files by hand, and choose when she plays them:\nwhen bored (idle), to music (slow / mid / fast), or as her own state `as_…` that you can bind to triggers and\ncommands. Supports `.vrma`, Mixamo `.fbx` (with an *in place* option) and multi-animation `.glb`.\nInstall: Astra → Workshop → Development → Import plugin → choose `anim-studio.astraplugin`.\nThe page lives in the ☰ Navigation menu → Plugins → Anim Studio.\n",
+        "readme": "# Anim Studio — плагин для Astra\n\nДобавляй аватару Astra свои анимации без ручной правки файлов и выбирай, когда она их играет.\n\n## Установка\n\n1. Скачай `anim-studio.astraplugin`.\n2. Astra → **Мастерская** → **Разработка** → **Импорт плагина** → **Выбрать файл…** → выбери файл → **Установить**.\n3. Страница плагина: меню **☰ (Навигация)** справа вверху → **Плагины** → **Anim Studio**.\n\n## Как пользоваться\n\n1. **＋ Добавить анимацию** → выбери файл:\n   - `.vrma` — VRM Animation (VRoid, BOOTH);\n   - `.fbx` — из [Mixamo](https://www.mixamo.com): Download → *FBX Binary, Without Skin, 30 fps*;\n   - `.glb` — паки вроде Quaternius Universal Animation Library (при добавлении выбери нужные анимации).\n2. У каждой анимации выбери, когда её играть:\n   - **Сама, от скуки** — иногда играет, когда стоит без дела (ползунок «редко — часто»);\n   - **Под музыку** — медленная / средняя / быстрая музыка;\n   - **Время** — утро (5–12) / день (12–18) / вечер (18–24) / ночь (0–5): «от скуки» и «под музыку» играют только\n     в отмеченные части суток. Выбирается и при добавлении. Когда наступает другая часть суток, плагин сам\n     перезаписывает набор и перезапускает аватар — как только ты минуту не трогаешь компьютер;\n   - **На месте** — убирает скольжение в сторону, чтобы она не уходила за край окна;\n   - **Скорость**;\n   - **Мимика** (FBX и VRMA) — радость, злость, грусть, спокойствие или удивление: выражение плавно появляется в\n     начале клипа и уходит к концу. FBX для этого переводится в VRMA (оригинал остаётся в `clips/orig`);\n   - **Пальцы** — насколько согнуть пальцы к ладони поверх анимации: у Mixamo они часто прямые, как доска.\n3. Нажми **Применить** — аватар перезапустится на пару секунд.\n\n### Редактор\n\nКнопка **✎ Редактор** у анимации (FBX и VRMA) открывает её на модели персонажа, который сейчас надет: вращай камеру\nмышью, перематывай по шкале времени, сравнивай «С правками» и «Оригинал». Что можно поменять:\n- скорость, плавность входа и выхода, «на месте», зеркально (левое ↔ правое), пальцы к ладони;\n- обрезку — начало и конец (кнопка «сюда» ставит текущий момент);\n- мимику ключами — в эту секунду такое выражение с такой силой, между ключами плавно; «вспышка эмоции» ставит\n  сразу три ключа (появилась — держится — ушла);\n- позы костей — повернуть голову, руку, кисть и т. п. поверх анимации, тоже ключами по времени.\n\nВ превью играет ровно тот файл, который потом получит Astra. **Сохранить** пишет его в `clips/` (оригинал остаётся в\n`clips/orig`), дальше — **Применить**. Esc закрывает редактор.\n\n### Время суток\n\nКарточка **Время суток**: утром (первый раз за день) она потягивается и здоровается, после 20+ минут отсутствия\nмашет, вечером после 22:00 иногда зевает, после полуночи зевает и намекает, что пора спать. В играх молчит.\nДля каждого случая можно выбрать анимацию: состояние из набора персонажа (`stretch`, `hello`, `yawn` — есть у Vivid)\nили любую свою из студии; кнопка ▶ показывает реакцию сразу. Своя анимация из студии показывается так же, как\nкнопкой «Показать», — через быстрый перезапуск аватара: команды Astra запускают только состояния её собственного\nнабора, а не дополнения.\n\nРеакции и фразы идут через две команды Astra («Anim Studio: сыграть анимацию» и «Anim Studio: сказать фразу»).\nНажми **Создать команды** — плагин допишет их в `commands.json` (копия до изменения — `commands.json.before-anim-studio`),\nзатем перезапусти Astra. Активность читается только как время с последнего нажатия и имя активного окна — не сами клавиши.\n\nКаждая анимация получает своё состояние `as_…`:\n- посмотреть: Astra → **Модель** → **Анимации** → **Показать**;\n- реакция на событие: **Модель** → **Триггеры**.\n\nКоманда Astra с действием «Анимация компаньона» состояние `as_…` запустить не может: Astra проверяет имя только по\nнабору персонажа и отвечает `CUE_STATE_UNKNOWN` (то же для триггеров — `CUE_TRIGGER_UNKNOWN`).\n\n## Как это устроено\n\nПлагин ведёт отдельный набор-дополнение `animpacks/anim-studio` и подключает его к отмеченным персонажам строкой\n`addons = [\"anim-studio\"]` в их `character.toml` (копия до изменения сохраняется как `character.toml.before-anim-studio`).\nСобственный набор анимаций персонажа не меняется. Встроенные персонажи дополнения не поддерживают — сделай копию персонажа\n(Модель → Персонажи → Добавить персонажа) и отметь её.\n\n## Сборка из исходников\n\nНужны [bun](https://bun.sh) и [astra-plugin](https://github.com/mihailinl/AstraPlugins/blob/HEAD/docs/en/install-cli.md) 0.5.0+.\n\n```\nbun install\nbun run test\nastra-plugin check . --strict\nastra-plugin test .\nastra-plugin build .\n```\n\nРелизы собирает и подписывает GitHub Actions (`.github/workflows/release.yml`) по тегу `vX.Y.Z`.\n\n---\n\n# Anim Studio — an Astra plugin\n\nAdd your own animations to the Astra avatar without editing files by hand, and choose when she plays them:\nwhen bored (idle), to music (slow / mid / fast), only at some times of day (morning / day / evening / night), or as her own state `as_…` that you can bind to triggers. Supports `.vrma`, Mixamo `.fbx` (with an *in place* option) and multi-animation `.glb`.\nShe also stretches in the morning, waves when you come back and yawns at night (the page creates the two Astra commands for that).\nInstall: Astra → Workshop → Development → Import plugin → choose `anim-studio.astraplugin`.\nThe page lives in the ☰ Navigation menu → Plugins → Anim Studio.\n",
         "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "anim-studio-1.1.1-noarch.astraplugin",
+                "sha256": "557345ed815fe7fcc4fb69d9bc2a88743d233678a4a13b0c6d5f78e59b8952da",
+                "size": 459822,
+                "url": "https://github.com/FluffyTaill/astra-anim-studio/releases/download/v1.1.1/anim-studio-1.1.1-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools",
+              "triggers",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "fire_trigger": {
+                "reason": "Plays the avatar's morning stretch, wave and yawn and says her phrases through the two Astra commands the plugin page creates."
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-10-25T16:43:59Z",
+            "release": {
+              "commit": "3ded50897d5f927f4d8c662b646e490d63e2d3a9",
+              "kind": "github_release",
+              "repo": "FluffyTaill/astra-anim-studio",
+              "tag": "v1.1.1"
+            },
+            "review": "unreviewed",
+            "version": "1.1.1"
+          },
           {
             "artifacts": {
               "noarch": {
@@ -94,8 +125,8 @@
           "repo": "FluffyTaill/astra-anim-studio"
         },
         "stars": 0,
-        "updated_at": "2026-10-25T08:20:06Z",
-        "version": "1.0.5"
+        "updated_at": "2026-10-25T16:43:59Z",
+        "version": "1.1.1"
       },
       {
         "added_at": "2026-10-25",
@@ -3503,6 +3534,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 86
+    "serial": 87
   }
 }
