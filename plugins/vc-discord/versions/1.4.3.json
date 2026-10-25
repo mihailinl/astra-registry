@@ -1,0 +1,31 @@
+{
+  "$comment": "Derived from Voltur792/VC-Discord@v1.4.3. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "vc-discord",
+  "version": "1.4.3",
+  "published_at": "2026-10-25T09:42:53Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "Voltur792/VC-Discord",
+    "tag": "v1.4.3",
+    "commit": "049472338bf1d38eaec4b79e85e320cb7e4fc733"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.3/vc-discord-1.4.3-noarch.astraplugin",
+      "filename": "vc-discord-1.4.3-noarch.astraplugin",
+      "sha256": "8c0e1b4fe06402eb366db9bd7aec2a99b1ef0d67e8bf8d090fddd65669e4bd58",
+      "size": 5160032
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "ui_contributions"
+  ],
+  "permissions": {
+    "send_chat_message": {
+      "reason": "Forwards explicitly addressed PC commands only from the Discord accounts you allow to Astra's command chat"
+    }
+  }
+}
