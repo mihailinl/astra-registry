@@ -1,0 +1,32 @@
+{
+  "$comment": "Derived from Voltur792/astra-sea-battle@v0.5.1. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "sea-battle",
+  "version": "0.5.1",
+  "published_at": "2026-10-25T10:22:18Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "Voltur792/astra-sea-battle",
+    "tag": "v0.5.1",
+    "commit": "d7cb9cb055b83167094bd1fb5ba12e2933fcd070"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/Voltur792/astra-sea-battle/releases/download/v0.5.1/sea-battle-0.5.1-noarch.astraplugin",
+      "filename": "sea-battle-0.5.1-noarch.astraplugin",
+      "sha256": "0c168921f335f04fcd7bd95425fd2d5372ca63635e6be776a4b47fb3dbb9ff75",
+      "size": 107458
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "tools",
+    "ui_contributions"
+  ],
+  "permissions": {
+    "send_chat_message": {
+      "reason": "Allows the selected Astra model to play Battleship and optionally announce a found opponent using Astra voice."
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "$comment": "Derived from Voltur792/pixel-drummer@v0.5.2. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "pixel-drummer",
+  "version": "0.5.2",
+  "published_at": "2026-10-25T10:22:10Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "Voltur792/pixel-drummer",
+    "tag": "v0.5.2",
+    "commit": "1cc367d00028cd5f488894e9039028fc8146e9e0"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/Voltur792/pixel-drummer/releases/download/v0.5.2/pixel-drummer-0.5.2-noarch.astraplugin",
+      "filename": "pixel-drummer-0.5.2-noarch.astraplugin",
+      "sha256": "12fc245fd9c5c09311bcd84315446f63d549e6a4b13dfe26be949ed8c0e876f8",
+      "size": 14429460
+    }
+  },
+  "protocol": 1,
+  "min_astra_version": "0.2.6",
+  "capabilities": [
+    "actions",
+    "dom_access",
+    "tools",
+    "ui_contributions"
+  ],
+  "permissions": {
+    "dom_access": {
+      "reason": "Show Nayu playing music, switch her instruments and restore the ordinary companion when the performance ends."
+    }
+  }
+}

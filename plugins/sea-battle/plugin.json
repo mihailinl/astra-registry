@@ -1,0 +1,25 @@
+{
+  "$comment": "Derived from Voltur792/astra-sea-battle@v0.5.1 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "schema": "astra.registry.plugin/1",
+  "id": "sea-battle",
+  "name": "Sea Battle",
+  "summary": "Play Battleship in Astra: local or AI games, private online rooms, and random opponent search.",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "Voltur792/astra-sea-battle"
+  },
+  "added_at": "2026-10-25",
+  "description": "Play Battleship in Astra: local or AI games, private online rooms, and random opponent search.",
+  "author": {
+    "name": "Voltur"
+  },
+  "icon": "icon.png",
+  "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "Морской бой",
+      "summary": "Морской бой в Astra: локальные игры или партии с ИИ, приватные сетевые комнаты и поиск случайного соперника."
+    }
+  }
+}

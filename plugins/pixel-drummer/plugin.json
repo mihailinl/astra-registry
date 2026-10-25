@@ -1,0 +1,25 @@
+{
+  "$comment": "Derived from Voltur792/pixel-drummer@v0.5.2 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "schema": "astra.registry.plugin/1",
+  "id": "pixel-drummer",
+  "name": "Pixel Drummer",
+  "summary": "Original pixel Nayu follows local music with four instruments, vocal detection, a concert stage and desktop adventures.",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "Voltur792/pixel-drummer"
+  },
+  "added_at": "2026-10-25",
+  "description": "Original pixel Nayu follows local music with four instruments, vocal detection, a concert stage and desktop adventures.",
+  "author": {
+    "name": "Voltur"
+  },
+  "icon": "icon.svg",
+  "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "Pixel Drummer",
+      "summary": "Nayu играет на барабанах, гитаре, микрофоне и синтезаторе под вашу музыку, выступает на сцене и гуляет по рабочему столу."
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:3689dc9116bb8f7478f33f9b2ff09deb19e09e1af155e5d37c30ad7bcddf67b9"
+  ],
+  "commit": "04912a85f1b2a7d1be4ba5b502a67341bc83a281",
+  "decided_at": "2026-10-25T10:26:22Z",
+  "decision_id": "0793ee30deb6b38a3e2d496ba226ac0f",
+  "fingerprint": "f1be48bfb7ac96da",
+  "plugin_id": "detective-game",
+  "reasons": [
+    "P_PUBLISHED",
+    "P_REVIEW_PRIORITY"
+  ],
+  "repo": "Voltur792/detective-game",
+  "repository_id": "1389133420",
+  "repository_owner_id": "232130437",
+  "run": "40184626704/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "ca5c54c3-0191-4d0e-beae-6f4d5e184879",
+  "tag": "v0.4.2",
+  "trigger": "panel",
+  "version": "0.4.2"
+}

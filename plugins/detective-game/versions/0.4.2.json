@@ -1,0 +1,27 @@
+{
+  "$comment": "Derived from Voltur792/detective-game@v0.4.2. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "detective-game",
+  "version": "0.4.2",
+  "published_at": "2026-10-25T10:22:19Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "Voltur792/detective-game",
+    "tag": "v0.4.2",
+    "commit": "04912a85f1b2a7d1be4ba5b502a67341bc83a281"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/Voltur792/detective-game/releases/download/v0.4.2/detective-game-0.4.2-noarch.astraplugin",
+      "filename": "detective-game-0.4.2-noarch.astraplugin",
+      "sha256": "3689dc9116bb8f7478f33f9b2ff09deb19e09e1af155e5d37c30ad7bcddf67b9",
+      "size": 33164
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "tools"
+  ],
+  "permissions": {}
+}
