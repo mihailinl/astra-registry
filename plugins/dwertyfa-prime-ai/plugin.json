@@ -1,16 +1,16 @@
 {
-  "$comment": "Derived from SpherePrime/PrimeAi@v0.2.6 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "$comment": "Derived from SpherePrime/PrimeAi@v0.2.7 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
   "schema": "astra.registry.plugin/1",
   "id": "dwertyfa-prime-ai",
   "name": "PrimeAI",
-  "summary": "A plugin for free access to AI models.",
+  "summary": "AI chat, web search, and image and video generation. Automatic model routing, manual model selection, and connection checks in the plugin settings.",
   "license": "MIT",
   "source": {
     "kind": "github",
     "repo": "SpherePrime/PrimeAi"
   },
   "added_at": "2026-10-24",
-  "description": "A plugin for free access to AI models.",
+  "description": "AI chat, web search, and image and video generation. Automatic model routing, manual model selection, and connection checks in the plugin settings.",
   "author": {
     "name": "dwertyfa x Lil KALINOV"
   },
@@ -19,7 +19,7 @@
   "i18n": {
     "ru": {
       "name": "PrimeAI",
-      "summary": "Плагин для бесплатного доступа к нейросетям."
+      "summary": "Общение с ИИ, поиск в интернете, генерация изображений и видео. Автоматический подбор доступной модели, ручной выбор моделей и проверка подключения в панели настроек."
     }
   }
 }
