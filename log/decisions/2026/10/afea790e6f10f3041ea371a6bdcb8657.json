@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:c56843bea23f10c256dbcaf7b6cc4ce1a03e4468377131a68070a7b758702e92"
+  ],
+  "commit": "1db228d195ccc26f3bd803da35860fb2aff98520",
+  "decided_at": "2026-10-25T11:05:00Z",
+  "decision_id": "afea790e6f10f3041ea371a6bdcb8657",
+  "fingerprint": "1aea6c42edcdc7b1",
+  "plugin_id": "sea-battle",
+  "reasons": [
+    "E_VERSION_NOT_NEW",
+    "B_UNBOUND"
+  ],
+  "repo": "Voltur792/astra-sea-battle",
+  "repository_id": "1391896674",
+  "repository_owner_id": "232130437",
+  "run": "40187232590/1",
+  "schema": "astra.registry.decision/1",
+  "state": "refused",
+  "submission_id": "ea2b7ab5-e9dd-422d-9045-4de0e2d394a2",
+  "tag": "v0.4.0",
+  "trigger": "poll",
+  "version": "0.4.0"
+}
