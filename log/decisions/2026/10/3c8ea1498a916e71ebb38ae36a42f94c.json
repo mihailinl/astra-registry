@@ -1,0 +1,24 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:a2c1dc94bc458a24d1191519855d8154ef882e0e9c3da43c535bd54322e512ba"
+  ],
+  "commit": "f31eac532a00cbc964a9b452f6aa0e21718d25bc",
+  "decided_at": "2026-10-25T05:43:21Z",
+  "decision_id": "3c8ea1498a916e71ebb38ae36a42f94c",
+  "fingerprint": "cb60085465f90989",
+  "plugin_id": "dwertyfa-astra-tg",
+  "reasons": [
+    "R_FIRST_BINDING"
+  ],
+  "repo": "dwertyfa288/dwertyfa-astra-tg",
+  "repository_id": "1353573628",
+  "repository_owner_id": "296277844",
+  "run": "40166448388/1",
+  "schema": "astra.registry.decision/1",
+  "state": "held",
+  "submission_id": "79dbe96c-98d9-42e5-9c9f-21bead16bdbc",
+  "tag": "v0.1.19",
+  "trigger": "poll",
+  "version": "0.1.19"
+}
