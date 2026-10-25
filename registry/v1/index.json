@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "sA5EswO+pIKA1WiKOkRIO15ZHglCtMej6b0zk23T/ft0BL7zG+GlxErn5g9g66vG0NZCZZXTVVR7043d6WcSBg=="
+      "sig": "r13pY3jwTw+rpArkhi3bu16zlF5gxL4cMV0a0QEdc4KKF565Lx3K/FamT3o2i8EQUQKMMlGNsd7wa0NI925yDQ=="
     }
   ],
   "signed": {
-    "expires_at": "2026-11-24T08:28:09Z",
-    "issued_at": "2026-10-25T08:28:09Z",
+    "expires_at": "2026-11-24T08:43:15Z",
+    "issued_at": "2026-10-25T08:43:15Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
@@ -956,12 +956,12 @@
           "tools",
           "ui_contributions"
         ],
-        "description": "A plugin for free access to AI models.",
-        "download_url": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.6/dwertyfa-prime-ai-0.2.6-noarch.astraplugin",
+        "description": "AI chat, web search, and image and video generation. Automatic model routing, manual model selection, and connection checks in the plugin settings.",
+        "download_url": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.7/dwertyfa-prime-ai-0.2.7-noarch.astraplugin",
         "downloads": 0,
         "i18n": {
           "ru": {
-            "description": "Плагин для бесплатного доступа к нейросетям.",
+            "description": "Общение с ИИ, поиск в интернете, генерация изображений и видео. Автоматический подбор доступной модели, ручной выбор моделей и проверка подключения в панели настроек.",
             "name": "PrimeAI"
           }
         },
@@ -970,12 +970,38 @@
         "license": "MIT",
         "name": "PrimeAI",
         "platform_downloads": {
-          "linux-x64": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.6/dwertyfa-prime-ai-0.2.6-noarch.astraplugin",
-          "noarch": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.6/dwertyfa-prime-ai-0.2.6-noarch.astraplugin",
-          "windows-x64": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.6/dwertyfa-prime-ai-0.2.6-noarch.astraplugin"
+          "linux-x64": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.7/dwertyfa-prime-ai-0.2.7-noarch.astraplugin",
+          "noarch": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.7/dwertyfa-prime-ai-0.2.7-noarch.astraplugin",
+          "windows-x64": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.7/dwertyfa-prime-ai-0.2.7-noarch.astraplugin"
         },
         "readme": "# PrimeAI for Astra\n\nAI provider using the Router API with automatic route selection.\n\nKnown routing failures report unavailable providers, timeouts or stream interruptions without exposing upstream details.\nChat requests retry temporary connection failures up to three times before response headers arrive. Streaming responses and generation requests are not repeated.\n\nThe plugin connects to `https://sphereprime.online` automatically using short-lived sessions. No shared server key is included in the source or bundle.\n\nTo use a different deployment, create `deployment.json` in the installed plugin directory:\n\n```json\n{\n  \"serverUrl\": \"https://<host>/\",\n  \"pluginToken\": \"\"\n}\n```\n\nBuild and package:\n\n```sh\nbun install\nbun run typecheck\nbun run test\nbun run bundle\n```\n\nOutput: `dwertyfa-prime-ai-<version>-noarch.astraplugin`.\n\n## Releases\n\nSet the version with `astra-plugin version <version>`, commit, and push the matching `v<version>` tag. GitHub Actions calls Astra's pinned release workflow to build, attest, and publish the bundle. Local bundles are for manual installation.\n\n## Image input\n\nThe bridge accepts OpenAI `text` and `image_url` content parts and preserves images throughout conversation history. Vision models are labeled in the model picker.\n\nAstra SDK 0.7.0 exposes only string message content in its protobuf protocol. Native Astra chat attachments cannot reach this plugin until the host and SDK add multimodal messages. Bridge support alone does not enable attachments in Astra.\n\n## Web search\n\nPrimeAI 0.2.1 uses the server's DuckDuckGo MCP search. The `primeai_web_search` tool accepts `query` and an optional `limit` from 1 to 10. Built-in Astra `web_search` calls are redirected when PrimeAI provides the model. Update the plugin to enable this behavior.\n",
         "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "dwertyfa-prime-ai-0.2.7-noarch.astraplugin",
+                "sha256": "060bf7311daf6bdaa4d41533dd4eecc5fb809e44658a28fec0a8b761d488c7fd",
+                "size": 234452,
+                "url": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.7/dwertyfa-prime-ai-0.2.7-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "ai_provider",
+              "tools",
+              "ui_contributions"
+            ],
+            "permissions": {},
+            "protocol": 1,
+            "published_at": "2026-10-25T08:38:55Z",
+            "release": {
+              "commit": "cc4a2f1796510c77fd56b687bffcc75e7899138b",
+              "kind": "github_release",
+              "repo": "SpherePrime/PrimeAi",
+              "tag": "v0.2.7"
+            },
+            "review": "unreviewed",
+            "version": "0.2.7"
+          },
           {
             "artifacts": {
               "noarch": {
@@ -1035,8 +1061,8 @@
           "repo": "SpherePrime/PrimeAi"
         },
         "stars": 0,
-        "updated_at": "2026-10-25T03:19:13Z",
-        "version": "0.2.6"
+        "updated_at": "2026-10-25T08:38:55Z",
+        "version": "0.2.7"
       },
       {
         "added_at": "2026-10-16",
@@ -2676,6 +2702,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 73
+    "serial": 74
   }
 }
