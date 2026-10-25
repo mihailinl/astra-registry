@@ -1306,6 +1306,78 @@
         "version": "0.2.9"
       },
       {
+        "added_at": "2026-10-25",
+        "author": "dwertyfa",
+        "capabilities": [
+          "tools",
+          "triggers"
+        ],
+        "description": "Auto-accepts matches in League of Legends, Dota 2 and Counter-Strike 2.",
+        "download_url": "",
+        "downloads": 0,
+        "i18n": {
+          "ru": {
+            "description": "Автоматически принимает матчи в League of Legends, Dota 2 и Counter-Strike 2.",
+            "name": "PrimeAutoAccept"
+          }
+        },
+        "icon_url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IlByaW1lQXV0b0FjY2VwdCI+CiAgPHRpdGxlPlByaW1lQXV0b0FjY2VwdDwvdGl0bGU+CiAgPGRlZnM+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9ImJnIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iIzFlM2E4YSIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiM2ZDI4ZDkiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9Im9rIiB4MT0iMCIgeTE9IjAiIHgyPSIwIiB5Mj0iMSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iIzRhZGU4MCIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMxNmEzNGEiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgPC9kZWZzPgogIDxyZWN0IHg9IjIiIHk9IjIiIHdpZHRoPSI2MCIgaGVpZ2h0PSI2MCIgcng9IjE0IiBmaWxsPSJ1cmwoI2JnKSIvPgogIDxjaXJjbGUgY3g9IjMyIiBjeT0iMzIiIHI9IjE5IiBmaWxsPSJub25lIiBzdHJva2U9IiNlMGU3ZmYiIHN0cm9rZS1vcGFjaXR5PSIwLjM1IiBzdHJva2Utd2lkdGg9IjMiLz4KICA8cGF0aCBkPSJNMzIgNnY5TTMyIDQ5djlNNiAzMmg5TTQ5IDMyaDkiIHN0cm9rZT0iI2UwZTdmZiIgc3Ryb2tlLXdpZHRoPSIzLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjMyIiBjeT0iMzIiIHI9IjEzIiBmaWxsPSJ1cmwoI29rKSIvPgogIDxwYXRoIGQ9Ik0yNS41IDMyLjVsNC41IDQuNSA4LjUtOS41IiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmZmZmYiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+Cjwvc3ZnPgo=",
+        "id": "dwertyfa-primeautoaccept",
+        "license": "MIT",
+        "name": "PrimeAutoAccept",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/SpherePrime/PrimeAutoAccept/releases/download/v0.1.0/dwertyfa-primeautoaccept-0.1.0-linux-x64.astraplugin",
+          "windows-x64": "https://github.com/SpherePrime/PrimeAutoAccept/releases/download/v0.1.0/dwertyfa-primeautoaccept-0.1.0-windows-x64.astraplugin"
+        },
+        "readme": "# PrimeAutoAccept\n\nПлагин для Astra: автоматически принимает найденный матч в League of Legends, Dota 2 и Counter-Strike 2. Только Windows x64.\n\n## Как работает\n\n| Игра | Способ |\n|---|---|\n| League of Legends | Локальный API клиента (LCU): читает `lockfile`, при `ready-check` вызывает `POST /lol-matchmaking/v1/ready-check/accept`. Окно не трогает. |\n| Dota 2, CS2 | API для принятия нет. Раз в секунду снимает центр окна игры, ищет зелёную кнопку «Принять», подтверждает её на двух кадрах и кликает. Курсор возвращается на место. |\n\nЗадержка перед принятием настраивается: за это время можно отклонить матч вручную.\n\nОпрос идёт, только пока запущен процесс игры (`LeagueClientUx.exe`, `dota2.exe`, `cs2.exe`) и автоприём для неё включён.\n\n## Снимки и нагрузка\n\n- Снимки не сохраняются на диск. Кадр живёт в памяти только на время одной проверки, затем буфер и GDI-объекты освобождаются.\n- Снимается только центральная область окна, сразу уменьшенная до 320 px по ширине.\n- Захват и поиск — около 8 мс раз в секунду, в отдельном процессе плагина с пониженным приоритетом. Поток игры не затрагивается.\n\nДля Dota 2 и CS2:\n- окно игры не должно быть свёрнуто;\n- если игра не на переднем плане, плагин выводит её вперёд («Выводить окно игры»). Без этой опции принимает только когда игра активна;\n- в эксклюзивном полноэкранном режиме снимок фонового окна может быть пустым — используйте «Полноэкранный в окне» или держите игру активной.\n\n## Настройки\n\n- League of Legends / Dota 2 / Counter-Strike 2 — включить автоприём для игры.\n- Задержка, мс — пауза перед принятием (0–10000, по умолчанию 1500).\n- Выводить окно игры — для Dota 2 и CS2.\n- Папка League of Legends — если клиент не найден автоматически.\n\n## Инструменты ассистента\n\n- `auto_accept_status` — что включено, какие игры запущены, сколько матчей принято.\n- `set_auto_accept` — включить или выключить автоприём (`lol`, `dota2`, `cs2`, `all`) до перезапуска.\n\n## Триггеры автоматизаций\n\n- `match_found` — матч найден.\n- `match_accepted` — матч принят.\n\nPayload: `{\"game\": \"lol\" | \"dota2\" | \"cs2\", \"title\": \"...\"}`.\n\n## Сборка и проверка\n\n```\ncargo build --release\ncargo test\nastra-plugin check . --strict\nastra-plugin test .\n```\n\n## Структура\n\n- `src/main.rs` — плагин: инструменты, триггеры, хуки.\n- `src/watcher.rs` — фоновый цикл по играм.\n- `src/lcu.rs` — клиент League of Legends.\n- `src/detector.rs` — поиск кнопки «Принять» на кадре.\n- `src/window.rs` — окно игры: поиск, фокус.\n- `src/capture.rs` — снимок области окна.\n- `src/input.rs` — клик и нажатие клавиш.\n- `src/process.rs` — поиск процессов.\n- `src/settings.rs`, `src/state.rs`, `src/report.rs`, `src/game.rs`.\n\n## Лицензия\n\nMIT, см. `LICENSE`.\n",
+        "releases": [
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "dwertyfa-primeautoaccept-0.1.0-linux-x64.astraplugin",
+                "sha256": "670480d0ec427434605dcb56b0107aa0e8a0bea05446f6fb2437c9a9d2765a16",
+                "size": 2650114,
+                "url": "https://github.com/SpherePrime/PrimeAutoAccept/releases/download/v0.1.0/dwertyfa-primeautoaccept-0.1.0-linux-x64.astraplugin"
+              },
+              "windows-x64": {
+                "filename": "dwertyfa-primeautoaccept-0.1.0-windows-x64.astraplugin",
+                "sha256": "1d456c305a0bd5ce2cb9e2696d663d2b92f16f01ca2118d3e89a5b21f774f419",
+                "size": 4056962,
+                "url": "https://github.com/SpherePrime/PrimeAutoAccept/releases/download/v0.1.0/dwertyfa-primeautoaccept-0.1.0-windows-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools",
+              "triggers"
+            ],
+            "min_astra_version": "0.2.1",
+            "permissions": {
+              "fire_trigger": {
+                "reason": "Starts your automations when a match is found or accepted."
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-10-25T12:09:03Z",
+            "release": {
+              "commit": "41422f1241329edccc3957e7403dfcb780922930",
+              "kind": "github_release",
+              "repo": "SpherePrime/PrimeAutoAccept",
+              "tag": "v0.1.0"
+            },
+            "review": "unreviewed",
+            "version": "0.1.0"
+          }
+        ],
+        "repository_url": "https://github.com/SpherePrime/PrimeAutoAccept",
+        "source": {
+          "kind": "github",
+          "repo": "SpherePrime/PrimeAutoAccept"
+        },
+        "stars": 0,
+        "updated_at": "2026-10-25T12:09:03Z",
+        "version": "0.1.0"
+      },
+      {
         "added_at": "2026-10-16",
         "author": "astra-test-author",
         "capabilities": [
@@ -3290,6 +3362,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 83
+    "serial": 84
   }
 }

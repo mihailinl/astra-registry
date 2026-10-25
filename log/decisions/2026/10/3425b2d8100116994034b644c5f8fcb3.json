@@ -1,0 +1,26 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "linux-x64:670480d0ec427434605dcb56b0107aa0e8a0bea05446f6fb2437c9a9d2765a16",
+    "windows-x64:1d456c305a0bd5ce2cb9e2696d663d2b92f16f01ca2118d3e89a5b21f774f419"
+  ],
+  "commit": "41422f1241329edccc3957e7403dfcb780922930",
+  "decided_at": "2026-10-25T12:11:04Z",
+  "decision_id": "3425b2d8100116994034b644c5f8fcb3",
+  "fingerprint": "8d425da870481a1b",
+  "plugin_id": "dwertyfa-primeautoaccept",
+  "reasons": [
+    "P_PUBLISHED",
+    "P_REVIEW_PRIORITY"
+  ],
+  "repo": "SpherePrime/PrimeAutoAccept",
+  "repository_id": "1433146979",
+  "repository_owner_id": "332264680",
+  "run": "40191868529/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "9f8c7a22-93d1-47fd-92e6-69b50ab77100",
+  "tag": "v0.1.0",
+  "trigger": "panel",
+  "version": "0.1.0"
+}

@@ -1,0 +1,25 @@
+{
+  "$comment": "Derived from SpherePrime/PrimeAutoAccept@v0.1.0 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "schema": "astra.registry.plugin/1",
+  "id": "dwertyfa-primeautoaccept",
+  "name": "PrimeAutoAccept",
+  "summary": "Auto-accepts matches in League of Legends, Dota 2 and Counter-Strike 2.",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "SpherePrime/PrimeAutoAccept"
+  },
+  "added_at": "2026-10-25",
+  "description": "Auto-accepts matches in League of Legends, Dota 2 and Counter-Strike 2.",
+  "author": {
+    "name": "dwertyfa"
+  },
+  "icon": "icon.svg",
+  "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "PrimeAutoAccept",
+      "summary": "Автоматически принимает матчи в League of Legends, Dota 2 и Counter-Strike 2."
+    }
+  }
+}

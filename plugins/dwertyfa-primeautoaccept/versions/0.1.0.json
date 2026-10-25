@@ -1,0 +1,39 @@
+{
+  "$comment": "Derived from SpherePrime/PrimeAutoAccept@v0.1.0. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "dwertyfa-primeautoaccept",
+  "version": "0.1.0",
+  "published_at": "2026-10-25T12:09:03Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "SpherePrime/PrimeAutoAccept",
+    "tag": "v0.1.0",
+    "commit": "41422f1241329edccc3957e7403dfcb780922930"
+  },
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://github.com/SpherePrime/PrimeAutoAccept/releases/download/v0.1.0/dwertyfa-primeautoaccept-0.1.0-linux-x64.astraplugin",
+      "filename": "dwertyfa-primeautoaccept-0.1.0-linux-x64.astraplugin",
+      "sha256": "670480d0ec427434605dcb56b0107aa0e8a0bea05446f6fb2437c9a9d2765a16",
+      "size": 2650114
+    },
+    "windows-x64": {
+      "url": "https://github.com/SpherePrime/PrimeAutoAccept/releases/download/v0.1.0/dwertyfa-primeautoaccept-0.1.0-windows-x64.astraplugin",
+      "filename": "dwertyfa-primeautoaccept-0.1.0-windows-x64.astraplugin",
+      "sha256": "1d456c305a0bd5ce2cb9e2696d663d2b92f16f01ca2118d3e89a5b21f774f419",
+      "size": 4056962
+    }
+  },
+  "protocol": 1,
+  "min_astra_version": "0.2.1",
+  "capabilities": [
+    "tools",
+    "triggers"
+  ],
+  "permissions": {
+    "fire_trigger": {
+      "reason": "Starts your automations when a match is found or accepted."
+    }
+  }
+}
