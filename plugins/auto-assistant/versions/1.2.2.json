@@ -1,0 +1,41 @@
+{
+  "$comment": "Derived from Voltur792/auto-assistant@v1.2.2. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "auto-assistant",
+  "version": "1.2.2",
+  "published_at": "2026-10-25T09:48:33Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "Voltur792/auto-assistant",
+    "tag": "v1.2.2",
+    "commit": "148fe5c9efded11f0839ea6ef9ee500297f69546"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/Voltur792/auto-assistant/releases/download/v1.2.2/auto-assistant-1.2.2-noarch.astraplugin",
+      "filename": "auto-assistant-1.2.2-noarch.astraplugin",
+      "sha256": "09e6b6d2cbe29a327afda063904eecec334bafa0917b75127cd2964936288820",
+      "size": 78581
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "actions",
+    "dom_access",
+    "tools",
+    "triggers",
+    "ui_contributions"
+  ],
+  "permissions": {
+    "dom_access": {
+      "reason": "Adds verified mail tasks and deadlines to Astra's native widgets, without letting the language model execute tools."
+    },
+    "fire_trigger": {
+      "reason": "Starts your automation (for example, a voice announcement) when an important letter is found"
+    },
+    "push_to_ui": {
+      "reason": "Refreshes the assistant tab when new mail arrives"
+    }
+  }
+}

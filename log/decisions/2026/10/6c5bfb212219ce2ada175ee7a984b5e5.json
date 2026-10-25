@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:09e6b6d2cbe29a327afda063904eecec334bafa0917b75127cd2964936288820"
+  ],
+  "commit": "148fe5c9efded11f0839ea6ef9ee500297f69546",
+  "decided_at": "2026-10-25T09:58:04Z",
+  "decision_id": "6c5bfb212219ce2ada175ee7a984b5e5",
+  "fingerprint": "6612a608cc5b8fbb",
+  "plugin_id": "auto-assistant",
+  "reasons": [
+    "P_PUBLISHED",
+    "P_REVIEW_PRIORITY"
+  ],
+  "repo": "Voltur792/auto-assistant",
+  "repository_id": "1373577963",
+  "repository_owner_id": "232130437",
+  "run": "40182702342/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "9366458e-5752-449c-9a54-f656959589d6",
+  "tag": "v1.2.2",
+  "trigger": "panel",
+  "version": "1.2.2"
+}
