@@ -1,0 +1,25 @@
+{
+  "$comment": "Derived from Voltur792/browser-control@v1.1.1 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "schema": "astra.registry.plugin/1",
+  "id": "browser-control",
+  "name": "Browser Control",
+  "summary": "Voice control for your browser: open sites and search, manage tabs, play videos and scroll Shorts hands-free through an optional local extension.",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "Voltur792/browser-control"
+  },
+  "added_at": "2026-10-25",
+  "description": "Voice control for your browser: open sites and search, manage tabs, play videos and scroll Shorts hands-free through an optional local extension.",
+  "author": {
+    "name": "Voltur"
+  },
+  "icon": "icon.png",
+  "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "Управление браузером",
+      "summary": "Голосовое управление браузером: сайты и поиск, вкладки, запуск видео и листание шортсов без слова «Астра» через локальное расширение."
+    }
+  }
+}
