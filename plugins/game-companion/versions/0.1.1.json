@@ -1,0 +1,37 @@
+{
+  "$comment": "Derived from iaroslaviskendirov-alt/game-companion@v0.1.1. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "game-companion",
+  "version": "0.1.1",
+  "published_at": "2026-10-25T10:25:40Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "iaroslaviskendirov-alt/game-companion",
+    "tag": "v0.1.1",
+    "commit": "06930d2f76791b64b6d74a82868147c1198a37c8"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/iaroslaviskendirov-alt/game-companion/releases/download/v0.1.1/game-companion-0.1.1-noarch.astraplugin",
+      "filename": "game-companion-0.1.1-noarch.astraplugin",
+      "sha256": "6dd0d947271c7c5d40fbcd2907c3b7aee581ab029b918ad3640c76a8baeac513",
+      "size": 246378
+    }
+  },
+  "protocol": 1,
+  "min_astra_version": "0.2.7",
+  "capabilities": [
+    "tools",
+    "triggers",
+    "ui_contributions"
+  ],
+  "permissions": {
+    "fire_trigger": {
+      "reason": "Fires Game started, Game closed and Achievement unlocked so your own automations can react"
+    },
+    "send_chat_message": {
+      "reason": "Lets Astra comment on game start, breaks, bedtime, session end and achievements, and answer questions from the Games tab"
+    }
+  }
+}

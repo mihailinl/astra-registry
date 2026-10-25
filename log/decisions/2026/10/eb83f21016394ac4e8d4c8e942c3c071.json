@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:6dd0d947271c7c5d40fbcd2907c3b7aee581ab029b918ad3640c76a8baeac513"
+  ],
+  "commit": "06930d2f76791b64b6d74a82868147c1198a37c8",
+  "decided_at": "2026-10-25T10:54:13Z",
+  "decision_id": "eb83f21016394ac4e8d4c8e942c3c071",
+  "fingerprint": "4075bfa6e2e591df",
+  "plugin_id": "game-companion",
+  "reasons": [
+    "P_PUBLISHED",
+    "P_REVIEW_PRIORITY"
+  ],
+  "repo": "iaroslaviskendirov-alt/game-companion",
+  "repository_id": "1432469302",
+  "repository_owner_id": "301429225",
+  "run": "40186532976/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "ed45d112-d291-4cae-8247-c3b2635321b0",
+  "tag": "v0.1.1",
+  "trigger": "panel",
+  "version": "0.1.1"
+}

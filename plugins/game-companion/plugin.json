@@ -1,0 +1,26 @@
+{
+  "$comment": "Derived from iaroslaviskendirov-alt/game-companion@v0.1.1 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "schema": "astra.registry.plugin/1",
+  "id": "game-companion",
+  "name": "Game Companion",
+  "summary": "Astra notices which game you are playing and keeps you company: comments, break and bedtime reminders, session summaries, Steam achievements and play stats.",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "iaroslaviskendirov-alt/game-companion"
+  },
+  "added_at": "2026-10-25",
+  "description": "Astra notices which game you are playing and keeps you company: comments, break and bedtime reminders, session summaries, Steam achievements and play stats.",
+  "author": {
+    "name": "iaroslaviskendirov-alt"
+  },
+  "homepage": "https://github.com/iaroslaviskendirov-alt/game-companion",
+  "icon": "icon.svg",
+  "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "Игровой компаньон",
+      "summary": "Астра понимает, во что ты играешь, и составляет компанию: комментирует запуск, напоминает о перерыве и сне, подводит итог сессии, радуется ачивкам Steam и ведёт статистику."
+    }
+  }
+}
