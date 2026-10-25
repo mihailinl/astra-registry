@@ -1018,7 +1018,7 @@
               "repo": "SpherePrime/PrimeAi",
               "tag": "v0.2.6"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.2.6"
           },
           {
@@ -1044,7 +1044,7 @@
               "repo": "SpherePrime/PrimeAi",
               "tag": "v0.2.5"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.2.5"
           }
         ],
@@ -2695,6 +2695,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 74
+    "serial": 75
   }
 }
