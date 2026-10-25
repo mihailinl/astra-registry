@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:3d8a2b9596d4fc20a3b08f9b784ee9a4429e14b15ebcb11a122862b7d120c3f5"
+  ],
+  "commit": "070e63988a2904c576e85b6a7ad83e28b1c4a4ae",
+  "decided_at": "2026-10-25T19:46:44Z",
+  "decision_id": "13147d316f8536c29ca289dcb9acf470",
+  "fingerprint": "48f424785f784636",
+  "plugin_id": "pixel-drummer",
+  "reasons": [
+    "P_PUBLISHED",
+    "P_REVIEW_PRIORITY"
+  ],
+  "repo": "Voltur792/pixel-drummer",
+  "repository_id": "1414874855",
+  "repository_owner_id": "232130437",
+  "run": "40227485493/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "0ca73e9b-ae48-4374-92ae-d80229963d24",
+  "tag": "v0.6.1",
+  "trigger": "poll",
+  "version": "0.6.1"
+}
