@@ -4,7 +4,7 @@
   "id": "text-utils",
   "version": "0.1.4",
   "published_at": "2026-10-17T09:49:30Z",
-  "review": "unreviewed",
+  "review": "reviewed",
   "release": {
     "kind": "github_release",
     "repo": "mihailinl/AstraPlugins",

@@ -1,0 +1,12 @@
+{
+  "date": "2026-10-26",
+  "action": "review",
+  "plugin": "text-utils",
+  "versions": [
+    "0.1.4"
+  ],
+  "reason": "Read all code of this version: local text tools (word count, case conversion, regex, Base64) and a time-of-day trigger; no network access, no shell commands, no file access.",
+  "category": "review_passed",
+  "service_decision_id": "061a9c37-f949-45f5-9a9b-5987308282ab",
+  "declared_interest": false
+}
