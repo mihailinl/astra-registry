@@ -28,6 +28,18 @@
    - **Пальцы** — насколько согнуть пальцы к ладони поверх анимации: у Mixamo они часто прямые, как доска.
 3. Нажми **Применить** — аватар перезапустится на пару секунд.
 
+### Плавные танцы
+
+Переключатель в карточке «Танцы под музыку» (включён по умолчанию). Без него у многих наборов танец заканчивается,
+она встаёт в стойку ожидания и начинает снова: танцевальные состояния с «входом» и «выходом» (`start`/`end`, например
+`dance_in`/`dance_out`) проигрывают их между танцами, а танец под темп (`blend` по `bpm`) не заканчивается вовсе.
+
+- **Свой набор персонажа:** в `dance_slow`/`dance_mid`/`dance_fast` строки `start`, `end` и варианты с `blend`
+  становятся комментариями `# anim-studio smooth: …`, добавляются `reroll_secs` (интервал смены танца) и `fade = 0.9`,
+  если их не было. Выключишь — набор станет ровно таким, как был.
+- **Встроенный набор** править нельзя: для темпов, у которых есть танцы из студии, дополнение заменяет состояние
+  (`merge = "replace"`) — только эти танцы, с плавной сменой. Темпы без танцев из студии остаются как есть.
+
 ### Редактор
 
 Кнопка **✎ Редактор** у анимации (FBX и VRMA) открывает её на модели персонажа, который сейчас надет: вращай камеру
@@ -128,6 +140,7 @@ astra-plugin build .
 Add your own animations to the Astra avatar without editing files by hand, and choose when she plays them:
 when bored (idle), to music (slow / mid / fast), only at some times of day (morning / day / evening / night), or as her own state `as_…` that you can bind to triggers. Supports `.vrma`, Mixamo `.fbx` (with an *in place* option) and multi-animation `.glb`.
 She also stretches in the morning, waves when you come back and yawns at night (the page creates the two Astra commands for that).
+“Smooth dances” (on by default) takes the intro/outro and the endless tempo-paced loop out of the pack's dance states, so dances flow into each other instead of stopping in the idle stance between them; her own pack is edited reversibly, a built-in one is replaced through the add-on for the tempos that have studio dances.
 “Into the character's pack” puts an animation into the character's own pack as an ordinary clip and state, so Astra lists it under Model → Animations and its triggers and commands play it live, with no restart.
 Each animation can get a face and an icon over her head (hearts, sparkles, notes…). The engine takes these only from effects in the character's own base pack, so the plugin keeps a marked block at the end of that pack's `animpack.toml` and adds it to the effect `[interactions.none]` plays. They show while the animation plays as itself (Show, time of day, a reaction: state `greet` or `as_<id>`), not as one of the random idle moves or dances.
 Install: Astra → Workshop → Development → Import plugin → choose `anim-studio.astraplugin`.
