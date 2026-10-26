@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "QDUV+zC1Dd3i7bVoTHJcVWLtSKfT694hd7Zifo0VhTYrao6UQ6Vcf5C3ptek0opszIaL4aYdjputIyhs6IvdAQ=="
+      "sig": "qSaXP6/e6WfHFCjT6cLkrD8rkc46AkR9J8P5o4jwoXkkx/EqEB1BbYq1Oi7WElLOh+WEvK2hni+Zi6FVyXP7Dg=="
     }
   ],
   "signed": {
-    "expires_at": "2026-11-25T04:11:55Z",
-    "issued_at": "2026-10-26T04:11:55Z",
+    "expires_at": "2026-11-25T04:14:34Z",
+    "issued_at": "2026-10-26T04:14:34Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
@@ -671,7 +671,7 @@
               "repo": "Voltur792/detective-game",
               "tag": "v0.4.2"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.4.2"
           }
         ],
@@ -2323,7 +2323,7 @@
               "repo": "Voltur792/pixel-drummer",
               "tag": "v0.6.1"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.6.1"
           },
           {
@@ -2355,7 +2355,7 @@
               "repo": "Voltur792/pixel-drummer",
               "tag": "v0.6.0"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.6.0"
           },
           {
@@ -2387,7 +2387,7 @@
               "repo": "Voltur792/pixel-drummer",
               "tag": "v0.5.2"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.5.2"
           }
         ],
@@ -2453,7 +2453,7 @@
               "repo": "Voltur792/astra-sea-battle",
               "tag": "v0.5.1"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.5.1"
           }
         ],
@@ -2524,7 +2524,7 @@
               "repo": "Voltur792/SPT",
               "tag": "v1.3.2"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "1.3.2"
           },
           {
@@ -2557,7 +2557,7 @@
               "repo": "Voltur792/SPT",
               "tag": "v1.3.1"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "1.3.1"
           },
           {
@@ -2590,7 +2590,7 @@
               "repo": "Voltur792/SPT",
               "tag": "v1.3.0"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "1.3.0"
           },
           {
@@ -2623,7 +2623,7 @@
               "repo": "Voltur792/SPT",
               "tag": "v1.2.1"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "1.2.1"
           },
           {
@@ -3666,6 +3666,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 91
+    "serial": 92
   }
 }
