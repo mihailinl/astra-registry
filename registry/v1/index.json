@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "2bv6B7V842kH+caOpvoHf3V2PnV+AIWr2yG3rlnRj7z0kjD3e0UzlY+78feVgUFvQE6MzQTlKJJZ9M02IjWdAA=="
+      "sig": "d8fXLYpzPwZjwXWHRhJz/2x8B9DEZ/DqWu2HHgwD7ZRWyJPCv7v7nVu1gl30dIGb5LOtR5k25+Sn+onnqSTlDA=="
     }
   ],
   "signed": {
-    "expires_at": "2026-11-25T05:35:22Z",
-    "issued_at": "2026-10-26T05:35:22Z",
+    "expires_at": "2026-11-25T05:40:53Z",
+    "issued_at": "2026-10-26T05:40:53Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
@@ -1083,7 +1083,7 @@
               "repo": "dwertyfa288/dwertyfa-astra-tg",
               "tag": "v0.1.20"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.1.20"
           },
           {
@@ -1121,6 +1121,7 @@
               "repo": "dwertyfa288/dwertyfa-astra-tg",
               "tag": "v0.1.14"
             },
+            "review": "reviewed",
             "version": "0.1.14"
           },
           {
@@ -1158,6 +1159,7 @@
               "repo": "dwertyfa288/dwertyfa-astra-tg",
               "tag": "v0.1.13"
             },
+            "review": "reviewed",
             "version": "0.1.13"
           },
           {
@@ -1194,6 +1196,7 @@
               "repo": "dwertyfa288/dwertyfa-astra-tg",
               "tag": "v0.1.12"
             },
+            "review": "reviewed",
             "version": "0.1.12"
           },
           {
@@ -1230,6 +1233,7 @@
               "repo": "dwertyfa288/dwertyfa-astra-tg",
               "tag": "v0.1.11"
             },
+            "review": "reviewed",
             "version": "0.1.11"
           }
         ],
@@ -3700,6 +3704,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 93
+    "serial": 94
   }
 }
