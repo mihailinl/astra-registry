@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "GLwH/DzQymT0eoXFb+voOawFJrXtnegDSDmCzSdzYH1ZVBA28kNxwH4vUKyGNf2Q0+wCcSly76kqck1UkTGYAg=="
+      "sig": "QDUV+zC1Dd3i7bVoTHJcVWLtSKfT694hd7Zifo0VhTYrao6UQ6Vcf5C3ptek0opszIaL4aYdjputIyhs6IvdAQ=="
     }
   ],
   "signed": {
-    "expires_at": "2026-11-24T20:23:10Z",
-    "issued_at": "2026-10-25T20:23:10Z",
+    "expires_at": "2026-11-25T04:11:55Z",
+    "issued_at": "2026-10-26T04:11:55Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
@@ -3028,7 +3028,7 @@
               "repo": "mihailinl/AstraPlugins",
               "tag": "text-utils-v0.1.4"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.1.4"
           },
           {
@@ -3666,6 +3666,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 90
+    "serial": 91
   }
 }
