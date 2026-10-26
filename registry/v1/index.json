@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "qSaXP6/e6WfHFCjT6cLkrD8rkc46AkR9J8P5o4jwoXkkx/EqEB1BbYq1Oi7WElLOh+WEvK2hni+Zi6FVyXP7Dg=="
+      "sig": "2bv6B7V842kH+caOpvoHf3V2PnV+AIWr2yG3rlnRj7z0kjD3e0UzlY+78feVgUFvQE6MzQTlKJJZ9M02IjWdAA=="
     }
   ],
   "signed": {
-    "expires_at": "2026-11-25T04:14:34Z",
-    "issued_at": "2026-10-26T04:14:34Z",
+    "expires_at": "2026-11-25T05:35:22Z",
+    "issued_at": "2026-10-26T05:35:22Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
@@ -998,12 +998,12 @@
           "triggers",
           "ui_contributions"
         ],
-        "description": "Reads messages from selected Telegram chats with Astra's voice and plays voice messages. Lets you reply and message contacts by voice, find recipients by name, send one message to several chats or a…",
-        "download_url": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.20/dwertyfa-astra-tg-0.1.20-noarch.astraplugin",
+        "description": "Connects by phone number or QR code. Reads messages from selected Telegram chats with Astra's voice and plays voice messages. Lets you reply and message contacts by voice, find recipients by name,…",
+        "download_url": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.21/dwertyfa-astra-tg-0.1.21-noarch.astraplugin",
         "downloads": 0,
         "i18n": {
           "ru": {
-            "description": "Озвучивает сообщения из выбранных Telegram-чатов голосом Astra и проигрывает голосовые. Позволяет отвечать и писать контактам голосом, находить получателей по имени, делать рассылки в несколько…",
+            "description": "Подключение по номеру или QR-коду. Озвучивает сообщения из выбранных Telegram-чатов голосом Astra и проигрывает голосовые. Позволяет отвечать и писать контактам голосом, находить получателей по…",
             "name": "TG for Astra"
           }
         },
@@ -1012,12 +1012,46 @@
         "license": "MIT",
         "name": "TG for Astra",
         "platform_downloads": {
-          "linux-x64": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.20/dwertyfa-astra-tg-0.1.20-noarch.astraplugin",
-          "noarch": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.20/dwertyfa-astra-tg-0.1.20-noarch.astraplugin",
-          "windows-x64": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.20/dwertyfa-astra-tg-0.1.20-noarch.astraplugin"
+          "linux-x64": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.21/dwertyfa-astra-tg-0.1.21-noarch.astraplugin",
+          "noarch": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.21/dwertyfa-astra-tg-0.1.21-noarch.astraplugin",
+          "windows-x64": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.21/dwertyfa-astra-tg-0.1.21-noarch.astraplugin"
         },
-        "readme": "# TG for Astra\n\nReads messages from selected Telegram chats with Astra's voice and plays voice messages. Lets you reply and message contacts by voice, find recipients by name, send one message to several chats or a Telegram folder, and set up rule-based auto-replies. Announcement templates and reply phrases are customizable. Works without a VPN through the built-in proxy.\n\n## Features\n\n- Login with a phone number, Telegram verification code, and two-step verification password. Russian numbers may start with +7, 7 or 8; spaces, parentheses and hyphens are accepted and normalized automatically.\n- Support for private chats, groups, and channels.\n- Monitoring of up to 1000 chats at the same time, with a one-click \"monitor every chat\" action.\n- A privacy toggle that masks the account name and phone number; the state is kept in the plugin's own state file.\n- A panel that lists the chats currently being monitored.\n- A button that writes the ready-made Astra announcement command out as an `astra-commands` file to import.\n- Customizable notification and reply-confirmation messages.\n- Playback of Telegram voice messages in their original audio.\n- All Telegram connections use the configured authenticated WSS relay, including login, reconnections and media downloads. The plugin never tries a direct Telegram connection.\n- Immediate replies to incoming messages through an AI tool, for example `Astra, tell him I will be there soon`. No separate reply command or send confirmation is needed. The reply phrase and reply window are configurable in the plugin.\n- AI chooses recipients from real Telegram contacts, using names and usernames to interpret inflections, nicknames, Russian/English spellings and speech recognition errors. Ambiguous recipients are clarified; selected chats are addressed by ID.\n- Recent incoming messages have individual reply IDs, so another incoming message cannot redirect a reply that is already being sent.\n- New Telegram messages through Astra AI tools: say, for example, `Astra, write to Andrey that I will be there soon`; Astra shows the resolved chat and draft first, then sends only after a separate confirmation.\n- A customizable phrase for tool-based sending, such as `write` or `write in Telegram`. No Astra command-editor nodes are required for this feature.\n- A separate AI-tool flow for sending one identical message to several existing chats, `@usernames`, Telegram folders, or a mixture of them.\n- One confirmation for the entire broadcast, automatic folder expansion and duplicate removal, with a hard limit of 10 final recipients.\n- A customizable broadcast phrase and a random delay range between individual sends. Ordinary per-chat errors do not stop the remaining queue, while Telegram flood-wait responses pause and retry it.\n- An optional campaign auto-responder for private recipients of the latest confirmed broadcast. It stays active until disabled and each saved rule can answer each recipient only once per campaign.\n- Unlimited auto-reply rule cards with editable trigger chips. Triggers may be full phrases and are committed with a comma or Enter; every rule sends one saved response verbatim.\n- If one rule matches, it is selected locally. If several match, Astra silently receives the full incoming message and chooses one matching rule ID; the plugin never sends generated or rewritten model text.\n- A short Astra voice confirmation after a successful background auto-reply, without speaking the recipient's message or the saved response.\n- Concise tool responses: Astra asks only for the final send confirmation and reports only the final result, without narrating tool lookup or intermediate steps.\n\nThe two-step verification password is not stored after login.\n\nTelegram chooses where login codes are delivered. An accepted code request does not prove delivery. If a code does not arrive, the retry button waits for Telegram’s cooldown and uses its offered next delivery method within the same login attempt. The plugin never restarts login just to resend a code; diagnostics record delivery types and delays, without recording codes or login hashes.\n\nNeural selection between several matching auto-reply rules uses Astra's `send_chat_message` permission. Astra may restrict this permission for an unsigned file import; test that branch through Developer Mode/source sideload or install a verified catalog release. Single-rule auto-replies do not need neural selection.\n\n## Setting up announcements and replies\n\n1. Connect your Telegram account and select the chats to monitor.\n2. In **Команды Astra**, prepare and import the command file, then enable the single **тг** command.\n3. To set it up manually, create **тг** and connect these nodes: **Новое сообщение Telegram → Произнести → Проиграть голосовое Telegram**. Set the spoken text to `{announcement}` and use the voice from Astra settings.\n4. Configure announcement templates, the reply phrase and the reply window in **Озвучивание и быстрый ответ** below the command instructions.\n5. Ask Astra to reply to an incoming message, for example **«Ответь ему, что буду через час»**. It uses an AI tool and sends immediately without confirmation. No reply command or text trigger is required.\n6. For a new message, say **«Напиши Андрюхе, что скоро буду»**. AI chooses from actual Telegram contacts and clarifies ambiguous names. New messages and broadcasts still require draft confirmation.\n\n## Updating from command-based replies\n\nDisable or delete the old `тг ответ` command in Astra. Import the updated command file if needed; it contains only `тг` for announcements and voice playback. Replying, sending new messages and broadcasts use AI tools. Ordinary speech is never automatically captured as reply text.\n\n## Development\n\nRequirements: Node.js 20+ and the `astra-plugin` CLI.\n\n```bash\nnpm install\nnpm run typecheck\nnpm run build\nastra-plugin check --strict .\n```\n\nTo run the plugin in development mode:\n\n```bash\nastra-plugin dev .\n```\n\n## License\n\nMIT\n",
+        "readme": "# TG for Astra\n\nReads messages from selected Telegram chats with Astra's voice and plays voice messages. Lets you reply and message contacts by voice, find recipients by name, send one message to several chats or a Telegram folder, and set up rule-based auto-replies. Announcement templates and reply phrases are customizable. Works without a VPN through the built-in proxy.\n\n## Features\n\n- QR login through the official Telegram app on your phone, without waiting for a login code. QR codes refresh automatically and 2FA passwords remain supported.\n- Login with a phone number, Telegram verification code, and two-step verification password. Russian numbers may start with +7, 7 or 8; spaces, parentheses and hyphens are accepted and normalized automatically.\n- Support for private chats, groups, and channels.\n- Monitoring of up to 1000 chats at the same time, with a one-click \"monitor every chat\" action.\n- A privacy toggle that masks the account name and phone number; the state is kept in the plugin's own state file.\n- A panel that lists the chats currently being monitored.\n- A button that writes the ready-made Astra announcement command out as an `astra-commands` file to import.\n- Customizable notification and reply-confirmation messages.\n- Playback of Telegram voice messages in their original audio.\n- All Telegram connections use the configured authenticated WSS relay, including login, reconnections and media downloads. The plugin never tries a direct Telegram connection.\n- Immediate replies to incoming messages through an AI tool, for example `Astra, tell him I will be there soon`. No separate reply command or send confirmation is needed. The reply phrase and reply window are configurable in the plugin.\n- AI chooses recipients from real Telegram contacts, using names and usernames to interpret inflections, nicknames, Russian/English spellings and speech recognition errors. Ambiguous recipients are clarified; selected chats are addressed by ID.\n- Recent incoming messages have individual reply IDs, so another incoming message cannot redirect a reply that is already being sent.\n- New Telegram messages through Astra AI tools: say, for example, `Astra, write to Andrey that I will be there soon`; Astra shows the resolved chat and draft first, then sends only after a separate confirmation.\n- A customizable phrase for tool-based sending, such as `write` or `write in Telegram`. No Astra command-editor nodes are required for this feature.\n- A separate AI-tool flow for sending one identical message to several existing chats, `@usernames`, Telegram folders, or a mixture of them.\n- One confirmation for the entire broadcast, automatic folder expansion and duplicate removal, with a hard limit of 10 final recipients.\n- A customizable broadcast phrase and a random delay range between individual sends. Ordinary per-chat errors do not stop the remaining queue, while Telegram flood-wait responses pause and retry it.\n- An optional campaign auto-responder for private recipients of the latest confirmed broadcast. It stays active until disabled and each saved rule can answer each recipient only once per campaign.\n- Unlimited auto-reply rule cards with editable trigger chips. Triggers may be full phrases and are committed with a comma or Enter; every rule sends one saved response verbatim.\n- If one rule matches, it is selected locally. If several match, Astra silently receives the full incoming message and chooses one matching rule ID; the plugin never sends generated or rewritten model text.\n- A short Astra voice confirmation after a successful background auto-reply, without speaking the recipient's message or the saved response.\n- Concise tool responses: Astra asks only for the final send confirmation and reports only the final result, without narrating tool lookup or intermediate steps.\n\nThe two-step verification password is not stored after login.\n\nTelegram chooses where login codes are delivered. An accepted code request does not prove delivery. If a code does not arrive, the retry button waits for Telegram’s cooldown and uses its offered next delivery method within the same login attempt. When Telegram offers no retry, the button shows elapsed waiting time instead of a fictional countdown. You can switch to QR login: Telegram on your phone → Settings → Devices → Link Desktop Device, then scan and approve. The plugin never restarts login just to resend a code; diagnostics record delivery types and delays, without recording codes or login hashes.\n\nNeural selection between several matching auto-reply rules uses Astra's `send_chat_message` permission. Astra may restrict this permission for an unsigned file import; test that branch through Developer Mode/source sideload or install a verified catalog release. Single-rule auto-replies do not need neural selection.\n\n## Setting up announcements and replies\n\n1. Connect your Telegram account and select the chats to monitor.\n2. In **Команды Astra**, prepare and import the command file, then enable the single **тг** command.\n3. To set it up manually, create **тг** and connect these nodes: **Новое сообщение Telegram → Произнести → Проиграть голосовое Telegram**. Set the spoken text to `{announcement}` and use the voice from Astra settings.\n4. Configure announcement templates, the reply phrase and the reply window in **Озвучивание и быстрый ответ** below the command instructions.\n5. Ask Astra to reply to an incoming message, for example **«Ответь ему, что буду через час»**. It uses an AI tool and sends immediately without confirmation. No reply command or text trigger is required.\n6. For a new message, say **«Напиши Андрюхе, что скоро буду»**. AI chooses from actual Telegram contacts and clarifies ambiguous names. New messages and broadcasts still require draft confirmation.\n\n## Updating from command-based replies\n\nDisable or delete the old `тг ответ` command in Astra. Import the updated command file if needed; it contains only `тг` for announcements and voice playback. Replying, sending new messages and broadcasts use AI tools. Ordinary speech is never automatically captured as reply text.\n\n## Development\n\nRequirements: Node.js 20+ and the `astra-plugin` CLI.\n\n```bash\nnpm install\nnpm run typecheck\nnpm run build\nastra-plugin check --strict .\n```\n\nTo run the plugin in development mode:\n\n```bash\nastra-plugin dev .\n```\n\n## License\n\nMIT\n",
         "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "dwertyfa-astra-tg-0.1.21-noarch.astraplugin",
+                "sha256": "5819a27903674bf53a8ec5d06b13eeb98a79ba50ba766b0ca605175fb55e5c60",
+                "size": 3911624,
+                "url": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.21/dwertyfa-astra-tg-0.1.21-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "actions",
+              "tools",
+              "triggers",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "fire_trigger": {
+                "reason": "Starts your Telegram announcement command when a selected chat receives a message"
+              },
+              "send_chat_message": {
+                "reason": "Chooses one of your saved auto-replies when an incoming Telegram message matches multiple rules"
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-10-25T08:35:08Z",
+            "release": {
+              "commit": "55553c4c1c8004acd7deeaaabccf32f77f4280e1",
+              "kind": "github_release",
+              "repo": "dwertyfa288/dwertyfa-astra-tg",
+              "tag": "v0.1.21"
+            },
+            "review": "unreviewed",
+            "version": "0.1.21"
+          },
           {
             "artifacts": {
               "noarch": {
@@ -1205,8 +1239,8 @@
           "repo": "dwertyfa288/dwertyfa-astra-tg"
         },
         "stars": 0,
-        "updated_at": "2026-10-25T08:00:48Z",
-        "version": "0.1.20"
+        "updated_at": "2026-10-25T08:35:08Z",
+        "version": "0.1.21"
       },
       {
         "added_at": "2026-10-24",
@@ -3666,6 +3700,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 92
+    "serial": 93
   }
 }
