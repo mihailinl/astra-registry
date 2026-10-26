@@ -1,0 +1,12 @@
+{
+  "date": "2026-10-26",
+  "action": "review",
+  "plugin": "detective-game",
+  "versions": [
+    "0.4.2"
+  ],
+  "reason": "Read all code of this version: a chat detective game with built-in and procedurally generated cases saved to a local JSON file. No network access beyond Astra, no shell commands.",
+  "category": "review_passed",
+  "service_decision_id": "e60269b0-beb6-437b-a4e4-670eb5a6915e",
+  "declared_interest": false
+}

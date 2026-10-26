@@ -1,0 +1,15 @@
+{
+  "date": "2026-10-26",
+  "action": "review",
+  "plugin": "sleep-pause-timer",
+  "versions": [
+    "1.3.2",
+    "1.3.1",
+    "1.3.0",
+    "1.2.1"
+  ],
+  "reason": "Read all code of these versions: timers, alarms, idle tracking and opt-in screen comments via Astra chat. Actions use OS APIs and fixed-argument system tools; it talks only to its sibling plugins on loopback; no internet access.",
+  "category": "review_passed",
+  "service_decision_id": "ae417f82-1c2a-4320-87da-dbb360c90fa6",
+  "declared_interest": false
+}

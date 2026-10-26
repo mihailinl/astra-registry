@@ -1,0 +1,12 @@
+{
+  "date": "2026-10-26",
+  "action": "review",
+  "plugin": "sea-battle",
+  "versions": [
+    "0.5.1"
+  ],
+  "reason": "Read all code of this version: a Battleship game with local, Astra-model and online modes. Online play uses third-party matchmaking and WebRTC relay services, the bundled PeerJS matches upstream, and shell use is limited to fixed notification, sound and clipboard commands.",
+  "category": "review_passed",
+  "service_decision_id": "1152068b-493f-42f8-8db5-eac1d3980ed5",
+  "declared_interest": false
+}

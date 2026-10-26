@@ -1,0 +1,14 @@
+{
+  "date": "2026-10-26",
+  "action": "review",
+  "plugin": "pixel-drummer",
+  "versions": [
+    "0.6.1",
+    "0.6.0",
+    "0.5.2"
+  ],
+  "reason": "Read all code of these versions; the bundled audio model matches its upstream release. A local companion that animates a character to system audio analysed on the device; no network access; it only launches its own renderer process.",
+  "category": "review_passed",
+  "service_decision_id": "da04627c-ada9-47f2-b4d2-c18cf83c5e36",
+  "declared_interest": false
+}
