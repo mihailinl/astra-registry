@@ -1076,7 +1076,7 @@
               "repo": "dwertyfa288/dwertyfa-astra-tg",
               "tag": "v0.1.20"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.1.20"
           },
           {
@@ -1114,6 +1114,7 @@
               "repo": "dwertyfa288/dwertyfa-astra-tg",
               "tag": "v0.1.14"
             },
+            "review": "reviewed",
             "version": "0.1.14"
           },
           {
@@ -1151,6 +1152,7 @@
               "repo": "dwertyfa288/dwertyfa-astra-tg",
               "tag": "v0.1.13"
             },
+            "review": "reviewed",
             "version": "0.1.13"
           },
           {
@@ -1187,6 +1189,7 @@
               "repo": "dwertyfa288/dwertyfa-astra-tg",
               "tag": "v0.1.12"
             },
+            "review": "reviewed",
             "version": "0.1.12"
           },
           {
@@ -1223,6 +1226,7 @@
               "repo": "dwertyfa288/dwertyfa-astra-tg",
               "tag": "v0.1.11"
             },
+            "review": "reviewed",
             "version": "0.1.11"
           }
         ],
@@ -3693,6 +3697,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 93
+    "serial": 94
   }
 }

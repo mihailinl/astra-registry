@@ -1,0 +1,16 @@
+{
+  "date": "2026-10-26",
+  "action": "review",
+  "plugin": "dwertyfa-astra-tg",
+  "versions": [
+    "0.1.20",
+    "0.1.14",
+    "0.1.13",
+    "0.1.11",
+    "0.1.12"
+  ],
+  "reason": "Версия прочитана, замечаний нет.",
+  "category": "review_passed",
+  "service_decision_id": "04de40f3-7942-480e-b9f5-05e61cf10a75",
+  "declared_interest": false
+}
