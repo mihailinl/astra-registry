@@ -154,7 +154,12 @@ export async function claimJob({ client, polled = [], mode = null, log = console
     // and `-x`; the poll's `isUsableTag` is the one the poll validated with,
     // and refuses both. The job holding the token re-applies the stricter one
     // rather than trusting the job that read the feed to have been this code.
-    if (!safeRepo(t?.repo) || !safeTag(t?.tag) || !isUsableTag(t.tag)) {
+    // `repository_id` gets the same re-check: `pollOutputs` (bot/lib/poll-
+    // run.mjs) hands it on absent, null, or a base-10 string, and this is the
+    // job that would put whatever it was given on the wire to `register`.
+    const idOk = t?.repository_id === undefined || t?.repository_id === null ||
+      (typeof t.repository_id === "string" && BASE10_RE.test(t.repository_id));
+    if (!safeRepo(t?.repo) || !safeTag(t?.tag) || !isUsableTag(t.tag) || !idOk) {
       throw new Error("poll handed on a tag outside the grammar; poll validates before anything leaves it (BOT-1)");
     }
     if (mode === "shadow") {
