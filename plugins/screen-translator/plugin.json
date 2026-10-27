@@ -1,0 +1,25 @@
+{
+  "$comment": "Derived from FluffyTaill/astra-screen-translator@v0.1.5 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "schema": "astra.registry.plugin/1",
+  "id": "screen-translator",
+  "name": "Screen Translator",
+  "summary": "Translate any text on screen: select a region with a hotkey, or turn on live subtitles for game dialogs and videos. Text is recognized locally by Windows OCR",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "FluffyTaill/astra-screen-translator"
+  },
+  "added_at": "2026-10-27",
+  "description": "Translate any text on screen: select a region with a hotkey, or turn on live subtitles for game dialogs and videos. Text is recognized locally by Windows OCR",
+  "author": {
+    "name": "Taill"
+  },
+  "icon": "icon.svg",
+  "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "Перевод с экрана",
+      "summary": "Переводит любой текст на экране: выдели область горячей клавишей или включи живые субтитры для диалогов в играх и видео. Текст распознаёт сама Windows, локально"
+    }
+  }
+}
