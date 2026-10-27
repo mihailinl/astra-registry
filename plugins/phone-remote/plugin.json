@@ -1,0 +1,25 @@
+{
+  "$comment": "Derived from FluffyTaill/astra-remote@v0.6.0 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "schema": "astra.registry.plugin/1",
+  "id": "phone-remote",
+  "name": "Phone Remote",
+  "summary": "Control this PC and talk to Astra from an Android app: a remote with your Astra commands, music and volume, files and clipboard, screenshots, your avatar with voice, and sleep or lock. Works from…",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "FluffyTaill/astra-remote"
+  },
+  "added_at": "2026-10-27",
+  "description": "Control this PC and talk to Astra from an Android app: a remote with your Astra commands, music and volume, files and clipboard, screenshots, your avatar with voice, and sleep or lock. Works from anywhere through your own free Cloudflare relay.",
+  "author": {
+    "name": "Taill"
+  },
+  "icon": "icon.svg",
+  "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "Пульт с телефона",
+      "summary": "Управляй ПК и говори с Astra из приложения на Android: пульт с твоими командами Astra, музыка и громкость, файлы и буфер обмена, снимок экрана, твоя моделька с голосом, сон и блокировка. Работает…"
+    }
+  }
+}

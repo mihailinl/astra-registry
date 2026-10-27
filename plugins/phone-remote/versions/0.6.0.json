@@ -1,0 +1,40 @@
+{
+  "$comment": "Derived from FluffyTaill/astra-remote@v0.6.0. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "phone-remote",
+  "version": "0.6.0",
+  "published_at": "2026-10-27T21:53:50Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "FluffyTaill/astra-remote",
+    "tag": "v0.6.0",
+    "commit": "c66f6a402ae83b1ff58ea53037a951753fe8ebfb"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/FluffyTaill/astra-remote/releases/download/v0.6.0/phone-remote-0.6.0-noarch.astraplugin",
+      "filename": "phone-remote-0.6.0-noarch.astraplugin",
+      "sha256": "703c1827e0005111a0187edcf8ccdf5c4a227377c9eb14ed4acf4862bb6e8528",
+      "size": 300525
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "client",
+    "tools",
+    "triggers",
+    "ui_contributions"
+  ],
+  "permissions": {
+    "client": {
+      "reason": "The phone app is a chat with Astra: what you type or say on the phone goes to Astra as if you typed it here."
+    },
+    "fire_trigger": {
+      "reason": "The buttons on the phone run the Astra commands you hang on the \"Phone Remote: button N\" triggers."
+    },
+    "send_chat_message": {
+      "reason": "Sends your messages from the phone to Astra and streams her reply back to the phone."
+    }
+  }
+}
