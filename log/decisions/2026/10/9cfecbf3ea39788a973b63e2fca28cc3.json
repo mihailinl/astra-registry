@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:4234e89c40dc4ef1c081bdbe0bafbb1eb04bb2aaa027cde2968ab8f2bc23e572"
+  ],
+  "commit": "a7233469f3d3991a54dead11079e52063eeb2a09",
+  "decided_at": "2026-10-27T22:16:37Z",
+  "decision_id": "9cfecbf3ea39788a973b63e2fca28cc3",
+  "fingerprint": "b7782fb6ba30d5ab",
+  "plugin_id": "phone-remote",
+  "reasons": [
+    "P_PUBLISHED",
+    "P_REVIEW_PRIORITY"
+  ],
+  "repo": "FluffyTaill/astra-remote",
+  "repository_id": "1436086150",
+  "repository_owner_id": "195410205",
+  "run": "40592906679/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "d175f13d-f842-4535-90fa-9dd0c20ad1b5",
+  "tag": "v0.6.2",
+  "trigger": "ci",
+  "version": "0.6.2"
+}
