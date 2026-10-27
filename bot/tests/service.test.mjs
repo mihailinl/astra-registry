@@ -2037,7 +2037,7 @@ import { TRUST14_CODES, mergeAlerts } from "../lib/trust14.mjs";
 import { ACTED_OUTCOMES, VERDICT_VALUES, leaksIn, scanFiles } from "../lib/scan-verdict-leaks.mjs";
 import { submissionFingerprint } from "../lib/policy/release.mjs";
 import { cleanEnv } from "../../tools/lib/git-env.mjs";
-import { ACTOR_MISMATCH_FLOOR_DAYS } from "../lib/identity.mjs";
+import { ACTOR_MISMATCH_FLOOR_DAYS, compareActor } from "../lib/identity.mjs";
 
 const P = {
   sid: "0192f1c2-3b4a-7c5d-8e6f-1a2b3c4d5e6f",
@@ -3548,6 +3548,120 @@ test("MIG-31: after the floor ends the same approval publishes, however old it i
   const unfloored = firstBindingRun({ heldAt, givenAt, mig31: false, alerts: new Map([[FP, alert]]) });
   assert.equal(unfloored.state, "published", `${unfloored.kind} ${JSON.stringify(codes(unfloored))}`);
   assert.ok(!codes(unfloored).includes("P_APPROVAL_STALE"));
+});
+
+// ── the triggering actor's id reaches only its typed field (MIG-31) ────────
+//
+// `honourApproval` (bot/lib/service-decide.mjs ~599) builds a `why` that
+// NAMES the account for its MIG-31 branch ("this first binding's build was
+// started by account …"). That string only ever leaves paired with
+// `earliest` (`deferred = Boolean(honoured.earliest)` is then true), so
+// `decideSubmission`'s `push("P_APPROVAL_STALE", {message: honoured.why})`
+// (~1253), gated on `!deferred`, never posts it — the one place the id-
+// bearing string is built is also the one place it is withheld. This test
+// does not take that for granted: it drives every MIG-31 shape through
+// `decideSubmission` with its own account id and walks the WHOLE plan, and
+// the body `resultBody` composes from it, for that id — so an edit that
+// drops the `!deferred` guard, or that threads the id into `cause` the way
+// TRUST-27's and MIG-31's `cause` deliberately do not, is a red test here
+// rather than a person's GitHub id sitting in a public run log or a
+// committed `log/decisions/*.json`.
+
+const LEAK_ACTOR = "424242424242";
+
+/** Every string reachable from `value`; `triggering_actor_id` is the one typed field allowed to carry the account id, so it is not walked into. */
+function stringsOf(value, keyPath = "$") {
+  const out = [];
+  const walk = (v, p) => {
+    if (v == null) return;
+    if (typeof v === "string") { out.push([p, v]); return; }
+    if (Array.isArray(v)) { v.forEach((x, i) => walk(x, `${p}[${i}]`)); return; }
+    if (typeof v === "object") {
+      for (const [k, x] of Object.entries(v)) {
+        if (k === "triggering_actor_id") continue;
+        walk(x, `${p}.${k}`);
+      }
+    }
+  };
+  walk(value, keyPath);
+  return out;
+}
+
+/** `plan`, and the body `resultBody` composes from it, carry `id` in no string outside `triggering_actor_id`. */
+function assertNoAccountLeak(plan, id, label) {
+  for (const [p, s] of stringsOf(plan)) assert.ok(!s.includes(id), `${label}: plan${p} leaks the account id: ${JSON.stringify(s)}`);
+  const body = resultBody(plan, {});
+  for (const [p, s] of stringsOf(body)) assert.ok(!s.includes(id), `${label}: body${p} leaks the account id: ${JSON.stringify(s)}`);
+}
+
+/** A first-binding run behind (or past, or never behind) MIG-31's floor, with its own account id and floor days. */
+const actorRun = ({ heldAt, givenAt, actorId, floorDays = ACTOR_MISMATCH_FLOOR_DAYS, now = P.now, alerts = new Map(), approvalOver = {} }) => decideWith({
+  lease: { claimed_from: "approved" },
+  verified: verified({
+    binding: bindingLine, owner_file: { commit: "9".repeat(40), pull_request: false },
+    actor: { triggering_actor_id: actorId, floor_days: floorDays },
+  }),
+  ask: ask({ verdict: "pass", gates: { stop_status: "no_stop", decisions: [approval({ decided_at: givenAt, ...approvalOver })] }, notice: { kind: "approved", status: "sent", accepted_at: heldAt } }),
+  git: git({
+    existing: existing(), listingState: { state: "grandfathered" }, alerts,
+    records: [baseline(), heldRecord({ reasons: ["R_FIRST_BINDING"], decided_at: heldAt })],
+  }),
+  now,
+});
+
+test("MIG-31: the triggering actor's id reaches only the typed `triggering_actor_id` field, never a reason, a wait's cause or a record — floor not reached, floor reached, approval stale, actor unreadable, actor == owner", () => {
+  // floor not reached: deferred. `why` is built WITH the id, but it only
+  // leaves paired with `earliest`, so it is never pushed to `reasons`.
+  const heldAt1 = hoursBefore(P.now, 3 * 24);
+  const givenAt1 = hoursBefore(P.now, 2 * 24);
+  const notReached = actorRun({ heldAt: heldAt1, givenAt: givenAt1, actorId: LEAK_ACTOR });
+  assert.equal(notReached.kind, "wait");
+  assert.equal(notReached.wait.code, "W_APPROVAL_DEFERRED");
+  assert.match(notReached.wait.cause, /account other than the repository's owner/);
+  assertNoAccountLeak(notReached, LEAK_ACTOR, "floor not reached");
+
+  // floor reached: the approval clears the hold, the extras it leaves behind
+  // carry the id in its typed field only, and a published plan carries no
+  // hold extras at all.
+  const heldAt2 = hoursBefore(P.now, 16 * 24);
+  const givenAt2 = hoursBefore(P.now, 15 * 24);
+  const alert = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: givenAt2, delivered_at: hoursBefore(P.now, OPERATOR_WINDOW_HOURS + 1), run: "1/1" };
+  const reached = actorRun({ heldAt: heldAt2, givenAt: givenAt2, actorId: LEAK_ACTOR, alerts: new Map([[FP, alert]]) });
+  assert.equal(reached.state, "published", JSON.stringify(codes(reached)));
+  assertNoAccountLeak(reached, LEAK_ACTOR, "floor reached");
+  assert.ok(!("triggering_actor_id" in resultBody(reached, {})), "a published plan carries no hold extras at all");
+
+  // approval stale: BOT-26's own staleness (no §0.7 `decided_at`), with the
+  // same account id in context — the hold's extras still carry it typed,
+  // and `P_APPROVAL_STALE`'s message (BOT-26's, not MIG-31's) names no id.
+  const stale = actorRun({ heldAt: heldAt1, givenAt: givenAt1, actorId: LEAK_ACTOR, approvalOver: { decided_at: "not a time" } });
+  assert.ok(stale.reasons?.some((r) => r.code === "P_APPROVAL_STALE"), JSON.stringify(stale.reasons?.map((r) => r.code)));
+  assertNoAccountLeak(stale, LEAK_ACTOR, "approval stale");
+
+  // actor unreadable: `verified.actor.triggering_actor_id` is `null` (the
+  // run that reached `decideSubmission` could not read it). MIG-31's floor
+  // still applies — the withholding direction — and names no account at all.
+  const unreadable = actorRun({ heldAt: heldAt1, givenAt: givenAt1, actorId: null });
+  assert.equal(unreadable.kind, "wait");
+  assert.match(unreadable.wait.cause, /nobody could read/);
+  assertNoAccountLeak(unreadable, LEAK_ACTOR, "actor unreadable");
+
+  // actor == owner: MIG-31's floor is 0 for the owner's own build (verify's
+  // `compareActor` answers `floor_days: 0`), so no id-bearing branch runs —
+  // whatever TRUST-14's operator-alert gate (unrelated to MIG-31) does next.
+  const owner = actorRun({ heldAt: heldAt1, givenAt: givenAt1, actorId: P.oid, floorDays: 0 });
+  assert.notEqual(owner.wait?.code, "W_APPROVAL_DEFERRED", JSON.stringify(owner.wait));
+  assertNoAccountLeak(owner, LEAK_ACTOR, "actor == owner");
+
+  // `compareActor` (bot/lib/identity.mjs) itself: its "floor" outcome's own
+  // `reason` DOES name the account — that string is internal to `verify`,
+  // and `bot/ingest.mjs`'s one call site reads `cmp.floor_days` for this
+  // outcome and returns `cmp.reason` outbound only for `cmp.outcome ===
+  // "wait"`, which the floor outcome is not (bot/tests/ingest.test.mjs
+  // covers that call site end to end).
+  const cmp = compareActor({ identity: { repository_owner_id: P.oid }, actor: { status: "found", triggering_actor_id: LEAK_ACTOR } });
+  assert.equal(cmp.outcome, "floor");
+  assert.ok(cmp.reason.includes(LEAK_ACTOR), "compareActor's own reason names the account; its one caller does not read it for this outcome");
 });
 
 test("TRUST-14: the alert record lands with the delivery the channel reported, and not without one", () => {
