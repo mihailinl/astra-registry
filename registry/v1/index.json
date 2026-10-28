@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "xfd+n71CgVOcpHC2m1hcfW13EATZv0xxUEng4feQEQOXqqVRY0S6LLmfkzx7he4pg17DrDRlyZSO5fRJR9GMCQ=="
+      "sig": "vtfayTvB1XfGA+nnZeftnC+iIxAIODPNPy44yEYJftra19o0jR7GR1X5S4OT0HdaOGGuT/QqrduhwB5X/uvODQ=="
     }
   ],
   "signed": {
-    "expires_at": "2026-11-27T07:58:33Z",
-    "issued_at": "2026-10-28T07:58:33Z",
+    "expires_at": "2026-11-27T08:04:00Z",
+    "issued_at": "2026-10-28T08:04:00Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
@@ -2925,6 +2925,75 @@
         "version": "0.6.1"
       },
       {
+        "added_at": "2026-10-28",
+        "author": "dwertyfa",
+        "capabilities": [
+          "actions",
+          "tools",
+          "ui_contributions"
+        ],
+        "description": "PrimeBoost VPN for Astra.",
+        "download_url": "",
+        "downloads": 0,
+        "i18n": {
+          "ru": {
+            "description": "VPN PrimeBoost для Astra.",
+            "name": "PrimeBoost VPN"
+          }
+        },
+        "icon_url": "data:image/png;base64,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",
+        "id": "prime-vpn",
+        "license": "MIT",
+        "name": "PrimeBoost VPN",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/dwertyfa288/PrimeBoostVPN/releases/download/v0.1.0/prime-vpn-0.1.0-linux-x64.astraplugin",
+          "windows-x64": "https://github.com/dwertyfa288/PrimeBoostVPN/releases/download/v0.1.0/prime-vpn-0.1.0-windows-x64.astraplugin"
+        },
+        "readme": "# PrimeBoost VPN\n\nPrimeBoost VPN for Astra.\n\n## Features\n\n- Sign in with Google or Telegram; a new account is created automatically.\n- One-click connect: the fastest server is picked automatically.\n- Smart routing (local sites direct) or all traffic through the VPN.\n- Proxy mode by default; TUN mode and split tunneling for other apps.\n- Plans and payment inside the tab, free trial for new users.\n- Assistant tools and command steps to turn the VPN on and off.\n- Russian and English interface.\n\n## Build\n\nRequirements: Rust (stable), `astra-plugin` CLI.\n\n1. The VPN core (sing-box), `wintun.dll` and rule sets live in `core/` and are embedded into the plugin binary; on first connect they are unpacked into `data/core/`. `scripts/sync-core.ps1 -Source <path>` refreshes them from a desktop build.\n2. Server addresses are stored sealed in `endpoints.dat`. To change them, copy `endpoints.example.json` to `endpoints.local.json` (ignored by git), fill it in and run `python scripts/seal-endpoints.py`.\n3. Build and check:\n\n```\ncargo build --release\nastra-plugin check . --strict\nastra-plugin test .\n```\n\n## Layout\n\n| Path | Purpose |\n|------|---------|\n| `src/api.rs` | Account, subscription and key API |\n| `src/auth.rs` | Google and Telegram sign-in |\n| `src/trial.rs`, `src/device.rs` | Free trial bound to the device |\n| `src/billing.rs`, `src/billing_api.rs` | Plans and payment |\n| `src/commands.rs` | Assistant tools and command steps |\n| `src/vpn.rs` | Server selection, connection, monitoring |\n| `src/singbox_config.rs`, `src/split.rs` | sing-box configuration and split tunneling |\n| `src/runner.rs` | Elevated core launcher (Windows TUN), started as `prime_vpn --prime-runner` |\n| `src/core_assets.rs`, `core/` | Embedded VPN core and rule sets |\n| `src/endpoints.rs`, `endpoints.dat` | Sealed server addresses |\n| `ui/` | Astra tab |\n\n## Third-party\n\nThe VPN core is sing-box (GPL-3.0, https://github.com/SagerNet/sing-box). Windows TUN uses Wintun (https://www.wintun.net/). Their licences are in `core/`.\n\n## License\n\nMIT\n",
+        "releases": [
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "prime-vpn-0.1.0-linux-x64.astraplugin",
+                "sha256": "bc220f27c3d69bdf123e1a466b38a05189a36700aebc41ab5342833541039fc2",
+                "size": 24253595,
+                "url": "https://github.com/dwertyfa288/PrimeBoostVPN/releases/download/v0.1.0/prime-vpn-0.1.0-linux-x64.astraplugin"
+              },
+              "windows-x64": {
+                "filename": "prime-vpn-0.1.0-windows-x64.astraplugin",
+                "sha256": "7af41518b0ce6eb75515e7d807c12cc985acbde7be298b85091b3258c3f9c929",
+                "size": 20916576,
+                "url": "https://github.com/dwertyfa288/PrimeBoostVPN/releases/download/v0.1.0/prime-vpn-0.1.0-windows-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "actions",
+              "tools",
+              "ui_contributions"
+            ],
+            "permissions": {},
+            "protocol": 1,
+            "published_at": "2026-10-28T07:58:23Z",
+            "release": {
+              "commit": "ebd02ad247538297aa12a7d05a318edd807fdcfd",
+              "kind": "github_release",
+              "repo": "dwertyfa288/PrimeBoostVPN",
+              "tag": "v0.1.0"
+            },
+            "review": "unreviewed",
+            "version": "0.1.0"
+          }
+        ],
+        "repository_url": "https://github.com/dwertyfa288/PrimeBoostVPN",
+        "source": {
+          "kind": "github",
+          "repo": "dwertyfa288/PrimeBoostVPN"
+        },
+        "stars": 0,
+        "updated_at": "2026-10-28T07:58:23Z",
+        "version": "0.1.0"
+      },
+      {
         "added_at": "2026-10-27",
         "author": "Taill",
         "capabilities": [
@@ -4318,6 +4387,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 108
+    "serial": 109
   }
 }
