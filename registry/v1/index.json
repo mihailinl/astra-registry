@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "i6qZVoUkMg6ldGhlsAmAjRIK3IWhQcdm1LsntjUMI3NbXBr3R74nCgWdprF1FV5wYtX/umrFoK6kZiQ62GNVAg=="
+      "sig": "SJzKNboLUvMtMGjaDfNbdiCY7CG1QBYB9Wy03sLgdL2Ha5ccHcNaSiptT8VuKue4ad7lLuCyDBvyI+6Ua2GOBw=="
     }
   ],
   "signed": {
-    "expires_at": "2026-11-26T22:52:17Z",
-    "issued_at": "2026-10-27T22:52:17Z",
+    "expires_at": "2026-11-27T01:49:42Z",
+    "issued_at": "2026-10-28T01:49:42Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
@@ -3618,6 +3618,66 @@
         "version": "0.1.4"
       },
       {
+        "added_at": "2026-10-28",
+        "author": "Voltur",
+        "capabilities": [
+          "tts"
+        ],
+        "description": "Speech for the assistant from Fish Audio: s2.1-pro and other models, public and your own voices.",
+        "download_url": "https://github.com/Voltur792/tts-for-fish-audio/releases/download/v0.2.0/tts-for-fish-audio-0.2.0-noarch.astraplugin",
+        "downloads": 0,
+        "i18n": {
+          "ru": {
+            "description": "Озвучание ответов ассистента через Fish Audio: s2.1-pro и другие модели, публичные и свои голоса.",
+            "name": "TTS для Fish Audio"
+          }
+        },
+        "icon_url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIiB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiIgcm9sZT0iaW1nIiBhcmlhLWxhYmVsPSJUVFMgZm9yIEZpc2ggQXVkaW8iPgogIDx0aXRsZT5UVFMgZm9yIEZpc2ggQXVkaW88L3RpdGxlPgogIDxnIGZpbGw9IiNGMkE5M0IiIHN0cm9rZT0iIzEzMUEyMiIgc3Ryb2tlLXdpZHRoPSIxNiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CiAgICA8cmVjdCB4PSI4OCIgeT0iMjA4IiB3aWR0aD0iNDgiIGhlaWdodD0iOTYiIHJ4PSIyNCIvPgogICAgPHJlY3QgeD0iMTYwIiB5PSIxNTIiIHdpZHRoPSI0OCIgaGVpZ2h0PSIyMDgiIHJ4PSIyNCIvPgogICAgPHJlY3QgeD0iMjMyIiB5PSIxODQiIHdpZHRoPSI0OCIgaGVpZ2h0PSIxNDQiIHJ4PSIyNCIvPgogICAgPHBhdGggZD0iTTMwNCAxNTJjNjQgNDQgNjQgMTY0IDAgMjA4bDExMi0xMDR6Ii8+CiAgPC9nPgo8L3N2Zz4K",
+        "id": "tts-for-fish-audio",
+        "license": "MIT",
+        "name": "TTS for Fish Audio",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/Voltur792/tts-for-fish-audio/releases/download/v0.2.0/tts-for-fish-audio-0.2.0-noarch.astraplugin",
+          "noarch": "https://github.com/Voltur792/tts-for-fish-audio/releases/download/v0.2.0/tts-for-fish-audio-0.2.0-noarch.astraplugin",
+          "windows-x64": "https://github.com/Voltur792/tts-for-fish-audio/releases/download/v0.2.0/tts-for-fish-audio-0.2.0-noarch.astraplugin"
+        },
+        "readme": "Озвучивает ответы ассистента речью из [Fish Audio](https://fish.audio) — голосами библиотеки Fish и собственными моделями голосов. Поставщик TTS для [Astra](https://github.com/mihailinl/AstraPlugins) от **Voltur**. Нужен 64-разрядный Python 3.10 или новее и аккаунт Fish Audio с API-ключом.\n\n## Что нужно один раз настроить\n\n1. **API-ключ Fish Audio** — создайте на https://fish.audio/app/api-keys/ и вставьте в настройки плагина. Без ключа плагин не может ни синтезировать речь, ни показать список голосов.\n2. **TTS-модель** — выберите `s2.1-pro` или `s2-pro`, `drama-3`; `s2.1-pro-free` — та же модель, что и платная, но бесплатно для тестов и небольших объёмов; `s1` устарела. По умолчанию стоит `s2.1-pro-free`: если к аккаунту не подключена оплата, любая платная модель вернёт ошибку счёта.\n3. **Голос** — на странице **Голос**:\n   - **Голос модели Fish Audio** — встроенный тембр выбранной модели. Он есть в списке и без ключа: выбрать его можно, а синтез ключ всё равно потребует;\n   - **свои голоса аккаунта** идут первыми — их плагин ищет отдельным запросом `self=true`, в общей библиотеке они прячутся под тысячей публичных;\n   - **библиотека публичных голосов Fish** — с языком, полом и превью из `samples`.\n\n   Голоса кэшируются на 5 минут. Если список не загрузился, остаётся встроенный голос модели, а свои появятся при следующем открытии страницы.\n\n## Свой голос: как создать и как он появляется в Astra\n\nСвой голос — это модель голоса в аккаунте Fish Audio, её плагин использует как `reference_id`. Создаётся один раз в Fish Audio, дальше появляется в Astra сам:\n\n1. Откройте [fish.audio/app/voice-cloning](https://fish.audio/app/voice-cloning) и загрузите клики своей речи: `.wav`, `.mp3`, `.m4a` или `.opus`, не меньше 10 секунд на клику, а лучше пару минут чистой моно-речи без фона. Управлять своими моделями можно на [fish.audio/app/my-voices](https://fish.audio/app/my-voices).\n2. Есть и другие способы: **Voice Design** — голос из текстового описания, **Professional Voice Clone** — студийный клон проверенного голоса.\n3. Обучение в Fish Audio обычно занимает секунды и модель сразу приходит в состояние `trained`. Пока модель не обучена (`created`) или обучение провалилось (`failed`) — плагин её не покажет: дождитесь статуса `trained` на странице My Voices.\n\nВ Astra свой голос появляется на странице **Голос** сам, ничего настраивать не нужно: плагин ищет модели аккаунта отдельным запросом `self=true` и показывает только обученные — свои идут первыми в списке. Список кэшируется на 5 минут, поэтому сразу после создания голоса обновите страницу чуть позже. Видимость модели (приватная или публичная) на это не влияет: под вашим ключом свои видны всегда, а мгновенные клоны без сохранённой модели в списке не появятся — `reference_id` существует только у сохранённой модели.\n\n## Возможности\n\n- Голоса Fish Audio: свои модели голосов, библиотека публичных, встроенный голос модели.\n- Выбор модели синтеза и бесплатного тарифа, отклика и битрейта аудио.\n- Скорость речи от 0.5 до 2.0 — берётся из настроек Astra, а не из настроек плагина.\n- Чтение чисел, дат и единиц на выбранном языке или с автоопределением.\n- Список голосов с кэшем и превью, устойчивый к ошибкам сети: страница не остаётся пустой.\n- Речевые ошибки переводятся в коды Astra, чтобы интерфейс показал ссылку на нужное поле, а не «что-то пошло не так».\n\n## Как плагин ведёт себя в разговоре\n\n- Скорость речи Astra передаёт параметром запроса, она уходит в `prosody.speed` с ограничением 0.5–2.0.\n- **Высота тона в Fish Audio не регулируется**, поэтому настройка высоты из Astra игнорируется: Fish говорит так, как задано самим голосом.\n- **Язык чтения цифр и дат** — отдельная настройка: она влияет на то, как произносятся числа, даты и единицы (`350 руб.` против `350 ₽`), и не влияет на тембр. Пустое значение — определять язык автоматически.\n- Ответ приходит MP3 44,1 кГц, 128 Кбит/с. В расширенных настройках есть **битрейт аудио**: 64 Кбит/с уменьшает вес ответа и почти не портит качество моно-речи.\n\n## Обрывы сети\n\nОбрыв TLS-соединения — самое частое, что случается с сетью во время озвучки. Запрос синтеза не имеет побочного эффекта, который заметили бы дважды: звук либо пришёл, либо нет, речевые секунды при обрыве не списываются. Поэтому:\n\n- синтез повторяется 3 раза с паузами 0.5 и 2 с, ответы 5xx тоже повторяются с учётом `Retry-After`;\n- увидев ошибку вида `DECRYPTION_FAILED_OR_BAD_RECORD_MAC`, следующая попытка идёт с **TLS 1.2**: так ведут себя VPN и антивирусы, разбирающие HTTPS (ESET, Kaspersky, Avast, туннели);\n- список голосов получает две попытки с той же логикой — страница «Голос» не остаётся пустой из-за транзиента;\n- в логе плагина видно класс ошибки (`SSLError`, `ConnectionResetError`, таймаут) и число попыток: панель логов плагина → «Скопировать диагностику».\n\n## Если что-то не так\n\n| В логе или в ответе | Что делать |\n| --- | --- |\n| «required setting `api_key` is not set» | Вставьте ключ в настройках плагина. |\n| «Fish Audio refused this API key» | Ключ не тот или отозван — создайте новый. |\n| «this account cannot pay for speech» | К аккаунту не подключена оплата: оставьте `s2.1-pro-free` или пополните баланс. |\n| «that voice does not exist» | Голос удалён или недоступен — выберите другой на странице **Голос**. |\n| «the encrypted connection was dropped» | VPN, антивирус или прокси, разбирающий HTTPS. Плагин повторяет попытку и переходит на TLS 1.2; если обрывается стабильно — поставьте 64 Кбит/с и проверьте, не режет ли канал большое аудио. |\n| «Fish Audio is temporarily unavailable» | Временная проблема Fish Audio, обычно помогает повтор позже. |\n| «the reply is too long to synthesize in one request» | Ответ ассистента длиннее ~3 минут озвучки — сократите его. |\n\n## Лицензия и поддержка\n\nMIT © Voltur\n\n[Поддержать разработку на Boosty](https://boosty.to/voltur/donate)\n",
+        "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "tts-for-fish-audio-0.2.0-noarch.astraplugin",
+                "sha256": "0948a72cef2207e74f92fd95fd3c791ba4a27a3346d371727e1beb47300b2604",
+                "size": 15362,
+                "url": "https://github.com/Voltur792/tts-for-fish-audio/releases/download/v0.2.0/tts-for-fish-audio-0.2.0-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tts"
+            ],
+            "permissions": {},
+            "protocol": 1,
+            "published_at": "2026-10-28T01:45:07Z",
+            "release": {
+              "commit": "ac60447242230c5d8625763023ffc5ba4a5bdd25",
+              "kind": "github_release",
+              "repo": "Voltur792/tts-for-fish-audio",
+              "tag": "v0.2.0"
+            },
+            "review": "unreviewed",
+            "version": "0.2.0"
+          }
+        ],
+        "repository_url": "https://github.com/Voltur792/tts-for-fish-audio",
+        "source": {
+          "kind": "github",
+          "repo": "Voltur792/tts-for-fish-audio"
+        },
+        "stars": 0,
+        "updated_at": "2026-10-28T01:45:07Z",
+        "version": "0.2.0"
+      },
+      {
         "added_at": "2026-10-25",
         "author": "Voltur",
         "capabilities": [
@@ -4161,6 +4221,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 105
+    "serial": 106
   }
 }
