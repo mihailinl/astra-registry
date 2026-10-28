@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "SJzKNboLUvMtMGjaDfNbdiCY7CG1QBYB9Wy03sLgdL2Ha5ccHcNaSiptT8VuKue4ad7lLuCyDBvyI+6Ua2GOBw=="
+      "sig": "cln6F80A76AdrRlwj6vpVJl9AAsi8eyhbw2FDTaqB0yfc6A4gnS8+oaLNi52d19dEH6QFWdnnD4DWDrtrXxcBQ=="
     }
   ],
   "signed": {
-    "expires_at": "2026-11-27T01:49:42Z",
-    "issued_at": "2026-10-28T01:49:42Z",
+    "expires_at": "2026-11-27T04:41:27Z",
+    "issued_at": "2026-10-28T04:41:27Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
@@ -1770,16 +1770,52 @@
             "name": "Home Assistant Connector"
           }
         },
-        "icon_url": "",
+        "icon_url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgcm9sZT0iaW1nIiBhcmlhLWxhYmVsPSJIb21lIEFzc2lzdGFudCBDb25uZWN0b3IiPgogIDxyZWN0IHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCIgcng9IjE0IiBmaWxsPSIjMTYyMzJiIi8+CiAgPHBhdGggZD0iTTEwIDMxIDMyIDEybDIyIDE5djIwYTQgNCAwIDAgMS00IDRIMTRhNCA0IDAgMCAxLTQtNFoiIGZpbGw9IiM0MWJkZjUiLz4KICA8cGF0aCBkPSJNMjQgNTVWMzhoMTZ2MTciIGZpbGw9IiMxNjIzMmIiLz4KICA8cGF0aCBkPSJNMjAgMzBoMjRNMjQgMjVoMTYiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIzIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KICA8Y2lyY2xlIGN4PSIzMiIgY3k9IjMxIiByPSI0IiBmaWxsPSIjZmZmIi8+Cjwvc3ZnPg==",
         "id": "enti-homeassistant",
         "license": "MIT",
         "name": "Home Assistant Connector",
         "platform_downloads": {
-          "linux-x64": "https://github.com/entiedvard/enti-homeassistant/releases/download/v0.1.3/enti-homeassistant-0.1.3-linux-x64.astraplugin",
-          "windows-x64": "https://github.com/entiedvard/enti-homeassistant/releases/download/v0.1.3/enti-homeassistant-0.1.3-windows-x64.astraplugin"
+          "linux-x64": "https://github.com/entiedvard/enti-homeassistant/releases/download/v0.1.4/enti-homeassistant-0.1.4-linux-x64.astraplugin",
+          "windows-x64": "https://github.com/entiedvard/enti-homeassistant/releases/download/v0.1.4/enti-homeassistant-0.1.4-windows-x64.astraplugin"
         },
         "readme": "# Home Assistant Connector\n\n© 2026 Enti_Edvard\n\nПлагин для подключения Astra к Home Assistant: чтение состояний устройств и вызов сервисов.\n\n## Возможности\n\n- поиск сущностей по имени или `entity_id`;\n- получение показаний датчиков через `get_sensor_readings` — температура, влажность, давление, освещённость, заряд батареи и другие значения;\n- просмотр полного состояния сущности;\n- включение, выключение и переключение сущностей;\n- вызов произвольного сервиса с JSON-данными.\n- постоянная подписка на события `state_changed` с автоматическим переподключением;\n- просмотр до 100 последних изменений через `get_recent_state_changes`.\n- встроенная панель Astra со списком сущностей, поиском, состояниями и управлением `light`/`switch`.\n\n## Настройка\n\nВ Astra откройте настройки плагина и заполните:\n\n1. **Home Assistant WebSocket URL**, например `ws://homeassistant.local:8123/api/websocket` или `wss://example.duckdns.org/api/websocket`. Адрес должен оканчиваться строго на `/api/websocket`;\n2. **Long-Lived Access Token** — создайте его в профиле Home Assistant.\n\nТокен хранится в настройках Astra и не должен попадать в `config.toml`, Git или логи.\n\nДля запросов о текущей температуре, влажности, давлении, освещённости или заряде батареи используйте инструмент `get_sensor_readings`. Он читает только сущности `sensor` и `binary_sensor` Home Assistant и не управляет устройствами. `search_entities` предназначен для общего поиска, а `get_entity_state` — для чтения одной заранее известной сущности по точному `entity_id`.\n\nПлагин ожидает весь ответ Home Assistant (подключение, авторизацию и команду) не более 20 секунд. Для `wss://` используются системные доверенные сертификаты Windows.\n\nПо умолчанию плагин не создаёт постоянных фоновых подключений. Если нужен журнал последних изменений, включите настройку **«Проверять изменения для журнала раз в 10 минут»**: плагин раз в 10 минут запросит текущие состояния и сравнит их с предыдущим снимком. Это не создаёт постоянного потока `state_changed`, но журнал обновляется с задержкой до 10 минут и не содержит промежуточных изменений между проверками.\n\n## Панель\n\nВ навигации Astra появится страница **Home Assistant** в стиле Overview. Она получает комнаты, распределение сущностей и заданные в Home Assistant MDI-иконки непосредственно из `area_registry`, `entity_registry` и `device_registry`. Комнаты отображаются отдельными вкладками; внутри активной вкладки показываются только её выбранные устройства. Автоматизации, недоступные, скрытые и диагностические сущности, а также служебные сущности платформы `homeassistant` не показываются в панели. Набор устройств можно изменить кнопкой **«Настроить устройства»** — выбор сохраняется локально. Для `light` доступны быстрые переключатели и яркость, для `cover` — открытие, остановка и закрытие штор. Датчики показываются компактно. Журнал отображает последние события `state_changed`.\n\n## Разработка\n\nТребуются Rust и `protoc`.\n\n```powershell\ncargo test\nastra-plugin check . --strict\nastra-plugin test .\nastra-plugin dev .\n```\n\n## Сборка\n\n```powershell\nastra-plugin build\n```\n\nКоманда создаёт распространяемый файл `.astraplugin`.\n",
         "releases": [
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "enti-homeassistant-0.1.4-linux-x64.astraplugin",
+                "sha256": "84c7d5263e88d40e6139c8b150aa606711805e4b3252e4e9b914e6d764c657a3",
+                "size": 3453890,
+                "url": "https://github.com/entiedvard/enti-homeassistant/releases/download/v0.1.4/enti-homeassistant-0.1.4-linux-x64.astraplugin"
+              },
+              "windows-x64": {
+                "filename": "enti-homeassistant-0.1.4-windows-x64.astraplugin",
+                "sha256": "d897325d7790c76a7060b79edbf9d78feb98f971834751f56b522843ccc69db2",
+                "size": 2962451,
+                "url": "https://github.com/entiedvard/enti-homeassistant/releases/download/v0.1.4/enti-homeassistant-0.1.4-windows-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "dom_access",
+              "tools",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "dom_access": {
+                "reason": "Shows the interactive Home Assistant panel inside the Astra interface."
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-10-25T09:09:39Z",
+            "release": {
+              "commit": "f015c41b4ffb8900faf389ffb3f816e7bc78d787",
+              "kind": "github_release",
+              "repo": "entiedvard/enti-homeassistant",
+              "tag": "v0.1.4"
+            },
+            "review": "unreviewed",
+            "version": "0.1.4"
+          },
           {
             "artifacts": {
               "linux-x64": {
@@ -1823,8 +1859,8 @@
           "repo": "entiedvard/enti-homeassistant"
         },
         "stars": 0,
-        "updated_at": "2026-10-25T08:05:18Z",
-        "version": "0.1.3"
+        "updated_at": "2026-10-25T09:09:39Z",
+        "version": "0.1.4"
       },
       {
         "added_at": "2026-10-25",
@@ -4221,6 +4257,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 106
+    "serial": 107
   }
 }
