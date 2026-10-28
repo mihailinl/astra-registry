@@ -1,0 +1,25 @@
+{
+  "$comment": "Derived from superdedkot/astrapixelart@v0.3.3 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "schema": "astra.registry.plugin/1",
+  "id": "astrapixelart",
+  "name": "APA — Pixel Art for Astra",
+  "summary": "Create without limits: paint pixels, bring emotions to life, and even redraw Astra! Layers, animation frames, and sticker exports in one place.",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "superdedkot/astrapixelart"
+  },
+  "added_at": "2026-10-28",
+  "description": "Create without limits: paint pixels, bring emotions to life, and even redraw Astra! Layers, animation frames, and sticker exports in one place.",
+  "author": {
+    "name": "Доктор Кот (superdedkot)"
+  },
+  "icon": "icon.png",
+  "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "APA — пиксель-арт для Astra",
+      "summary": "Твори без границ: рисуй пиксели, оживляй эмоции и перерисовывай даже Астру! Слои, кадры и экспорт стикеров — всё под рукой."
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:0d2e74e54b78b488366b984a73c210d971d590c23e47cdeb37390fa689f9b3b8"
+  ],
+  "commit": "b181a64b485315ed836f92f0854b3fbe9daa5b8e",
+  "decided_at": "2026-10-28T07:55:52Z",
+  "decision_id": "89e38f1f90f639ff25d3b7c3951b60fb",
+  "fingerprint": "16d8a679f9222bd9",
+  "plugin_id": "astrapixelart",
+  "reasons": [
+    "P_PUBLISHED",
+    "P_REVIEW_PRIORITY"
+  ],
+  "repo": "superdedkot/astrapixelart",
+  "repository_id": "1422860692",
+  "repository_owner_id": "343763115",
+  "run": "40653050397/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "7fb3acc3-6d78-4272-9e87-0f2b7764f3cc",
+  "tag": "v0.3.3",
+  "trigger": "ci",
+  "version": "0.3.3"
+}

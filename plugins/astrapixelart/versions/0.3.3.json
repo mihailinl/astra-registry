@@ -1,0 +1,28 @@
+{
+  "$comment": "Derived from superdedkot/astrapixelart@v0.3.3. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "astrapixelart",
+  "version": "0.3.3",
+  "published_at": "2026-10-28T07:53:47Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "superdedkot/astrapixelart",
+    "tag": "v0.3.3",
+    "commit": "b181a64b485315ed836f92f0854b3fbe9daa5b8e"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/superdedkot/astrapixelart/releases/download/v0.3.3/astrapixelart-0.3.3-noarch.astraplugin",
+      "filename": "astrapixelart-0.3.3-noarch.astraplugin",
+      "sha256": "0d2e74e54b78b488366b984a73c210d971d590c23e47cdeb37390fa689f9b3b8",
+      "size": 433748
+    }
+  },
+  "protocol": 1,
+  "min_astra_version": "0.2.6",
+  "capabilities": [
+    "ui_contributions"
+  ],
+  "permissions": {}
+}
