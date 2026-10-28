@@ -1,5 +1,5 @@
 {
-  "$comment": "Derived from FluffyTaill/astra-screen-translator@v0.1.5 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "$comment": "Derived from FluffyTaill/astra-screen-translator@v0.2.1 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
   "schema": "astra.registry.plugin/1",
   "id": "screen-translator",
   "name": "Screen Translator",

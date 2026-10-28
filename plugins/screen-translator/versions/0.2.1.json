@@ -1,0 +1,33 @@
+{
+  "$comment": "Derived from FluffyTaill/astra-screen-translator@v0.2.1. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "screen-translator",
+  "version": "0.2.1",
+  "published_at": "2026-10-28T13:36:59Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "FluffyTaill/astra-screen-translator",
+    "tag": "v0.2.1",
+    "commit": "519e3eaf0c14d9586f7d864f4b5cf5597142d726"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/FluffyTaill/astra-screen-translator/releases/download/v0.2.1/screen-translator-0.2.1-noarch.astraplugin",
+      "filename": "screen-translator-0.2.1-noarch.astraplugin",
+      "sha256": "4cc406b7b2da3d9997a510a49009d40a68c7fd70de990bab567b6d9a9fadd10a",
+      "size": 261645
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "tools",
+    "triggers",
+    "ui_contributions"
+  ],
+  "permissions": {
+    "fire_trigger": {
+      "reason": "Lets Astra read a translation aloud through the Astra command the plugin page creates, when you turn that on."
+    }
+  }
+}

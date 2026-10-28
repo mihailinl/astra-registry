@@ -72,7 +72,8 @@ Astra → **Мастерская** → найди **Phone Remote** → уста�
 
 1. На странице **Phone Remote** найди карточку **«Вне дома: свой ретранслятор»** и нажми
    **«Развернуть на Cloudflare»**.
-2. Войди в Cloudflare или заведи бесплатный аккаунт (карта не нужна). Cloudflare попросит подключить GitHub —
+2. Войди в Cloudflare или заведи бесплатный аккаунт (карта не нужна). Если Cloudflare попросит адрес
+   репозитория («Клонировать репозиторий»), вставь `https://github.com/FluffyTaill/astra-remote`. Cloudflare попросит подключить GitHub —
    он создаст у тебя копию ретранслятора и развернёт его. Нажми **Deploy**.
 3. Когда развернётся, скопируй адрес вида `https://astra-remote-relay.<твоё-имя>.workers.dev`, вставь его
    в карточку и нажми **«Сохранить»**. Статус станет «работает».
@@ -160,12 +161,6 @@ npm install
 node build.js
 npm test
 ```
-
-Получится `phone-remote.astraplugin`.
-
-Приложение собирается без Gradle (нужны Android SDK с `build-tools` и `platforms;android-35` и JDK 17+):
-
-```bash
 
 ---
 

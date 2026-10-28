@@ -1,0 +1,24 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:4cc406b7b2da3d9997a510a49009d40a68c7fd70de990bab567b6d9a9fadd10a"
+  ],
+  "commit": "519e3eaf0c14d9586f7d864f4b5cf5597142d726",
+  "decided_at": "2026-10-28T15:22:39Z",
+  "decision_id": "18b839f91a7706a9600e45f2031b599f",
+  "fingerprint": "ff86ec72d0400ac7",
+  "plugin_id": "screen-translator",
+  "reasons": [
+    "P_PUBLISHED"
+  ],
+  "repo": "FluffyTaill/astra-screen-translator",
+  "repository_id": "1435070020",
+  "repository_owner_id": "195410205",
+  "run": "40714817572/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "fa166d0b-61d6-4398-8563-29f6706e09ed",
+  "tag": "v0.2.1",
+  "trigger": "ci",
+  "version": "0.2.1"
+}
