@@ -1,0 +1,24 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:19e11b27c9181f68db93e57518dde2f7a289626faba08c7faa54581cb7d5f296"
+  ],
+  "commit": "8a6a8b04da3d36c69c5fd36c0df218e63b43634c",
+  "decided_at": "2026-10-28T07:37:43Z",
+  "decision_id": "fa4420d95593cdea0040314c12ffdfec",
+  "fingerprint": "f95ca3d02bd102f3",
+  "plugin_id": "astrapixelart",
+  "reasons": [
+    "E_TRADEMARK"
+  ],
+  "repo": "superdedkot/astrapixelart",
+  "repository_id": "1422860692",
+  "repository_owner_id": "343763115",
+  "run": "40651106901/1",
+  "schema": "astra.registry.decision/1",
+  "state": "refused",
+  "submission_id": "fd6cd80f-d738-4f1f-acc0-143c72ce5770",
+  "tag": "v0.3.2",
+  "trigger": "ci",
+  "version": "0.3.2"
+}
