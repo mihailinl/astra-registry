@@ -1,0 +1,25 @@
+{
+  "$comment": "Derived from dwertyfa288/PrimeBoostVPN@v0.1.0 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "schema": "astra.registry.plugin/1",
+  "id": "prime-vpn",
+  "name": "PrimeBoost VPN",
+  "summary": "PrimeBoost VPN for Astra.",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "dwertyfa288/PrimeBoostVPN"
+  },
+  "added_at": "2026-10-28",
+  "description": "PrimeBoost VPN for Astra.",
+  "author": {
+    "name": "dwertyfa"
+  },
+  "icon": "icon.png",
+  "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "PrimeBoost VPN",
+      "summary": "VPN PrimeBoost для Astra."
+    }
+  }
+}
