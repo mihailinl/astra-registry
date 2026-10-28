@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:0948a72cef2207e74f92fd95fd3c791ba4a27a3346d371727e1beb47300b2604"
+  ],
+  "commit": "ac60447242230c5d8625763023ffc5ba4a5bdd25",
+  "decided_at": "2026-10-28T01:46:57Z",
+  "decision_id": "84124274adcafadd0ce297e06b71c5dc",
+  "fingerprint": "6b43813cea109afc",
+  "plugin_id": "tts-for-fish-audio",
+  "reasons": [
+    "P_PUBLISHED",
+    "P_REVIEW_PRIORITY"
+  ],
+  "repo": "Voltur792/tts-for-fish-audio",
+  "repository_id": "1436470860",
+  "repository_owner_id": "232130437",
+  "run": "40616924107/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "56c2282c-6f2a-439c-9cf0-5dc7d637ace0",
+  "tag": "v0.2.0",
+  "trigger": "ci",
+  "version": "0.2.0"
+}

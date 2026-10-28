@@ -1,0 +1,25 @@
+{
+  "$comment": "Derived from Voltur792/tts-for-fish-audio@v0.2.0 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "schema": "astra.registry.plugin/1",
+  "id": "tts-for-fish-audio",
+  "name": "TTS for Fish Audio",
+  "summary": "Speech for the assistant from Fish Audio: s2.1-pro and other models, public and your own voices.",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "Voltur792/tts-for-fish-audio"
+  },
+  "added_at": "2026-10-28",
+  "description": "Speech for the assistant from Fish Audio: s2.1-pro and other models, public and your own voices.",
+  "author": {
+    "name": "Voltur"
+  },
+  "icon": "icon.svg",
+  "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "TTS для Fish Audio",
+      "summary": "Озвучание ответов ассистента через Fish Audio: s2.1-pro и другие модели, публичные и свои голоса."
+    }
+  }
+}

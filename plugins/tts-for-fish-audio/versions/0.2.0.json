@@ -1,0 +1,27 @@
+{
+  "$comment": "Derived from Voltur792/tts-for-fish-audio@v0.2.0. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "tts-for-fish-audio",
+  "version": "0.2.0",
+  "published_at": "2026-10-28T01:45:07Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "Voltur792/tts-for-fish-audio",
+    "tag": "v0.2.0",
+    "commit": "ac60447242230c5d8625763023ffc5ba4a5bdd25"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/Voltur792/tts-for-fish-audio/releases/download/v0.2.0/tts-for-fish-audio-0.2.0-noarch.astraplugin",
+      "filename": "tts-for-fish-audio-0.2.0-noarch.astraplugin",
+      "sha256": "0948a72cef2207e74f92fd95fd3c791ba4a27a3346d371727e1beb47300b2604",
+      "size": 15362
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "tts"
+  ],
+  "permissions": {}
+}
