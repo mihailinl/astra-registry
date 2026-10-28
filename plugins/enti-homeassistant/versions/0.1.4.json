@@ -1,0 +1,39 @@
+{
+  "$comment": "Derived from entiedvard/enti-homeassistant@v0.1.4. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "enti-homeassistant",
+  "version": "0.1.4",
+  "published_at": "2026-10-25T09:09:39Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "entiedvard/enti-homeassistant",
+    "tag": "v0.1.4",
+    "commit": "f015c41b4ffb8900faf389ffb3f816e7bc78d787"
+  },
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://github.com/entiedvard/enti-homeassistant/releases/download/v0.1.4/enti-homeassistant-0.1.4-linux-x64.astraplugin",
+      "filename": "enti-homeassistant-0.1.4-linux-x64.astraplugin",
+      "sha256": "84c7d5263e88d40e6139c8b150aa606711805e4b3252e4e9b914e6d764c657a3",
+      "size": 3453890
+    },
+    "windows-x64": {
+      "url": "https://github.com/entiedvard/enti-homeassistant/releases/download/v0.1.4/enti-homeassistant-0.1.4-windows-x64.astraplugin",
+      "filename": "enti-homeassistant-0.1.4-windows-x64.astraplugin",
+      "sha256": "d897325d7790c76a7060b79edbf9d78feb98f971834751f56b522843ccc69db2",
+      "size": 2962451
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "dom_access",
+    "tools",
+    "ui_contributions"
+  ],
+  "permissions": {
+    "dom_access": {
+      "reason": "Shows the interactive Home Assistant panel inside the Astra interface."
+    }
+  }
+}
