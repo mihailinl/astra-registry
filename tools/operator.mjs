@@ -293,6 +293,13 @@ function okFingerprint(root, fingerprint, { at, run, actorId }) {
   if (!isTime(alert.delivered_at)) {
     refuse(`${alertRel} has no reported delivery: an alert nobody received is answered by nobody, and the window it would open has not started (TRUST-32)`);
   }
+  // Contract 6.7.0: an OK binds the whole digest and the held record the
+  // approval cleared, copied from the alert. An alert from before 6.7.0 names
+  // only the 16-hex label, which two releases can share; its window is not
+  // shortened, and runs out by itself.
+  if (!/^[0-9a-f]{64}$/.test(String(alert.digest ?? "")) || !/^[0-9a-f]{32}$/.test(String(alert.held_decision_id ?? ""))) {
+    refuse(`${alertRel} names no whole digest and held record (it predates contract 6.7.0), so an OK could bind only a 64-bit label; its window runs out by itself`);
+  }
   if (fs.existsSync(path.join(root, DENY_DIR, `${fingerprint}.json`))) {
     refuse(`${DENY_DIR}/${fingerprint}.json is on main: this fingerprint is denied for ever, and an OK never overrides a deny (TRUST-33)`);
   }
@@ -310,7 +317,10 @@ function okFingerprint(root, fingerprint, { at, run, actorId }) {
     }
   }
   if (!run) refuse("an OK record carries the run that wrote it, and this run has no run URL");
-  const record = { schema: OK_SCHEMA, fingerprint, approval_decided_at: alert.approval_decided_at, run, at };
+  const record = {
+    schema: OK_SCHEMA, fingerprint, approval_decided_at: alert.approval_decided_at, run, at,
+    digest: alert.digest, held_decision_id: alert.held_decision_id,
+  };
   const problems = okRecordProblems(record, { fingerprint });
   if (problems.length) throw new Error(`the OK record this act composed is malformed: ${problems.join(", ")}`);
   const touched = [];

@@ -85,7 +85,7 @@ import { decisionId, recordPath } from "../lib/decisions.mjs";
 import { compareWithBaseline, identityFromCertificate } from "../lib/identity.mjs";
 import { baselineFor } from "../lib/service-decide.mjs";
 import { listingStateAt } from "../lib/listing-state.mjs";
-import { buildModerationLog, checkEntry } from "../lib/moderation.mjs";
+import { buildModerationLog, categoryWords, checkEntry } from "../lib/moderation.mjs";
 import { REVOCATIONS_SCHEMA, publicKeyFromBase64, verifyEnvelope } from "../lib/sign.mjs";
 import { signRevocations } from "../../tools/sign-revocations.mjs";
 import { loadTestRoot } from "../../tools/testkeys/regenerate.mjs";
@@ -390,6 +390,8 @@ const SD_VALUES = Object.freeze({
   reason: MODERATOR_REASON,
   reverses: "2026/0001-widgets-delist",
   appeal_of: SDI2,
+  // 6.7.0 (MOD-57): the applied decision an M_CORRECT_CATEGORY corrects.
+  corrects: "0192f3a4-5b6c-7d8e-9f01-2345678930cc",
   outcome: "stands",
   severity: "high",
   action: "block_install",
@@ -886,7 +888,7 @@ test("an answer missing `shadow` is read as shadow and alerts", () => {
 test("an entry carrying an unnamed member is accepted, and the member reaches no file", () => {
   // M-1, both halves, with the floor written before either mutation.
   const named = ENTRY_ALLOWLIST.moderator;
-  assert.equal(named.length, 14, `BOT-80 names 14 members for a moderator decision and this list has ${named.length}`);
+  assert.equal(named.length, 15, `BOT-80 names 15 members for a moderator decision (\`corrects\` since 6.7.0) and this list has ${named.length}`);
 
   const root = estate();
   const entry = decision({
@@ -1789,42 +1791,241 @@ function concurrentPush(origin, files, message, when) {
   return headOf(origin);
 }
 
-test("R6: a push rejected because main moved is rebased, re-checked and pushed; a conflict or a moved serial pushes nothing", async () => {
+/**
+ * The redo's gates, in a fixture: the gate steps run `tools/…` and
+ * `bot/moderation.mjs` out of the checkout, which a fixture does not have, so
+ * each is a stub that records it ran and exits with `ASTRA_TEST_GATE_FAIL`'s
+ * verdict for its name. Excluded from the tree like `withTreeRule`'s copies.
+ * The real gates are held to refusing by their own suites; here the question
+ * is only whether the redo runs every one, and stops on a red one.
+ */
+const GATE_STUBS = ["tools/build-index.mjs", "tools/build-revocations.mjs", "tools/validate.mjs", "tools/selftest.mjs", "bot/moderation.mjs"];
+function withGateStubs(root) {
+  const ran = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-gates-")), "ran.txt");
+  tmpRoots.push(path.dirname(ran));
+  for (const rel of GATE_STUBS) {
+    fs.mkdirSync(path.join(root, path.dirname(rel)), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), `import fs from "node:fs";
+fs.appendFileSync(${JSON.stringify(ran)}, ${JSON.stringify(rel)} + " " + process.argv.slice(2).join(" ") + "\\n");
+process.exit((process.env.ASTRA_TEST_GATE_FAIL ?? "") === ${JSON.stringify(rel)} ? 1 : 0);
+`);
+    fs.appendFileSync(path.join(root, ".git", "info", "exclude"), `/${rel}\n`);
+  }
+  return () => (fs.existsSync(ran) ? fs.readFileSync(ran, "utf8").split("\n").filter(Boolean) : []);
+}
+
+/** The compile step's inputs, as the `apply` step's `env:` hands them to a redo. */
+const compileEnv = ({ entries = [], settled = "[]", shadow = false } = {}) => ({
+  ASTRA_ENTRIES: JSON.stringify(entries),
+  ASTRA_SUBMISSIONS: "[]",
+  ASTRA_REFUSED: "[]",
+  ASTRA_SHADOW: shadow ? "true" : "false",
+  ASTRA_SETTLED: typeof settled === "string" ? settled : JSON.stringify(settled),
+  ASTRA_DELIVERED_AT: "",
+  GITHUB_RUN_ID: "35502265394",
+});
+
+test("R6: a push rejected because main moved is compiled again over the new main and pushed, never rebased; a conflict or a moved serial lands too", async () => {
   // Main moves on a file this commit does not touch: rebased and pushed.
   const root = withDocuments(estate());
   const origin = withRemote(root);
+  withGateStubs(root);
   const job = await commitJob(root, { entries: [delistOf(SDI)] });
   assert.equal(job.code, 0, job.logs.join("\n"));
   const theirs = concurrentPush(origin, { "README.md": "an ingest landed first\n" }, "registry: publish (plugins ingest)", "2026-09-20T12:31:00Z");
-  const step = runApply(root);
-  assert.equal(step.status, 0, `the rebased retry did not push: ${step.stderr} ${step.stdout}`);
+  const step = runApply(root, compileEnv({ entries: [delistOf(SDI)] }));
+  assert.equal(step.status, 0, `the redone retry did not push: ${step.stderr} ${step.stdout}`);
+  assert.match(step.stdout + step.stderr, /the compile runs again against the new main/, "a rejected push was not compiled again");
+  assert.doesNotMatch(step.stdout + step.stderr, /Rebasing|Successfully rebased/, "a rejected push was rebased (review of #480)");
   const landed = headOf(origin);
   assert.notEqual(landed, theirs, "the moderation commit never landed");
   assert.equal(step.outputs.main_commit, landed, "`main_commit` is not the rebased commit that landed");
-  assert.equal(sh(["rev-parse", `${landed}^`], root).trim(), theirs, "the moderation commit was not rebased onto the commit that beat it");
+  assert.equal(sh(["rev-parse", `${landed}^`], root).trim(), theirs, "the redone commit is not on top of the commit that beat it");
   assert.match(sh(["log", "-1", "--format=%B", landed], root), new RegExp(`^Service-Decision: ${SDI}$`, "m"));
 
-  // Main moved on the same document: the rebase conflicts, nothing is pushed.
+  // Main moved on the same document: the rebase conflicts, the compile runs
+  // again over the new main with every gate, and what it produces lands.
   const clash = withDocuments(estate());
   const clashOrigin = withRemote(clash);
+  const clashGates = withGateStubs(clash);
   assert.equal((await commitJob(clash, { entries: [delistOf(SDI)] })).code, 0);
   const index = JSON.parse(fs.readFileSync(path.join(clash, INDEX_FILE), "utf8"));
   const moved = concurrentPush(clashOrigin, { [INDEX_FILE]: { ...index, $comment: "another writer" } }, "registry: publish", "2026-09-20T12:31:00Z");
-  const refused = runApply(clash);
-  assert.notEqual(refused.status, 0, "a commit that does not rebase cleanly was pushed");
-  assert.equal(headOf(clashOrigin), moved, "something was pushed over the conflicting commit");
+  const redone = runApply(clash, compileEnv({ entries: [delistOf(SDI)] }));
+  assert.equal(redone.status, 0, `a conflicting rebase was not compiled again: ${redone.stderr} ${redone.stdout}`);
+  assert.match(redone.stdout + redone.stderr, /the compile runs again against the new main/);
+  assert.equal(sh(["rev-parse", `${headOf(clashOrigin)}^`], clash).trim(), moved, "the redone commit is not on top of the commit that beat it");
+  assert.equal(redone.outputs.main_commit, headOf(clashOrigin));
+  assert.match(sh(["log", "-1", "--format=%B", headOf(clashOrigin)], clash), new RegExp(`^Service-Decision: ${SDI}$`, "m"));
+  assert.deepEqual(clashGates().map((l) => l.split(" ")[0]), GATE_STUBS, "the redo did not run every gate, once, in order");
 
-  // Main moved under the withdrawal list's serial: rebased cleanly, refused by the re-check.
+  // A redo whose gate is red pushes nothing and fails the step.
+  const red = withDocuments(estate());
+  const redOrigin = withRemote(red);
+  withGateStubs(red);
+  assert.equal((await commitJob(red, { entries: [delistOf(SDI)] })).code, 0);
+  const redIndex = JSON.parse(fs.readFileSync(path.join(red, INDEX_FILE), "utf8"));
+  const redMoved = concurrentPush(redOrigin, { [INDEX_FILE]: { ...redIndex, $comment: "another writer" } }, "registry: publish", "2026-09-20T12:31:00Z");
+  const refused = runApply(red, { ...compileEnv({ entries: [delistOf(SDI)] }), ASTRA_TEST_GATE_FAIL: "tools/validate.mjs" });
+  assert.notEqual(refused.status, 0, "a redo whose rules gate is red was pushed");
+  assert.equal(headOf(redOrigin), redMoved, "something was pushed past a red gate");
+
+  // Main moved under the withdrawal list's serial: rebased cleanly, the
+  // re-check refuses the stale list, and the compile runs again at the serial
+  // the landing commit gets.
   const serial = withDocuments(estate());
   const serialOrigin = withRemote(serial);
+  withGateStubs(serial);
   const revoke = decision({ code: "M_REVOKE", category: "security_defect", severity: "high", action: "block_install", moderator: "amoderator", versions: ["1.0.0"] });
   assert.equal((await commitJob(serial, { entries: [revoke] })).code, 0);
   const advanced = concurrentPush(serialOrigin, { "tools/revocations/README.md": "a note beside the advisories\n" }, "docs", "2026-09-20T12:31:00Z");
-  const stale = runApply(serial);
-  assert.notEqual(stale.status, 0,
-    "a rebased commit whose withdrawal list claims a serial the landing commit does not get was pushed");
-  assert.match(`${stale.stdout}${stale.stderr}`, /revocations\.json at HEAD is not what the generator produces/);
-  assert.equal(headOf(serialOrigin), advanced);
+  const restaled = runApply(serial, compileEnv({ entries: [revoke] }));
+  assert.equal(restaled.status, 0, `a moved serial was not compiled again: ${restaled.stderr} ${restaled.stdout}`);
+  assert.equal(sh(["rev-parse", `${headOf(serialOrigin)}^`], serial).trim(), advanced);
+  const atHead = spawnSync(process.execPath, [path.join(REPO, "bot", "moderation-run.mjs"), "--job", "documents-at-head", "--registry-dir", serial],
+    { cwd: serial, encoding: "utf8", env: fixtureEnv(serial) });
+  assert.equal(atHead.status, 0, `the redone commit's list is not at the serial it landed at: ${atHead.stderr}`);
+});
+
+// Review of #480 (LOW, pre-existing): a clean rebase pushed a commit compiled
+// against the old tree, and TRUST-26's bound was never counted again, so two
+// runs that each admitted a takedown under a bound with one slot left landed
+// both. Every rejected push is compiled again now, and the redo counts the
+// window out of the new main. Watched red: with a clean rebase pushed as
+// before, origin carries four withdrawals in the trailing 24 h.
+test("two takedowns raced across a rejected push never make four withdrawals in 24 h", async () => {
+  assert.equal(TAKEDOWN_BOUND, 3);
+  const now = new Date();
+  const iso = (ms) => `${new Date(now.getTime() - ms).toISOString().slice(0, 19)}Z`;
+  const root = withDocuments(crowd({ at: iso(10 * 3600_000) }));
+  withdrawnInGit(root, ["gadgets", "gizmos"], iso(3600_000));
+  const origin = withRemote(root);
+  const peer = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-peer-"));
+  tmpRoots.push(peer);
+  sh(["clone", "-q", origin, peer], os.tmpdir());
+  for (const r of [root, peer]) withGateStubs(r);
+  // A delist (the listing and the index) and a revoke (an advisory and the
+  // withdrawal list) touch no file in common, so the second commit REBASES
+  // CLEANLY onto the first: the case a clean rebase used to push.
+  const a = [takedownOf("widgets", 0)];
+  const b = [decision({ service_decision_id: SDIS[1], plugin_id: "doohickeys", code: "M_REVOKE", category: "security_defect",
+    severity: "high", action: "block_install", moderator: "amoderator", versions: ["1.0.0"] })];
+  const first = await measuredJob(root, a, { now });
+  assert.deepEqual(first.results.compiled, [SDIS[0]], "the fixture: two withdrawn leave one slot, and A takes it");
+  const second = await measuredJob(peer, b, { now, env: { GITHUB_RUN_ID: "35502265999" } });
+  assert.deepEqual(second.results.compiled, [SDIS[1]], "the fixture: B, from the same tree, also sees one slot");
+  assert.equal(runApply(root, compileEnv({ entries: a })).status, 0);
+  const two = runApply(peer, { ...compileEnv({ entries: b }), GITHUB_RUN_ID: "35502265999" });
+  assert.equal(two.status, 0, `${two.stderr} ${two.stdout}`);
+  const listed = (id) => {
+    try {
+      return JSON.parse(sh(["show", `refs/heads/main:plugins/${id}/plugin.json`], origin)).unlisted !== true;
+    } catch {
+      return true;
+    }
+  };
+  const advisories = sh(["ls-tree", "--name-only", "refs/heads/main", "tools/revocations/"], origin).split("\n").filter((f) => f.endsWith(".json"));
+  const withdrawn = ["widgets", ...PEERS].filter((id) => !listed(id)).length + advisories.length;
+  assert.ok(withdrawn <= TAKEDOWN_BOUND,
+    `origin carries ${withdrawn} withdrawals in the trailing 24 h under a bound of ${TAKEDOWN_BOUND}: ${advisories.join(", ")}`);
+  assert.equal(advisories.length, 0, "the second run's revoke went out over a full bound");
+  const results = JSON.parse(two.outputs.results);
+  assert.deepEqual(results.held.map((h) => [h.service_decision_id, h.held_for]), [[SDIS[1], "bound"]],
+    "the second run's takedown was not held for the bound after the redo");
+});
+
+// Run 40833642707, 2026-10-29T07:15Z: two moderation runs were handed the
+// same settled result. The first recorded it and landed; the second's commit
+// recorded the same row, its rebase conflicted, the step failed "does not
+// rebase cleanly onto the new main", and the run paged although nothing was
+// wrong. The second run now compiles again over the new main, finds the row
+// recorded, has nothing to commit, and is green.
+test("two runs over the same settled result give one commit and a green second run", async () => {
+  for (const identical of [false, true]) {
+    const ID = hid(identical ? 31 : 30);
+    const { root, sha, origin } = handCancelled([ID], { documents: true, remote: true });
+    const base = headOf(origin);
+    // The second run's checkout is the same commit: its run was queued on it.
+    const peer = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-peer-"));
+    tmpRoots.push(peer);
+    sh(["clone", "-q", origin, peer], os.tmpdir());
+    withGateStubs(root);
+    withGateStubs(peer);
+    const rowA = rowFor(ID, sha[ID]);
+    // Identical rows make the second commit a patch main already has, which
+    // the rebase drops: the work is no longer there. Different rows conflict.
+    const rowB = identical ? rowA : rowFor(ID, sha[ID], {
+      answered_at: "2026-09-21T09:10:00Z", run: "https://github.com/mihailinl/astra-registry/actions/runs/35502265999",
+    });
+
+    const first = await commitJob(root, { entries: [], env: { ASTRA_SETTLED: JSON.stringify([rowA]) } });
+    assert.equal(first.code, 0, first.logs.join("\n"));
+    assert.deepEqual(first.paths, [SETTLED_FILE_PATH]);
+    const one = runApply(root, compileEnv({ settled: [rowA] }));
+    assert.equal(one.status, 0, `${one.stderr} ${one.stdout}`);
+    const landed = headOf(origin);
+    assert.equal(sh(["rev-parse", `${landed}^`], root).trim(), base);
+
+    // Another run, so another run id and another commit message: the two
+    // commits differ though the change may not.
+    const RUN_B = { GITHUB_RUN_ID: "35502265999" };
+    const second = await commitJob(peer, { entries: [], env: { ASTRA_SETTLED: JSON.stringify([rowB]), ...RUN_B } });
+    assert.equal(second.code, 0, second.logs.join("\n"));
+    assert.deepEqual(second.paths, [SETTLED_FILE_PATH], "the second run did not record the row too, so it does not race");
+    const two = runApply(peer, { ...compileEnv({ settled: [rowB] }), ...RUN_B });
+    assert.equal(two.status, 0, `the second run over a settled result is red: ${two.stderr} ${two.stdout}`);
+    assert.match(two.stdout + two.stderr, /the push was rejected \(try 1 of 3\); the compile runs again against the new main/);
+    assert.match(two.stdout, /nothing left to commit/);
+    assert.equal(headOf(origin), landed, "the second run pushed a commit over a result the first had already recorded");
+    assert.equal(two.outputs.main_commit, "", "a run that pushed nothing names a commit");
+    const results = JSON.parse(two.outputs.results);
+    assert.deepEqual(results.settled.recorded, [], "the redo recorded the row a second time");
+    const record = JSON.parse(sh(["show", `${landed}:${SETTLED_FILE_PATH}`], root));
+    assert.deepEqual(record.settled.map((r) => r.service_decision_id), [ID], "the record on main holds the row once");
+  }
+});
+
+// The redo is the compile step and the two gate steps again, inside `apply`.
+// Two copies of one list drift; this holds them to one: every gate line the
+// `documents` and `rules` steps run is in the redo, in order, and every input
+// the compile step is handed is in the `apply` step's `env:` with the same
+// expression — a redo missing `ASTRA_SETTLED` would record nothing, and one
+// missing `ASTRA_ENTRIES` would compile an empty list and land nothing.
+test("the redo inside `apply` runs every gate the gate steps run, over the compile step's own inputs", () => {
+  const lines = read(".github/workflows/plugins-moderation.yml").split("\n");
+  const stepBlock = (id) => {
+    const at = lines.findIndex((l) => new RegExp(`^\\s+id: ${id}\\s*$`).test(l));
+    assert.ok(at > 0, `no step \`${id}\``);
+    const indent = lines[at].search(/\S/);
+    let from = at;
+    while (from > 0 && !/^\s+- /.test(lines[from])) from--;
+    const block = [lines[from]];
+    for (let j = from + 1; j < lines.length; j++) {
+      if (lines[j].trim() !== "" && lines[j].search(/\S/) < indent) break;
+      if (/^\s+- /.test(lines[j]) && lines[j].search(/\S/) === indent - 2) break;
+      block.push(lines[j]);
+    }
+    return block;
+  };
+  const envOf = (block) => Object.fromEntries(block
+    .map((l) => /^\s+(ASTRA_[A-Z_]+): (\$\{\{.*\}\})\s*$/.exec(l)).filter(Boolean).map((m) => [m[1], m[2]]));
+  const gateLines = (block) => block.map((l) => l.trim()).filter((l) => /^node (tools|bot)\//.test(l));
+  const want = [...gateLines(stepBlock("documents")), ...gateLines(stepBlock("rules"))];
+  assert.ok(want.length >= 5, `the gate steps run ${want.length} lines; the reader lost them`);
+  const apply = applyStep().split("\n");
+  const from = apply.findIndex((l) => /^\s*redo\(\) \{/.test(l));
+  assert.ok(from >= 0, "the `apply` step has no `redo` function");
+  const to = apply.findIndex((l, i) => i > from && /^\s*\}\s*$/.test(l));
+  const redo = apply.slice(from, to).map((l) => l.trim());
+  assert.deepEqual(redo.filter((l) => /^node (tools|bot)\//.test(l)), want,
+    "the redo's gates are not exactly the gate steps' lines, in order; a redone commit would skip a gate the first one passed");
+  assert.ok(redo.some((l) => /bot\/moderation-run\.mjs" --job commit --registry-dir \. --out moderation$/.test(l)),
+    "the redo does not run the commit job's compile");
+  const compile = envOf(stepBlock("compile"));
+  assert.ok(Object.keys(compile).length >= 5, "the compile step's inputs were not found");
+  assert.deepEqual(envOf(stepBlock("apply")), compile,
+    "the `apply` step is not handed exactly the compile step's inputs, so its redo compiles something else");
+  assert.doesNotMatch(applyStep(), /git push[^\n]*(--force|\s-f\b|\+HEAD)/, "the push may be forced");
 });
 
 test("a run with nothing to commit leaves the commit step nothing to fail on", async () => {
@@ -3459,6 +3660,194 @@ test("R1/R2: hold → confirm → release → a stale list still naming the id: 
   assert.ok(!fs.existsSync(path.join(root, holdEntryPath(SDIS[0]))), "a new hold entry was written for an applied decision");
 });
 
+// b41b72b, 2026-10-29T07:07Z: the stray-hold cleanup for 3f996cae removed
+// one hold entry and ALSO rewrote registry/v1/revocations.json, `serial` 17 →
+// 18 and not one other byte. The formula had moved at ca06321, the merge of a
+// branch that forked before 8bd29d5's advisory (`--full-history` counts a
+// merge whose tree differs from either parent), and the regeneration wrote
+// the new number over an unchanged list. A commit that changes no advisory now
+// leaves the list as it is.
+test("a release or cleanup that changes no advisory does not rewrite the withdrawal list, even when the serial formula moved", async () => {
+  const ID = "3f996cae-45c5-43a2-a24a-fd56ee1fcca0";
+  const root = withDocuments(estate({ id: "game-companion", versions: ["0.1.0", "0.1.1"], at: "2026-10-29T02:00:00Z" }));
+  const origin = withRemote(root);
+  const forkPoint = headOf(origin);
+  const d = decision({
+    service_decision_id: ID, code: "M_REVOKE", category: "malicious", plugin_id: "game-companion", versions: ["0.1.1"],
+    decided_at: "2026-10-29T02:54:07Z", reason: "Using all ai limits, sends request every minute.", severity: "moderate",
+    action: "disable", moderator: "mod-1", declared_interest: false,
+  });
+  assert.deepEqual((await measuredJob(root, [d], { now: new Date("2026-10-29T03:10:00Z") })).results.compiled, [ID]);
+  assert.equal(runApply(root, dated("2026-10-29T03:11:10Z")).status, 0);
+  // ca06321: a branch from before the advisory, merged after it.
+  sh(["checkout", "-q", "-b", "side", forkPoint], root);
+  writeAll(root, { "bot/README.txt": "a bot change on a branch\n" });
+  sh(["add", "-A"], root);
+  sh(["commit", "-q", "-m", "bot: a change"], root, dated("2026-10-29T04:00:00Z"));
+  sh(["checkout", "-q", "main"], root);
+  sh(["merge", "-q", "--no-ff", "-m", "Merge pull request #478", "side"], root, dated("2026-10-29T05:00:00Z"));
+  sh(["push", "-q", "origin", "HEAD:main"], root);
+  const listBefore = sh(["show", `HEAD:${REVOCATIONS_FILE}`], root);
+  const formula = serialsAt({ root, sha: headOf(origin) }).revocations;
+  assert.equal(formula, JSON.parse(listBefore).signed.serial + 1,
+    "the fixture's merge did not move the formula, so it does not reproduce ca06321");
+  // abec3f9's stray hold, and its cleanup.
+  writeAll(root, { [holdEntryPath(ID)]: holdFixture(d, { held_for: "disable_confirmation", held_at: "2026-10-29T05:15:35Z" }) });
+  commitAt(root, "2026-10-29T05:17:00Z", "registry: moderation (1 hold(s))");
+  sh(["push", "-q", "origin", "HEAD:main"], root);
+  const job = await measuredJob(root, [], { now: new Date("2026-10-29T07:07:00Z") });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.stray_holds, [ID]);
+  assert.deepEqual(job.paths, [holdEntryPath(ID)],
+    `a cleanup that changes no advisory rewrote ${job.paths.filter((p) => p !== holdEntryPath(ID)).join(", ")}`);
+  const step = runApply(root, dated("2026-10-29T07:07:18Z"));
+  assert.equal(step.status, 0, step.stderr);
+  assert.equal(sh(["show", `${headOf(origin)}:${REVOCATIONS_FILE}`], root), listBefore, "the landed withdrawal list is not the one main had");
+  const check = spawnSync(process.execPath, [path.join(REPO, "bot", "moderation-run.mjs"), "--job", "documents-at-head", "--registry-dir", root],
+    { cwd: root, encoding: "utf8", env: fixtureEnv(root) });
+  assert.equal(check.status, 0, `the re-check refuses a list this commit did not write: ${check.stderr}`);
+
+  // The control: a commit that DOES change an advisory rewrites the list, at
+  // the serial the signer gives the commit that lands it.
+  const lift = decision({
+    service_decision_id: "0192f3a4-5b6c-7d8e-9f01-2345678930aa", code: "M_UNREVOKE", category: "error", plugin_id: "game-companion",
+    versions: ["0.1.1"], moderator: "mod-1", reverses: ID, decided_at: "2026-10-29T08:00:00Z",
+  });
+  const lifted = await measuredJob(root, [lift], { now: new Date("2026-10-29T08:10:00Z") });
+  assert.equal(lifted.code, 0, lifted.logs.join("\n"));
+  assert.deepEqual(lifted.results.compiled, [lift.service_decision_id], JSON.stringify(lifted.results.refused));
+  {
+    assert.ok(lifted.paths.includes(REVOCATIONS_FILE), `an advisory change left the list alone: ${lifted.paths.join(", ")}`);
+    assert.equal(runApply(root, dated("2026-10-29T08:11:00Z")).status, 0);
+    assert.equal(JSON.parse(sh(["show", `${headOf(origin)}:${REVOCATIONS_FILE}`], root)).signed.serial,
+      serialsAt({ root, sha: headOf(origin) }).revocations);
+  }
+});
+
+// Contract 6.7.0 (MOD-57; owner OD-34, 2026-10-29). game-companion (revoke
+// 3f996cae…, ASTRA-2026-0002) drained its users' AI quotas, which is harm and
+// not malice, and was published `malicious` because §7.2 had no category for
+// it and no way to correct one. The correction goes through the console as
+// an `M_CORRECT_CATEGORY`, never as a hand edit of the published entry.
+test("6.7.0: game-companion's revoke is corrected to `harmful_behaviour` by an appended entry, and nothing else moves", async () => {
+  const ID = "3f996cae-45c5-43a2-a24a-fd56ee1fcca0";
+  const FIX = "0192f3a4-5b6c-7d8e-9f01-2345678930cd";
+  const root = withDocuments(estate({ id: "game-companion", versions: ["0.1.0", "0.1.1"], at: "2026-10-29T02:00:00Z" }));
+  const origin = withRemote(root);
+  const revoke = decision({
+    service_decision_id: ID, code: "M_REVOKE", category: "malicious", plugin_id: "game-companion", versions: ["0.1.1"],
+    decided_at: "2026-10-29T02:54:07Z", reason: "Using all ai limits, sends request every minute.", severity: "moderate",
+    action: "disable", moderator: "mod-1", declared_interest: false,
+  });
+  assert.deepEqual((await measuredJob(root, [revoke], { now: new Date("2026-10-29T03:10:00Z") })).results.compiled, [ID]);
+  assert.equal(runApply(root, dated("2026-10-29T03:11:10Z")).status, 0);
+  const revokeFile = sh(["ls-files", "--", "bot/moderation/*game-companion-revoke*.json"], root).trim();
+  assert.ok(revokeFile, "the fixture's revoke left no log entry");
+  const before = {
+    entry: sh(["show", `HEAD:${revokeFile}`], root),
+    list: sh(["show", `HEAD:${REVOCATIONS_FILE}`], root),
+    index: sh(["show", `HEAD:${INDEX_FILE}`], root),
+  };
+
+  const correct = (over = {}) => decision({
+    service_decision_id: FIX, code: "M_CORRECT_CATEGORY", category: "harmful_behaviour", corrects: ID,
+    plugin_id: "game-companion", decided_at: "2026-10-30T09:00:00Z", moderator: "mod-1", declared_interest: false,
+    reason: "It drained its users' AI quotas, which harms them and is not malice.", ...over,
+  });
+  // The refusals first, each on its own tree state and each final.
+  const refusal = async (over) => {
+    const job = await measuredJob(root, [correct(over)], { now: new Date("2026-10-30T09:10:00Z") });
+    fs.rmSync(path.join(root, "moderation"), { recursive: true, force: true });
+    sh(["checkout", "-q", "--", "."], root);
+    return job.results.refused.map((r) => r.refusal);
+  };
+  assert.deepEqual(await refusal({ corrects: "0192f3a4-5b6c-7d8e-9f01-2345678930ce" }), ["target_changed"], "a correction of nothing applied");
+  assert.deepEqual(await refusal({ category: "malicious" }), ["target_changed"], "a correction to the category it already has");
+  assert.deepEqual(await refusal({ category: "broken" }), ["kind_refused"], "a category §7.2 does not allow with a revoke");
+  assert.deepEqual(await refusal({ plugin_id: "widgets" }), ["target_changed"], "a correction naming another plugin's entry");
+  // Review of #480: never to `author_request` (the log would say the author
+  // asked) nor to an account-level category.
+  for (const category of ["author_request", "account_compromise", "account_sanction"]) {
+    assert.deepEqual(await refusal({ category }), ["kind_refused"], `a correction to ${category} was not refused`);
+  }
+
+  const job = await measuredJob(root, [correct()], { now: new Date("2026-10-30T09:10:00Z") });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.compiled, [FIX], JSON.stringify(job.results.refused));
+  assert.equal(job.paths.length, 1, `a correction wrote more than its own log entry: ${job.paths.join(", ")}`);
+  assert.match(job.paths[0], /^bot\/moderation\/2026-10-30-game-companion-correct\.json$/);
+  assert.equal(runApply(root, dated("2026-10-30T09:11:00Z")).status, 0);
+  const landed = headOf(origin);
+  assert.match(sh(["log", "-1", "--format=%B", landed], root), new RegExp(`^Service-Decision: ${FIX}$`, "m"));
+  assert.equal(sh(["show", `${landed}:${revokeFile}`], root), before.entry, "the published revoke entry was rewritten; history is append-only");
+  assert.equal(sh(["show", `${landed}:${REVOCATIONS_FILE}`], root), before.list, "the withdrawal list moved for a category");
+  assert.equal(sh(["show", `${landed}:${INDEX_FILE}`], root), before.index, "the catalogue moved for a category");
+  const fixEntry = JSON.parse(sh(["show", `${landed}:${job.paths[0]}`], root));
+  assert.deepEqual([fixEntry.action, fixEntry.corrects, fixEntry.category, fixEntry.previous_category], ["correct", ID, "harmful_behaviour", "malicious"]);
+
+  // The public text: the built log shows the revoke under its new category,
+  // with the history, and the words §7.2 publishes for it.
+  const log = buildModerationLog({ root });
+  const shown = log.entries.find((e) => e.service_decision_id === ID);
+  assert.equal(shown.category, "harmful_behaviour", "the log still publishes the revoke as malicious");
+  assert.deepEqual(shown.category_history.map((h) => h.category), ["malicious", "harmful_behaviour"]);
+  assert.equal(categoryWords(shown.category), "Harms users' accounts, data or resources");
+  assert.equal(log.entries.filter((e) => e.action === "correct").length, 1);
+  // And the advisory page the site builds says it in §7.2's words.
+  const { advisoryPage } = await import("../../site/templates/advisory.mjs");
+  const page = advisoryPage({ id: "ASTRA-2026-0001", severity: "moderate", action: "disable", reason: revoke.reason, entries: [] },
+    { plugins: new Map(), category: shown.category, categoryWords: categoryWords(shown.category) });
+  assert.match(page, /category <strong>Harms users&#39;? accounts, data or resources<\/strong>|category <strong>Harms users(&#x27;|') accounts, data or resources<\/strong>/);
+  // A second run over the same listed decision applies nothing twice.
+  const again = await measuredJob(root, [correct()], { now: new Date("2026-10-30T09:20:00Z") });
+  assert.deepEqual([again.paths, again.results.compiled], [[], []]);
+  assert.deepEqual(again.results.already_applied.map((a) => a.service_decision_id), [FIX]);
+});
+
+// Review of #480 (LOW): a moderator's delist moved to `author_request` would
+// publish that the author asked. Watched red: without the refusal, the
+// delist's correction to `author_request` compiles.
+test("6.7.0: a moderator's delist is never corrected to `author_request`; a correction to another category it allows compiles", async () => {
+  const root = withDocuments(estate());
+  withRemote(root);
+  const DELIST = "0192f3a4-5b6c-7d8e-9f01-2345678930d1";
+  assert.equal((await commitJob(root, { entries: [delistOf(DELIST)] })).code, 0);
+  assert.equal(runApply(root).status, 0);
+  const fix = (category) => decision({
+    service_decision_id: "0192f3a4-5b6c-7d8e-9f01-2345678930d2", code: "M_CORRECT_CATEGORY", category, corrects: DELIST,
+    moderator: "amoderator", declared_interest: false, decided_at: "2026-09-21T12:00:00Z",
+  });
+  const asked = await commitJob(root, { entries: [fix("author_request")], now: new Date("2026-09-21T12:10:00Z") });
+  assert.deepEqual(asked.results.refused.map((r) => r.refusal), ["kind_refused"], "a delist was corrected to author_request");
+  fs.rmSync(path.join(root, "moderation"), { recursive: true, force: true });
+  sh(["checkout", "-q", "--", "."], root);
+  const fine = await commitJob(root, { entries: [fix("malicious")], now: new Date("2026-09-21T12:10:00Z") });
+  assert.deepEqual(fine.results.compiled, ["0192f3a4-5b6c-7d8e-9f01-2345678930d2"], JSON.stringify(fine.results.refused));
+});
+
+// Re-review of #480: nor AWAY from `author_request` or an account-level
+// category, which would erase that the author asked or that an account was
+// compromised. Watched red: without the refusal, both corrections compile.
+test("6.7.0: an entry carrying `author_request` or an account category is never corrected away from it", async () => {
+  for (const category of ["author_request", "account_compromise"]) {
+    const root = withDocuments(estate());
+    withRemote(root);
+    const DELIST = "0192f3a4-5b6c-7d8e-9f01-2345678930d3";
+    const original = decision({ service_decision_id: DELIST, code: "M_DELIST", category, moderator: "amoderator" });
+    const applied = await commitJob(root, { entries: [original] });
+    assert.deepEqual(applied.results.compiled, [DELIST], `the fixture: a delist with ${category} applies — ${JSON.stringify(applied.results.refused)}`);
+    assert.equal(runApply(root).status, 0);
+    const away = await commitJob(root, {
+      entries: [decision({
+        service_decision_id: "0192f3a4-5b6c-7d8e-9f01-2345678930d4", code: "M_CORRECT_CATEGORY", category: "broken", corrects: DELIST,
+        moderator: "amoderator", declared_interest: false, decided_at: "2026-09-21T12:00:00Z",
+      })],
+      now: new Date("2026-09-21T12:10:00Z"),
+    });
+    assert.deepEqual(away.results.refused.map((r) => r.refusal), ["kind_refused"], `a delist carrying ${category} was corrected away from it`);
+  }
+});
+
 test("R1: abec3f9's tree — an applied `disable` and a stray hold for the same id: zero new advisories, the hold removed, `applied`", async () => {
   // 3f996cae…, game-companion 0.1.1, as abec3f9 committed it.
   const ID = "3f996cae-45c5-43a2-a24a-fd56ee1fcca0";
@@ -3772,8 +4161,10 @@ test("M-T3.5: a deny is TRUST-33's four members, written once, and names a finge
 // taken from anywhere but the alert — the record's value disagrees.
 const OWNER_ID = "193032699";
 function alertOnTree(root, fp, over = {}) {
+  // 6.7.0: every alert written binds the whole digest (whose first 16 hex are
+  // the label) and the held record it cleared.
   const rec = { schema: "astra.registry.alert/1", fingerprint: fp, event: "approval", approval_decided_at: "2026-09-23T10:00:00Z",
-    delivered_at: "2026-09-23T10:01:00Z", run: "1/1", ...over };
+    delivered_at: "2026-09-23T10:01:00Z", run: "1/1", digest: `${fp}${"e".repeat(48)}`, held_decision_id: "1".repeat(32), ...over };
   fs.mkdirSync(path.join(root, "state", "alerts"), { recursive: true });
   fs.writeFileSync(path.join(root, "state", "alerts", `${fp}.json`), `${JSON.stringify(rec, null, 2)}\n`);
   return rec;

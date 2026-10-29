@@ -147,7 +147,26 @@ inputs:
     required: false
     default: ''
 
+  state:
+    description: >-
+      R4's once-per-state memory, as the one line `<alert job>-state` emitted
+      (`node bot/alert.mjs --emit-state`) — a job OUTPUT, never a cache or an
+      artifact, which this job may not hold. Empty means no memory: every red
+      pages, as it always did, and nothing is handed on to save. Given, the
+      same red state pages once and again at most once in 24 hours, a new code
+      or id pages at once, and green after a page sends "resolved" once. Never
+      given by a job whose page is an event (TRUST-14, TRUST-32, MOD-8, BOT-86,
+      the operator's refused act); bot/tests/workflows.test.mjs holds the list.
+    required: false
+    default: ''
+
 outputs:
+  next-state:
+    description: The state to save after this run, as one line, when it moved; empty otherwise.
+    value: ${{ steps.alarm.outputs.next_state }}
+  state-changed:
+    description: Whether the state moved this run (`true`), so `<alert job>-save` should save `next-state`.
+    value: ${{ steps.alarm.outputs.state_changed }}
   delivered_at:
     description: The Bot API's message time for the owner's chat (TRUST-14, TRUST-32), or empty.
     value: ${{ steps.alarm.outputs.delivered_at }}
@@ -252,12 +271,26 @@ runs:
       env:
         ASTRA_ALERT_VERDICT: ${{ inputs.verdict }}
         ASTRA_ALERT_ACK_CHECK: ${{ inputs.ack-check }}
+        ASTRA_ALERT_STATE: ${{ inputs.state }}
       run: |
         set -euo pipefail
+        # R4: the state arrives as a string and is re-read against its schema
+        # by bot/alert.mjs; an unreadable one is "never paged". A drill's page
+        # is an event BOT-86 counts, so a drill never takes one.
+        state_args=()
+        if [ -n "${ASTRA_ALERT_STATE:-}" ]; then
+          if [ -n "$ASTRA_ALERT_ACK_CHECK" ]; then
+            echo "::error::a state was handed to an alarm with an acknowledgement check; BOT-86's drill pages every time, and a start signal after a quiet run would escalate a message nobody was sent"
+            exit 1
+          fi
+          state_file="${RUNNER_TEMP:-/tmp}/astra-alert-state.json"
+          printf '%s' "$ASTRA_ALERT_STATE" > "$state_file"
+          state_args=(--state "$state_file")
+        fi
         if [ -n "$ASTRA_ALERT_ACK_CHECK" ]; then
           node bot/alert.mjs --verdict "$ASTRA_ALERT_VERDICT" --if-red --ack
         else
-          node bot/alert.mjs --verdict "$ASTRA_ALERT_VERDICT" --if-red
+          node bot/alert.mjs --verdict "$ASTRA_ALERT_VERDICT" --if-red ${state_args[@]+"${state_args[@]}"}
         fi
         # The start signal follows a DELIVERED alarm, in this same step, and
         # not before it. BOT-86 escalates to KNICE 48 hours after a start with

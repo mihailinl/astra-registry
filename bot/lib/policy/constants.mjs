@@ -533,6 +533,16 @@ export const POLICY_CODES = {
       "guarantee, and a later advisory, yank or delisting overrides it. The next version you " +
       "publish starts unreviewed again. Nothing to do.",
   },
+  // Contract 6.7.0: a moderator moved an applied decision's category, and
+  // nothing else. Level and `fix` are tools/gen-codes-table.mjs `DECIDED`'s.
+  M_CORRECT_CATEGORY: {
+    level: "note", stage: "policy", fix: "none",
+    title: "A moderator corrected the category of an earlier decision",
+    remedy:
+      "A moderator changed the published category of an earlier decision about this plugin. The " +
+      "decision itself, and anything it withdrew, stands unchanged; only the words that say why " +
+      "moved. Nothing to do.",
+  },
 };
 
 // ── the bound world's codes, declared for their LEVEL and nothing else ──────

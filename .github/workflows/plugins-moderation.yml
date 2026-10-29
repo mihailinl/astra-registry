@@ -458,25 +458,50 @@ jobs:
       # identity record) so the rules step reads the index this commit holds;
       # `git add` here takes what is still on disk, and a listed path gone from
       # disk but still in the index is a deletion nothing staged, which fails.
+      #
+      # **A push that `main` moved under is redone, never forced.** R6
+      # (2026-10-29) rebased a rejected commit and re-checked it. The second
+      # of two runs over the SAME settled result (run 40833642707,
+      # 2026-10-29T07:15Z) then failed "does not rebase cleanly onto the new
+      # main" and paged, though nothing was wrong; and a CLEAN rebase pushed a
+      # commit compiled against the old tree, whose TRUST-26 bound was never
+      # counted again (review of #480). So a rejected push now always RE-RUNS
+      # THE COMPILE against the new `main` (`redo`) — the same job, the same
+      # inputs (this step's `env:` is the compile step's), every gate above
+      # again — and commits what that run produces. It is idempotent by
+      # `service_decision_id` (R1) and by the settled record, so the work the
+      # other run landed is answered from history and nothing is applied
+      # twice; a re-run with nothing left to commit is a green no-op. Only
+      # three re-runs that still do not land, or a compile or gate that fails,
+      # fail the step. The redo runs the new `main`'s bot over the new
+      # `main`. Never `--force`: losing the other writer's commit is the one
+      # outcome worse than a red run.
       - name: "Commit once, with a Service-Decision: trailer per decision, and push"
         id: apply
         if: ${{ !cancelled() && steps.compile.conclusion == 'success' && steps.documents.conclusion == 'success' && steps.rules.conclusion == 'success' }}
+        env:
+          ASTRA_SHADOW: ${{ needs.list.outputs.shadow }}
+          ASTRA_ENTRIES: ${{ needs.list.outputs.entries }}
+          ASTRA_SUBMISSIONS: ${{ needs.list.outputs.submissions }}
+          ASTRA_REFUSED: ${{ needs.list.outputs.refused }}
+          ASTRA_SETTLED: ${{ needs.list.outputs.settled }}
+          ASTRA_DELIVERED_AT: ${{ needs.alert.outputs.delivered_at }}
         run: |
           set -euo pipefail
-          if [ ! -f moderation/paths.txt ]; then
-            echo "::error::the commit job left no moderation/paths.txt, so this step cannot tell a run with nothing to commit from a job that never finished"
-            exit 1
-          fi
-          main_commit=""
-          if [ ! -s moderation/paths.txt ]; then
-            if [ -e moderation/commit-message.txt ]; then
+          # The handoff's one rule: a zero-byte paths.txt and no message is
+          # "nothing to commit"; a missing paths.txt is a job that never
+          # finished.
+          check_handoff() {
+            if [ ! -f moderation/paths.txt ]; then
+              echo "::error::the commit job left no moderation/paths.txt, so this step cannot tell a run with nothing to commit from a job that never finished"
+              exit 1
+            fi
+            if [ ! -s moderation/paths.txt ] && [ -e moderation/commit-message.txt ]; then
               echo "::error::moderation/paths.txt is empty and moderation/commit-message.txt exists; the commit job writes a message only with a path to commit"
               exit 1
             fi
-            echo "nothing to commit: the commit job listed no path, so nothing is added, committed or pushed"
-          else
-            git config user.name "astra-registry-bot"
-            git config user.email "bot@users.noreply.github.com"
+          }
+          commit_listed() {
             : > moderation/present.txt
             while IFS= read -r p; do
               if [ -e "$p" ] || [ -L "$p" ]; then
@@ -491,45 +516,65 @@ jobs:
             fi
             git commit --file=moderation/commit-message.txt
             # The tree rule on the commit just made, before it leaves the
-            # runner (ops couplings 216). The validator above read the commit
-            # this job started from, and `git add` takes whatever stands at a
+            # runner (ops couplings 216). The validator read the commit this
+            # job started from, and `git add` takes whatever stands at a
             # listed path, a link included; a refusal ends the step here.
             node tools/lib/tree-modes.mjs HEAD
+          }
+          # The compile step and the two gate steps above, again, over the
+          # `main` that moved. The gate lines are the gate steps' own, and
+          # bot/tests/moderation-run.test.mjs holds the two lists to one.
+          redo() {
+            git reset -q --hard origin/main
+            rm -rf moderation
+            node "${ASTRA_BOT_DIR:-.}/bot/moderation-run.mjs" --job commit --registry-dir . --out moderation
+            node tools/build-index.mjs --check
+            node tools/build-revocations.mjs --check
+            node tools/validate.mjs --allow-staging
+            node tools/selftest.mjs
+            node bot/moderation.mjs --check
+            check_handoff
+          }
+          check_handoff
+          main_commit=""
+          if [ ! -s moderation/paths.txt ]; then
+            echo "nothing to commit: the commit job listed no path, so nothing is added, committed or pushed"
+          else
+            git config user.name "astra-registry-bot"
+            git config user.email "bot@users.noreply.github.com"
+            commit_listed
             if [ "${DRY_RUN:-}" != "false" ]; then
               echo "::warning::DRY_RUN is '${DRY_RUN:-}', not exactly \"false\": this commit stays on the runner and nothing is pushed"
               git show --stat --format='would push %H' HEAD
             else
-              # R6 (2026-10-29): another writer of `main` (ingest, the
-              # operator) can land between this job's checkout and its push;
-              # run 40274912876 lost a decision for a cycle on a non-fast-
-              # forward. So a rejected push fetches, rebases this one commit
-              # onto the new `main`, re-checks the rebased commit — the tree
-              # rule, and both generated documents at the serial it now gets
-              # (`--job documents-at-head`) — and pushes again, three times at
-              # most. A conflict or a failed re-check pushes nothing: the next
-              # run does the work again, and applies nothing twice (R1). Not
-              # one shared `concurrency` group across the writers: GitHub keeps
-              # one PENDING run per group and cancels the older, so an
-              # operator's dispatch could be cancelled by a moderation tick.
-              for attempt in 1 2 3; do
-                if git push origin HEAD:main; then
-                  main_commit=$(git rev-parse HEAD)
+              retries=0
+              # The tree rule on the exact commit each push below sends: the
+              # first one here, and a redone one in `commit_listed`.
+              node tools/lib/tree-modes.mjs HEAD
+              # Review of #480: a rejected push is ALWAYS compiled again over
+              # the new main, never rebased and pushed. A clean rebase carried
+              # a commit compiled against the old tree, and TRUST-26's bound
+              # was not counted again: two runs could each admit a takedown
+              # under a bound one of them had already filled. The redo counts
+              # the window out of the new main's history like any compile.
+              until git push origin HEAD:main; do
+                retries=$((retries + 1))
+                if [ "$retries" -gt 3 ]; then
+                  echo "::error::main moved under this run, and three tries against the new main did not land; nothing is pushed"
+                  exit 1
+                fi
+                echo "::warning::the push was rejected (try ${retries} of 3); the compile runs again against the new main"
+                git fetch origin main
+                redo
+                if [ ! -s moderation/paths.txt ]; then
+                  echo "the compile against the new main has nothing left to commit: the work this run listed is already on main, and nothing is pushed"
                   break
                 fi
-                if [ "$attempt" = 3 ]; then
-                  echo "::error::main moved under this run three times; nothing is pushed, and the next run does the work again"
-                  exit 1
-                fi
-                echo "::warning::the push was rejected (attempt ${attempt}); rebasing this commit onto the main that moved"
-                git fetch origin main
-                if ! git rebase origin/main; then
-                  git rebase --abort || true
-                  echo "::error::this commit does not rebase cleanly onto the new main; nothing is pushed, and the next run does the work again"
-                  exit 1
-                fi
-                node tools/lib/tree-modes.mjs HEAD
-                node "${ASTRA_BOT_DIR:-.}/bot/moderation-run.mjs" --job documents-at-head --registry-dir .
+                commit_listed
               done
+              if [ -s moderation/paths.txt ]; then
+                main_commit=$(git rev-parse HEAD)
+              fi
             fi
           fi
           {
@@ -597,6 +642,42 @@ jobs:
           ASTRA_MAIN_COMMIT: ${{ needs.commit.outputs.main_commit }}
         run: node bot/moderation-run.mjs --job report
 
+  # ── settled-state: R4's memory for `settled`, restored without the alarm credential ──
+  #
+  # The Actions cache is restored HERE, in a job with no environment, no
+  # secret and no write, and reaches `settled` only as this job's `state` output,
+  # which bot/alert.mjs re-reads against its schema. `settled` holds the alarm
+  # credential and takes no cache, no artifact and no token
+  # (bot/tests/workflows.test.mjs). A failed restore is "never paged".
+  settled-state:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: none
+    outputs:
+      state: ${{ steps.state.outputs.state }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert-state
+            bot/alert.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: ./.github/actions/alert-state
+        id: state
+        with:
+          mode: restore
+          key: plugins-moderation-settled
+
   # ── settled: every listed id got a result, and the run said it was alive ───
   #
   # It runs `always()` and it is the last job, which is what makes it the one
@@ -609,7 +690,7 @@ jobs:
   # place in the estate that can see an id which was listed, not refused, not
   # compiled and not held — a decision that fell out of the run in silence.
   settled:
-    needs: [list, alert, commit, report]
+    needs: [list, alert, commit, report, settled-state]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -617,10 +698,16 @@ jobs:
     permissions:
       contents: read
       id-token: none
+    outputs:
+      next_state: ${{ steps.alert.outputs.next-state }}
+      state_changed: ${{ steps.alert.outputs.state-changed }}
     env:
       ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
       ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
       ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      # R4: signs and verifies the once-per-state memory (review of #480);
+      # absent, every red pages and nothing is saved.
+      ASTRA_ALERT_STATE_HMAC_KEY: ${{ secrets.ASTRA_ALERT_STATE_HMAC_KEY }}
       ASTRA_DEADMAN_URL_MODERATION_RUN: ${{ secrets.ASTRA_DEADMAN_URL_MODERATION_RUN }}
     steps:
       - uses: actions/checkout@v4
@@ -660,6 +747,7 @@ jobs:
       - uses: ./.github/actions/alert
         id: alert
         with:
+          state: ${{ needs.settled-state.outputs.state }}
           verdict: verdict.json
           check: moderation-run
 
@@ -675,3 +763,36 @@ jobs:
           set -euo pipefail
           echo "::error::a decision the service listed got no result in this run; the alarm above carries the reason"
           exit 1
+
+  # ── settled-save: the state `settled` moved, saved without the alarm credential ──
+  #
+  # Only when `settled` says the state moved (a page, or "resolved"), from its
+  # `next_state` output, under a new cache key.
+  settled-save:
+    needs: settled
+    if: always() && needs.settled.outputs.state_changed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: none
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert-state
+            bot/alert.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: ./.github/actions/alert-state
+        with:
+          mode: save
+          key: plugins-moderation-settled
+          state: ${{ needs.settled.outputs.next_state }}

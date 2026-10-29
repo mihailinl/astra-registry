@@ -102,7 +102,7 @@ export const SOURCE_DIR = "bot/moderation";
  * they reverse rather than in a block of their own, because the pair is the
  * unit a reader of `/transparency/` is looking for.
  */
-export const ACTIONS = ["yank", "delist", "relist", "deprecate", "revoke", "unrevoke", "reset", "review", "appeal"];
+export const ACTIONS = ["yank", "delist", "relist", "deprecate", "revoke", "unrevoke", "reset", "review", "appeal", "correct"];
 
 /**
  * The four whose cost `docs/POLICY.md` §9 tabulates.
@@ -134,11 +134,15 @@ export const ESCALATING_ACTIONS = ["yank", "delist", "deprecate", "revoke"];
  * action a second time, under the appeal's date.
  */
 export const CATEGORIES = {
-  yank: ["malicious", "account_compromise", "account_sanction", "privacy", "broken", "security_defect", "author_request"],
-  delist: ["malicious", "account_compromise", "account_sanction", "privacy", "impersonation", "broken", "licence", "naming", "legal", "author_request"],
+  // `harmful_behaviour` (contract 6.7.0, owner-approved 2026-10-29) sits with
+  // `privacy`: a plugin that harms its users' accounts, data or resources
+  // without being malicious. game-companion drained users' AI quotas, which
+  // is that, and was published as `malicious` because nothing else fitted.
+  yank: ["malicious", "harmful_behaviour", "account_compromise", "account_sanction", "privacy", "broken", "security_defect", "author_request"],
+  delist: ["malicious", "harmful_behaviour", "account_compromise", "account_sanction", "privacy", "impersonation", "broken", "licence", "naming", "legal", "author_request"],
   relist: ["error", "appeal_reversed", "path_test"],
-  deprecate: ["privacy", "broken", "security_defect", "licence", "legal", "path_test"],
-  revoke: ["malicious", "account_compromise", "account_sanction", "privacy", "impersonation", "security_defect", "legal"],
+  deprecate: ["harmful_behaviour", "privacy", "broken", "security_defect", "licence", "legal", "path_test"],
+  revoke: ["malicious", "harmful_behaviour", "account_compromise", "account_sanction", "privacy", "impersonation", "security_defect", "legal"],
   unrevoke: ["error", "appeal_reversed", "path_test"],
   // §7.2: "identity_reset (OPEN-OWNER-15) | IDENTITY_RESET", and nothing else
   // carries it. `M_IDENTITY_RESET` is the one decision whose log action is
@@ -148,7 +152,51 @@ export const CATEGORIES = {
   // nothing, so this is the category's only action.
   review: ["review_passed"],
   appeal: [],
+  // 6.7.0's `M_CORRECT_CATEGORY`: the new category of an applied entry, which
+  // must also be one that entry's own action allows (`correctableCategories`).
+  correct: [],
 };
+// Every category a takedown or a deprecation may carry: what a correction may
+// move an entry to, the entry's own action deciding which of them.
+CATEGORIES.correct = [...new Set(["yank", "delist", "deprecate", "revoke"].flatMap((a) => CATEGORIES[a]))];
+
+/** The actions whose entries carry a category a moderator may correct (6.7.0). */
+export const CORRECTABLE_ACTIONS = Object.freeze(["yank", "delist", "deprecate", "revoke"]);
+
+/**
+ * §7.2's public words for a category, where the contract publishes them
+ * (6.7.0). Any other category reads as its name, with spaces.
+ */
+export const CATEGORY_WORDS = Object.freeze({
+  harmful_behaviour: "Harms users' accounts, data or resources",
+});
+export const categoryWords = (c) => CATEGORY_WORDS[c] ?? (typeof c === "string" ? `${c[0].toUpperCase()}${c.slice(1).replace(/_/g, " ")}` : "");
+
+/**
+ * The category each entry carries NOW: its own, or the last correction's
+ * (6.7.0). History is append-only — a correction is a new entry naming the
+ * one it corrects by `service_decision_id`, and no file is rewritten — so
+ * the effective category is derived here, in log order, and nowhere else.
+ *
+ * @returns {Map<string, {category: string, history: {category: string, service_decision_id: string|null, date: string}[]}>}
+ *   keyed by the corrected entry's `service_decision_id`.
+ */
+export function effectiveCategories(entries) {
+  const out = new Map();
+  for (const e of entries) {
+    if (CORRECTABLE_ACTIONS.includes(e.action) && e.service_decision_id && e.category) {
+      out.set(e.service_decision_id, { category: e.category, history: [{ category: e.category, service_decision_id: e.service_decision_id, date: e.date }] });
+    }
+  }
+  const ordered = [...entries].filter((e) => e.action === "correct").sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  for (const c of ordered) {
+    const target = out.get(c.corrects);
+    if (!target) continue;
+    target.category = c.category;
+    target.history.push({ category: c.category, service_decision_id: c.service_decision_id ?? null, date: c.date });
+  }
+  return out;
+}
 
 /** MOD-33's two outcomes. There is no third, and "pending" is not an outcome. */
 export const OUTCOMES = ["stands", "reversed"];
@@ -521,6 +569,24 @@ export function checkEntry(doc, where = "<entry>", { cutoverAt = null } = {}) {
   // `service_decision_id` are required for the reset's reason: there is no
   // hand review — the one commit that may set `reviewed` is `M_REVIEW`'s, and
   // it carries `Service-Decision:` naming the decision this entry names.
+  // ── 6.7.0: a category correction names the entry it corrects ────────────
+  if (doc.action === "correct") {
+    if (typeof doc.corrects !== "string" || !SERVICE_DECISION_ID.test(doc.corrects)) {
+      bad("a correct must name the service_decision_id of the applied entry it corrects, as corrects (6.7.0)");
+    }
+    if (doc.category === undefined) bad("a correct must carry the category it corrects to");
+    if (doc.previous_category === undefined || !CATEGORIES.correct.includes(doc.previous_category)) {
+      bad(`a correct must carry the category it replaces, as previous_category, one of ${CATEGORIES.correct.join(", ")}`);
+    } else if (doc.previous_category === doc.category) {
+      bad("a correct that names the category the entry already carries corrects nothing");
+    }
+    if (doc.versions !== undefined) bad("a correct moves a category, not versions, so it may not carry versions");
+    if (typeof doc.service_decision_id !== "string") bad("a correct must carry the service_decision_id of the M_CORRECT_CATEGORY it applies (BOT-81)");
+  } else {
+    if (doc.corrects !== undefined) bad(`${doc.action} is not a correct, so it may not carry corrects`);
+    if (doc.previous_category !== undefined) bad(`${doc.action} is not a correct, so it may not carry previous_category`);
+  }
+
   if (doc.action === "review") {
     if (doc.versions === undefined) bad("a review must name the versions it marked, as versions (MOD-56)");
     if (doc.category === undefined) bad("a review must carry its category, review_passed (§7.2)");
@@ -591,6 +657,7 @@ export function checkEntry(doc, where = "<entry>", { cutoverAt = null } = {}) {
 export const ENTRY_MEMBERS = [
   "$comment", "date", "action", "plugin", "versions", "reason", "advisory", "appeal",
   "category", "reverses", "appeal_of", "outcome", "service_decision_id", "declared_interest",
+  "corrects", "previous_category",
 ];
 
 /**
@@ -772,6 +839,9 @@ export function buildModerationLog({ root = REPO_ROOT, revocations = null, revoc
     if (e.reverses && ADVISORY_ID.test(e.reverses)) settled.add(e.reverses);
   }
 
+  // 6.7.0: the category each entry carries now, after its corrections.
+  const effective = effectiveCategories(entries);
+
   const out = [];
   for (const [i, e] of entries.entries()) {
     const at = `${SOURCE_DIR}/${files[i] ?? fileNameFor(e)}`;
@@ -809,7 +879,9 @@ export function buildModerationLog({ root = REPO_ROOT, revocations = null, revoc
       reason: e.reason.trim(),
       ...(e.advisory ? { advisory: e.advisory } : {}),
       ...(e.appeal ? { appeal: e.appeal } : {}),
-      ...(e.category ? { category: e.category } : {}),
+      ...(e.category ? { category: effective.get(e.service_decision_id)?.category ?? e.category } : {}),
+      ...(effective.get(e.service_decision_id)?.history.length > 1 ? { category_history: effective.get(e.service_decision_id).history } : {}),
+      ...(e.corrects ? { corrects: e.corrects, previous_category: e.previous_category } : {}),
       ...(e.reverses ? { reverses: e.reverses } : {}),
       ...(e.appeal_of ? { appeal_of: e.appeal_of } : {}),
       ...(e.outcome ? { outcome: e.outcome } : {}),

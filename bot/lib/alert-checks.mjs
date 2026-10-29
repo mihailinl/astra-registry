@@ -671,6 +671,17 @@ export function optionalAlertsSecrets() {
   return ["ASTRA_ALERT_COPY_CHAT_ID"];
 }
 
+/**
+ * The secret environment `alerts` MAY hold for R4's once-per-state memory
+ * (review of #480): the HMAC key the alert state is signed with. Mapped ONLY
+ * into the alert jobs that take a state (bot/tests/workflows.test.mjs), never
+ * into an event's alert job and never into the secret-less jobs that carry
+ * the signed state. Absent is a correct environment that pages on every red.
+ */
+export function stateAlertsSecrets() {
+  return ["ASTRA_ALERT_STATE_HMAC_KEY"];
+}
+
 /** Problems with the table itself, as a list of sentences. Empty means sound. */
 export function tableProblems(checks = CHECKS) {
   const problems = [];

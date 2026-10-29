@@ -233,7 +233,9 @@ holds is published at once, marked not reviewed by moderators, as on any
 listing (§8). Binding needs a Minice account carrying `publish:plugin` (every
 Astra owner, or a `publisher`), a binding line in the repository, a new tag,
 and one `R_FIRST_BINDING` hold that a
-moderator approves; a bound release unfreezes the listing, with no penalty
+moderator approves — none when the repository's owner (or an admin or
+maintainer) built it with a live token, and one per binding, not per tag
+(since contract 6.7.0); a bound release unfreezes the listing, with no penalty
 (MIG-1, MIG-10). What the authors of these listings are told, and
 when, is `docs/migration-notice.md`. Enforced by
 the bot, which reads the deadline from `policy/binding-deadline.json` and from

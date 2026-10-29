@@ -113,6 +113,7 @@
     "M_APPEAL",
     "M_APPROVE",
     "M_BINDING_REVOKE",
+    "M_CORRECT_CATEGORY",
     "M_DELIST",
     "M_DEPRECATE",
     "M_IDENTITY_RESET",
@@ -1112,6 +1113,15 @@
       "panel_only": false,
       "title": "A moderator revoked this repository's binding token",
       "remedy": "A moderator revoked the binding token this repository was bound with. Versions already listed are not touched. Your next release will be refused as an unusable binding; mint a fresh token, commit its line, and cut a new tag to clear that."
+    },
+    {
+      "code": "M_CORRECT_CATEGORY",
+      "level": "note",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "A moderator corrected the category of an earlier decision",
+      "remedy": "A moderator changed the published category of an earlier decision about this plugin. The decision itself, and anything it withdrew, stands unchanged; only the words that say why moved. Nothing to do."
     },
     {
       "code": "M_DELIST",

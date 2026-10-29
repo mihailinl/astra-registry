@@ -47,10 +47,35 @@ thread to answer on.
 
 **Deciding.** In the panel, as a moderator whose account holds an enrolled TOTP
 factor and an enrolled confirmation channel (MOD-11, TRUST-16). An approval is
-honoured for 7 days, and an approved change of hands still waits every window
-in `docs/POLICY.md` §3.2 — the author's notice, DEC-6's operator window, and a
-first binding's 7 or 14 days — before it publishes; none of them is yours to
-shorten (MOD-10). It still publishes marked not reviewed: an approval is not a
+honoured whatever its age (contract 5.8.0), and an approved change of hands
+still waits every window in `docs/POLICY.md` §3.2 — the author's notice where
+the binding moves, and DEC-6's operator window — before it publishes; none of
+them is yours to shorten (MOD-10). A first binding has no extra wait since
+contract 6.7.0: MIG-31's 14 days became a check of who built it, the owner's
+own first binding with a live token is not held at all, and an approval
+covers the binding, so the next tag under it is not held again.
+
+**Correcting a category.** A decision published under the wrong category
+(game-companion's revoke went out as *Malicious*; it harmed users and was
+not malice) is corrected in the panel with `M_CORRECT_CATEGORY`, naming the
+applied decision. The bot appends a `correct` entry to the moderation log and
+changes nothing else: never edit a published entry by hand. Since 6.7.0
+`harmful_behaviour` ("Harms users' accounts, data or resources") is the
+category for a plugin that harms its users without malice.
+
+**Alarms page once per state** (2026-10-29). A check that stays red pages
+when it turns red, again for a new code or id, and at most once a day for
+the same state; green after a page sends "resolved". Approval alerts, the
+moderation and ingest alarms, the weekly drill and a refused operator act
+page every time. A page you expected and did not get: the state is in the
+Actions cache under `astra-alert-state-<workflow>-<job>-*`; deleting those
+entries makes the next red page. The state is signed with
+`ASTRA_ALERT_STATE_HMAC_KEY`, a secret of environment `alerts` (at least 32
+characters, created by the owner); without it, or with a state that does not
+verify, every red pages and nothing is remembered. Accepted residual: an older
+signed state can be replayed only to quiet pairs (check, code, id) it shows
+already paged within the last 24 hours; a new code or id, or a state older
+than a day, still pages. It still publishes marked not reviewed: an approval is not a
 review.
 
 **What only an operator can do, and where.** Nothing in the normal course.

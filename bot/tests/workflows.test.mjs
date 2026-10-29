@@ -21,7 +21,7 @@ import test from "node:test";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 
 import { OPTIONAL_SECRETS, REQUIRED_SECRETS } from "../alert.mjs";
-import { CHECKS, alertsEnvironmentSecrets, optionalAlertsSecrets, secretName } from "../lib/alert-checks.mjs";
+import { CHECKS, alertsEnvironmentSecrets, optionalAlertsSecrets, secretName, stateAlertsSecrets } from "../lib/alert-checks.mjs";
 import { cleanEnv, fixtureEnv } from "../../tools/lib/git-env.mjs";
 
 /**
@@ -496,6 +496,7 @@ const ALERTS_FORBIDDEN = [
   [/releases\.atom/, "the releases feed, which is a stranger's bytes"],
   [/secrets\.GITHUB_TOKEN|github\.token/, "the GitHub token"],
   [/^\s+token:\s*\S/, "a `token:` input"],
+  [/\.github\/actions\/alert-state/, "R4's cache action; the state reaches an alert job only as a job output"],
 ];
 
 test("every job in environment `alerts` can do nothing but alert", () => {
@@ -514,6 +515,107 @@ test("every job in environment `alerts` can do nothing but alert", () => {
     });
   }
   assert.equal(offenders.join("\n"), "", "a job holding the alarm channel's credential can do more than alert");
+});
+
+// ── R4 (2026-10-29): the once-per-state memory, and where it may live ──────
+//
+// About twenty pages an hour across the estate, and Deadline watch's same
+// message daily for nine days, because every red run paged. bot/alert.mjs
+// pages a state once (e10a6c0); its memory can only live in the Actions cache,
+// and a job holding the alarm credential restores none (above). So every
+// alert job whose page is a STATE is flanked by two jobs that hold nothing:
+// `<job>-state` restores the cache and hands the state on as an output, and
+// `<job>-save` saves what the alert job hands back. The alert job takes the
+// state only as `needs.<job>-state.outputs.state`.
+//
+// An EVENT pages every time and is never handed a state. The list is closed:
+// a new alert job is a state job unless it is added here with its reason.
+const ALERT_EVENTS = new Map([
+  ["plugins-ingest.yml/alert", "TRUST-14 and TRUST-32 gate publication on its `delivered_at`: every page is an event"],
+  ["plugins-moderation.yml/alert", "MOD-8 alerts every advisory and hold before the push, and gates the push on it"],
+  ["alarm-drill.yml/drill", "BOT-86's weekly drill pages every week, and its start signal follows a delivered alarm"],
+  ["operator.yml/alert", "each refused operator act is somebody with dispatch access trying; each one pages"],
+]);
+const STATE_SPARSE = [".github/actions/alert-state", "bot/alert.mjs", "bot/lib/alert-verdict.mjs", "bot/lib/alert-checks.mjs", "tools/lib/ids.mjs"];
+
+test("R4: every alert job but the events takes its state only from a secret-less job's output, and hands it back to one", () => {
+  const jobs = allJobs();
+  const callers = jobs.filter((j) => code(j).some((l) => /^\s+- uses:\s*\.\/\.github\/actions\/alert\s*$/.test(l)));
+  assert.ok(callers.length >= 18, `${callers.length} jobs call the alert action, and 18 did on 2026-10-29; this would prove nothing`);
+  const problems = [];
+  const keys = new Map();
+  for (const ev of ALERT_EVENTS.keys()) {
+    if (!callers.some((j) => `${j.file}/${j.job}` === ev)) problems.push(`ALERT_EVENTS names ${ev}, which calls no alert action: a stale exemption`);
+  }
+  const named = (file, name) => jobs.find((j) => j.file === file && j.job === name);
+  for (const job of callers) {
+    const id = `${job.file}/${job.job}`;
+    const lines = code(job);
+    const stateLines = lines.filter((l) => /^\s+state:\s/.test(l));
+    if (ALERT_EVENTS.has(id)) {
+      if (stateLines.length) problems.push(`${where(job)} is an event (${ALERT_EVENTS.get(id)}) and is handed a state`);
+      continue;
+    }
+    const pre = `${job.job}-state`;
+    const post = `${job.job}-save`;
+    if (stateLines.length !== 1 || stateLines[0].trim() !== `state: \${{ needs.${pre}.outputs.state }}`) {
+      problems.push(`${where(job)} does not hand the alert action exactly \`state: \${{ needs.${pre}.outputs.state }}\`: ${stateLines.map((l) => l.trim()).join(" | ") || "none"}`);
+    }
+    const needs = /^ {4}needs:\s*\[?([^\]\n]+)\]?\s*$/m.exec(lines.join("\n"))?.[1] ?? "";
+    if (!needs.split(",").map((n) => n.trim()).includes(pre)) problems.push(`${where(job)} does not wait for ${pre}`);
+    const alarmStep = lines.findIndex((l) => /^\s+- uses:\s*\.\/\.github\/actions\/alert\s*$/.test(l));
+    const stepId = /^\s+id:\s*(\S+)\s*$/.exec(lines.slice(alarmStep + 1, alarmStep + 3).find((l) => /^\s+id:/.test(l)) ?? "")?.[1];
+    for (const [out, from] of [["next_state", "next-state"], ["state_changed", "state-changed"]]) {
+      if (!lines.some((l) => l.trim() === `${out}: \${{ steps.${stepId}.outputs.${from} }}`)) {
+        problems.push(`${where(job)} does not hand on \`${out}\` from its alert step (\`${stepId}\`)`);
+      }
+    }
+    const key = `${job.file.replace(/\.yml$/, "")}-${job.job}`;
+    if (keys.has(key)) problems.push(`${where(job)} shares the state key ${key} with ${keys.get(key)}`);
+    keys.set(key, where(job));
+    for (const [name, mode, extra] of [
+      [pre, "restore", (j) => code(j).some((l) => l.trim() === "state: ${{ steps.state.outputs.state }}")],
+      [post, "save", (j) => code(j).some((l) => l.trim() === `state: \${{ needs.${job.job}.outputs.next_state }}`) &&
+        condition(j).includes(`needs.${job.job}.outputs.state_changed == 'true'`)],
+    ]) {
+      const j = named(job.file, name);
+      if (!j) { problems.push(`${where(job)} has no \`${name}\` job beside it`); continue; }
+      const body = code(j);
+      if (inAlerts(j) || body.some((l) => /secrets\.|environment:/.test(l))) problems.push(`${where(j)} holds an environment or a secret; the state jobs hold nothing`);
+      if (body.some((l) => /:\s*write\s*$/.test(l))) problems.push(`${where(j)} holds a write permission`);
+      if (!body.some((l) => /^\s+- uses:\s*\.\/\.github\/actions\/alert-state\s*$/.test(l))) problems.push(`${where(j)} does not use the alert-state action`);
+      if (!body.some((l) => l.trim() === `mode: ${mode}`) || !body.some((l) => l.trim() === `key: ${key}`)) problems.push(`${where(j)} is not \`mode: ${mode}\` under \`key: ${key}\``);
+      if (!extra(j)) problems.push(`${where(j)} does not take or hand on the state the way the chain needs`);
+      const sparse = body.slice(body.findIndex((l) => /sparse-checkout: \|/.test(l)) + 1).map((l) => l.trim());
+      const listed = sparse.slice(0, sparse.findIndex((l) => l.startsWith("sparse-checkout-cone-mode")));
+      if (JSON.stringify(listed) !== JSON.stringify(STATE_SPARSE)) problems.push(`${where(j)}'s sparse checkout is not the state action's: ${listed.join(" ")}`);
+      if (name === post && !new RegExp(`^ {4}needs:.*\\b${job.job}\\b`, "m").test(body.join("\n"))) problems.push(`${where(j)} does not wait for ${job.job}`);
+    }
+  }
+  assert.equal(problems.join("\n"), "", "R4's memory is not wired as the guard above allows");
+});
+
+// Review of #480: the key that signs the state is mapped nowhere but the
+// alert jobs that take one — not into the secret-less state/save jobs, not
+// into any job outside environment `alerts`, not into the composite actions.
+test("R4: the alert state's signing key reaches only the alert jobs that take a state", () => {
+  const key = stateAlertsSecrets()[0];
+  const holders = allJobs().filter((j) => code(j).some((l) => new RegExp(`secrets\\.${key}\\b`, "i").test(l)));
+  assert.ok(holders.length >= 14, `${holders.length} jobs map ${key}; 14 state alert jobs did on 2026-10-29`);
+  const wrong = holders.filter((j) => !inAlerts(j) || /-(state|save)$/.test(j.job) || ALERT_EVENTS.has(`${j.file}/${j.job}`));
+  assert.deepEqual(wrong.map(where), [], `${key} is mapped into a job that takes no state or holds no alarm credential`);
+  for (const rel of [".github/actions/alert/action.yml", ".github/actions/alert-state/action.yml"]) {
+    const lines = fs.readFileSync(path.join(REPO, rel), "utf8").split("\n").filter((l) => !l.trim().startsWith("#"));
+    assert.deepEqual(lines.filter((l) => /\$\{\{[^}]*secrets\./.test(l)), [], `${rel} reads a secret itself`);
+  }
+});
+
+test("the alert-state action holds no secret and sends nothing", () => {
+  const src = fs.readFileSync(path.join(REPO, ".github", "actions", "alert-state", "action.yml"), "utf8");
+  const lines = src.split("\n").filter((l) => !l.trim().startsWith("#"));
+  for (const bad of [/secrets\./, /github\.token/, /ASTRA_ALERT_(TELEGRAM_TOKEN|CHAT_ID|COPY_CHAT_ID)/, /ASTRA_DEADMAN_URL_/, /--verdict/, /heartbeat/]) {
+    assert.equal(lines.filter((l) => bad.test(l)).join("\n"), "", `the alert-state action reaches for ${bad}`);
+  }
 });
 
 // ── Which ping URLs an alert job may map ────────────────────────────────────
@@ -683,8 +785,15 @@ test("an `alerts` job maps the channel's secrets and no ping URL that is not its
         );
       }
     }
+    // R4's signing key: only in an alert job that takes a state, which the
+    // R4 test below names by its `state:` input. Anywhere else it is reach.
+    const takesState = code(job).some((l) => /^\s+state:\s*\$\{\{\s*needs\.[A-Za-z0-9_-]+-state\.outputs\.state\s*\}\}/.test(l));
+    for (const secret of stateAlertsSecrets()) {
+      if (named.has(secret) && !takesState) problems.push(`${where(job)} maps ${secret} and takes no alert state; the key signs a state, and holding it without one is reach`);
+      if (!named.has(secret) && takesState) problems.push(`${where(job)} takes an alert state and does not map ${secret}, so the state is never trusted and every red pages`);
+    }
     for (const secret of named) {
-      if (!known.has(secret)) {
+      if (!known.has(secret) && !stateAlertsSecrets().includes(secret)) {
         problems.push(`${where(job)} maps ${secret}, which is not a secret environment \`alerts\` holds`);
       }
     }
@@ -1077,9 +1186,10 @@ test("the unconfigured state is derived from every channel secret bot/alert.mjs 
   const inputs = src.slice(src.indexOf("\ninputs:"), src.indexOf("\noutputs:"));
   assert.equal(
     [...inputs.matchAll(/^ {2}([a-z0-9-]+):$/gm)].map((m) => m[1]).sort().join(" "),
-    "ack-check check no-heartbeat-because verdict",
+    "ack-check check no-heartbeat-because state verdict",
     "an input was added to the alert action; if it can turn the alarm off, the unconfigured state stopped being " +
-    "derived and became declared",
+    "derived and became declared. (`state`, R4's memory, quiets only a red state paged in the last 24 hours, and " +
+    "bot/tests/alert.test.mjs holds it to that; it says nothing about whether the channel exists.)",
   );
 });
 
@@ -1632,7 +1742,10 @@ test("an alert job's verdict speaks for every job it waits for", () => {
     checked++;
     const speaksFor = new Set(listed[1].trim().split(/\s+/).filter(Boolean));
     const needs = /^\s+needs:\s*\[?([^\]\n]+)\]?\s*$/m.exec(body)?.[1] ?? "";
-    const waitsFor = needs.split(",").map((n) => n.trim()).filter(Boolean);
+    // R4: `<alert job>-state` is not a job the verdict reports on. Its one
+    // product is the dedupe memory, and when it fails the alert job is handed
+    // no state, so every red pages as before: its failure loses no page.
+    const waitsFor = needs.split(",").map((n) => n.trim()).filter(Boolean).filter((n) => n !== `${job.job}-state`);
     assert.ok(
       waitsFor.length >= 1,
       `${where(job)} composes a verdict from other jobs and this test read no \`needs:\`, so it would compare ` +

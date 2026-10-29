@@ -1261,12 +1261,27 @@ export async function verifyFacts(opts, deps = {}) {
       if (pulls.status !== "found") return out("wait", { code: "W_GITHUB_RATE_LIMITED", reason: `ID-63: ${pulls.reason}` });
       pr = pulls.pulls.length > 0;
     }
-    ownerFile = { commit: last.commit, pull_request: pr };
+    ownerFile = { commit: last.commit, pull_request: pr, author_id: last.author_id ?? null, verified: last.verified === true };
     if (identity.run_id) {
       const run = await (deps.workflowRun ?? gh.workflowRun)(identity.repository_id, identity.run_id);
-      const cmp = compareActor({ identity, actor: run?.status === "found" ? { status: "found", triggering_actor_id: run.triggering_actor_id } : { status: "transient", reason: run?.reason } });
+      const found = run?.status === "found" ? { status: "found", triggering_actor_id: run.triggering_actor_id } : { status: "transient", reason: run?.reason };
+      // MIG-31 since 6.7.0: a check, not a floor. Asked only when the account
+      // is not the owner: its permission on the repository, and public
+      // membership of the organisation the repository's name says owns it.
+      let permission = null;
+      let membership = null;
+      if (found.status === "found" && found.triggering_actor_id && found.triggering_actor_id !== identity.repository_owner_id) {
+        const login = run.triggering_actor_login ?? null;
+        permission = login
+          ? await (deps.collaboratorPermission ?? gh.collaboratorPermission)(identity.repository_id, login)
+          : { status: "transient", reason: "the run names no login for its triggering actor" };
+        membership = login
+          ? await (deps.publicOrgMember ?? gh.publicOrgMember)(identity.repository_owner_id, login)
+          : { status: "transient", reason: "the run names no login for its triggering actor" };
+      }
+      const cmp = compareActor({ identity, actor: found, permission, membership });
       if (cmp.outcome === "wait") return out("wait", { code: cmp.code, reason: cmp.reason });
-      actor = { triggering_actor_id: run.triggering_actor_id, floor_days: cmp.floor_days };
+      actor = { triggering_actor_id: run.triggering_actor_id, floor_days: 0, privileged: cmp.privileged === true, basis: cmp.basis };
     }
   }
 

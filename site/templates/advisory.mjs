@@ -87,7 +87,10 @@ export function escalationTable() {
  * @param {{id: string, severity: string, action: string, reason: string,
  *          advisory_url?: string, published?: string,
  *          entries: object[]}} advisory  grouped out of the signed document
- * @param {{plugins: Map<string, object>}} ctx
+ * @param {{plugins: Map<string, object>, category?: string|null, categoryWords?: string|null}} ctx
+ *        `category` is the moderation log's EFFECTIVE category for the entry
+ *        naming this advisory (contract 6.7.0, MOD-57: its own, or the newest
+ *        correction's), and `categoryWords` §7.2's public words for it.
  */
 export function advisoryPage(advisory, ctx) {
   const affected = [...new Set(advisory.entries.map((e) => pluginIdOf(e)).filter(Boolean))];
@@ -114,7 +117,7 @@ export function advisoryPage(advisory, ctx) {
 <article>
 <h1>${esc(advisory.id)}</h1>
 <p class="thin">${esc(advisory.published ?? "")} &middot; severity <strong>${esc(advisory.severity)}</strong>
-&middot; action <code>${esc(advisory.action)}</code></p>
+&middot; action <code>${esc(advisory.action)}</code>${ctx?.categoryWords ? ` &middot; category <strong>${esc(ctx.categoryWords)}</strong>` : ""}</p>
 
 <div class="alert danger">
 <p>${esc(advisory.reason)}</p>

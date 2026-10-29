@@ -56,7 +56,7 @@ import { fileURLToPath } from "node:url";
 
 import { REPO_ROOT } from "../tools/lib/sources.mjs";
 import { CONSENT_HIGH_RISK } from "../bot/lib/policy.mjs";
-import { buildModerationLog, loadEntries, BACKING, SCHEMA } from "../bot/lib/moderation.mjs";
+import { buildModerationLog, categoryWords, loadEntries, BACKING, SCHEMA } from "../bot/lib/moderation.mjs";
 import { ADVISORY_ID, loadAdvisories } from "../tools/lib/revocations.mjs";
 import { invalidId, unsafePathComponent } from "../tools/lib/ids.mjs";
 
@@ -218,6 +218,14 @@ export function build(opts) {
   const { advisories: sourceAdvisories } = loadAdvisories({ root });
   const sources = new Map(sourceAdvisories.map((a) => [a.id, a]));
   const advisories = groupAdvisories(revocations, sources);
+  // 6.7.0 (MOD-57): each advisory's category as the log publishes it NOW —
+  // a correction appends an entry, and the page reads the effective one.
+  const categoryOf = new Map();
+  try {
+    for (const e of buildModerationLog({ root }).entries) {
+      if (e.advisory && e.category && e.action !== "unrevoke") categoryOf.set(e.advisory, e.category);
+    }
+  } catch { /* the log's own section below reports an unreadable log */ }
   for (const advisory of advisories) {
     // The id becomes a directory name on the next line. Asked of the grammar
     // `tools/lib/revocations.mjs` validates advisories with, rather than typed
@@ -226,7 +234,8 @@ export function build(opts) {
     if (!ADVISORY_ID.test(advisory.id)) {
       throw new Error(`refusing to write a page for advisory ${JSON.stringify(advisory.id)}`);
     }
-    w(`advisory/${advisory.id}/index.html`, advisoryPage(advisory, { plugins }));
+    const category = categoryOf.get(advisory.id) ?? null;
+    w(`advisory/${advisory.id}/index.html`, advisoryPage(advisory, { plugins, category, categoryWords: category ? categoryWords(category) : null }));
   }
 
   // ── the transparency log ─────────────────────────────────────────────────

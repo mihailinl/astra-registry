@@ -127,7 +127,9 @@ import { holdKindFor } from "./holds.mjs";
 import { isVoidingRecord } from "./identity.mjs";
 import {
   CATEGORIES,
+  CORRECTABLE_ACTIONS,
   checkEntry,
+  effectiveCategories,
   cutoverAt,
   fileNameFor,
   loadEntries,
@@ -276,7 +278,7 @@ export const ENTRY_ALLOWLIST = Object.freeze({
   moderator: Object.freeze([
     "service_decision_id", "code", "category", "plugin_id", "versions", "decided_at",
     "reason", "reverses", "appeal_of", "outcome", "severity", "action",
-    "moderator", "declared_interest",
+    "moderator", "declared_interest", "corrects",
   ]),
   author: Object.freeze([
     "service_decision_id", "code", "category", "plugin_id", "versions", "decided_at", "reason",
@@ -347,6 +349,9 @@ export const KNOWN_CODES = Object.freeze({
   // Contract 3.0.0 (MOD-56): the one decision that adds trust. Compiled by
   // `compileReview`; never held, never counted, never reversed.
   M_REVIEW: "review",
+  // Contract 6.7.0: the category of an applied entry, corrected by a new,
+  // appended entry. Never held, never counted; it withdraws nothing.
+  M_CORRECT_CATEGORY: "correct",
   A_YANK: "yank",
   A_REMOVAL_REQUEST: "delist",
 });
@@ -375,6 +380,7 @@ export const LOG_ACTION = Object.freeze({
   M_IDENTITY_RESET: "reset",
   M_REVIEW: "review",
   M_APPEAL: "appeal",
+  M_CORRECT_CATEGORY: "correct",
 });
 
 /** B.4's review mark (contract 3.0.0): the value `M_REVIEW` writes, and the member it writes it to. */
@@ -948,6 +954,8 @@ export function compileDecision(entry, { root = REPO_ROOT, overBound = false, ba
   // FLOW-18 turns a reversed one into the estate's only Recheck. Nothing in
   // this branch reads the tree for the listing, so there is nothing to derive.
   if (code === "M_APPEAL") return compileAppeal(root, d, { decidedAt, date, reason, batch });
+  // 6.7.0: a correction is about an applied ENTRY, found by its id in the log.
+  if (code === "M_CORRECT_CATEGORY") return compileCorrection(root, d, { decidedAt, date, reason, batch });
 
   // ── target_not_in_registry ───────────────────────────────────────────────
   const listing = readListing(root, d.plugin_id);
@@ -1610,6 +1618,83 @@ function compileAppeal(root, d, { decidedAt, date, reason, batch = null }) {
     // NEW artefact and the originals are left alone".
     recheck: reversed ? { plugin_id: d.plugin_id, appeal_of: d.appeal_of } : null,
     record_owed: reversed ? appealRecordOwed(d) : null,
+    trailers: { "Service-Decision": d.service_decision_id, "Decided-At": decidedAt },
+  };
+}
+
+/**
+ * `M_CORRECT_CATEGORY` (contract 6.7.0): a new log entry that moves an
+ * applied entry's category, and nothing else. The applied entry is found on
+ * the tree by `corrects`, its exact `service_decision_id`; its file is never
+ * rewritten (history is append-only), and the category it carries now is
+ * derived by `effectiveCategories`. No advisory, listing or withdrawal list
+ * changes, so no serial moves and nothing installed is touched. The public
+ * category text follows from the log: the transparency log's entry and the
+ * advisory page read the effective category.
+ */
+const CORRECTS_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[47][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+function compileCorrection(root, d, { decidedAt, date, reason, batch = null }) {
+  if (typeof d.corrects !== "string" || !CORRECTS_RE.test(d.corrects)) {
+    return refuse(d, "kind_refused", "an M_CORRECT_CATEGORY names the applied decision it corrects, as `corrects`, and this one names none");
+  }
+  const { entries } = loadEntries({ root });
+  const target = entries.find((e) => e.service_decision_id === d.corrects && CORRECTABLE_ACTIONS.includes(e.action));
+  if (!target) {
+    return refuse(d, "target_changed",
+      `no ${CORRECTABLE_ACTIONS.join(", ")} entry on \`main\` carries service_decision_id ${d.corrects}, so there is no ` +
+      "applied category to correct (6.7.0)");
+  }
+  if (target.plugin !== d.plugin_id) {
+    return refuse(d, "target_changed", `${d.corrects} is an entry for ${target.plugin}, not ${d.plugin_id}`);
+  }
+  // A correction moves WHY a moderator acted, never WHO asked: `author_request`
+  // would make the public log say the author asked for a takedown a moderator
+  // decided, and an account-level category says something about a person's
+  // account that a listing's correction has no business adding (review of
+  // #480). Both are refused as a correction's target.
+  if (d.category === "author_request" || ACCOUNT_LEVEL_CATEGORIES.includes(d.category)) {
+    return refuse(d, "kind_refused",
+      `a correction may not move an entry to ${d.category}: it would publish that the author asked, or a statement ` +
+      "about an account, for a decision a moderator made about a listing (MOD-57)");
+  }
+  const allowed = CATEGORIES[target.action] ?? [];
+  if (!allowed.includes(d.category)) {
+    return refuse(d, "kind_refused",
+      `category ${JSON.stringify(d.category)} is not one §7.2 allows with the corrected entry's action, ${target.action}: ${allowed.join(", ")}`);
+  }
+  const current = effectiveCategories(entries).get(d.corrects)?.category ?? target.category;
+  // Nor AWAY from them (re-review of #480): an author's own request, or a
+  // decision about an account, is not a moderator's reason to re-word, and
+  // re-wording it would erase from the public log that the author asked, or
+  // that an account was compromised or sanctioned.
+  if (current === "author_request" || ACCOUNT_LEVEL_CATEGORIES.includes(current)) {
+    return refuse(d, "kind_refused",
+      `${d.corrects} carries ${current}, and a correction may not move an entry away from it: it records that the ` +
+      "author asked, or a decision about an account, which a moderator's correction may not re-word (MOD-57)");
+  }
+  if (current === d.category) {
+    return refuse(d, "target_changed", `${d.corrects} already carries category ${d.category}, so there is nothing to correct`);
+  }
+  const entry = {
+    date,
+    action: "correct",
+    plugin: target.plugin,
+    reason,
+    category: d.category,
+    corrects: d.corrects,
+    previous_category: current,
+    service_decision_id: d.service_decision_id,
+    ...(d.declared_interest !== undefined ? { declared_interest: d.declared_interest } : {}),
+  };
+  return {
+    outcome: "compiled",
+    code: d.code,
+    service_decision_id: d.service_decision_id,
+    edits: [],
+    log: [logEntry(root, entry, batch)],
+    advisories: [],
+    records: [],
+    alerts: [],
     trailers: { "Service-Decision": d.service_decision_id, "Decided-At": decidedAt },
   };
 }

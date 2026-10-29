@@ -3003,7 +3003,13 @@ const SVC_SID = "0192f1c2-3b4a-7c5d-8e6f-1a2b3c4d5e6f";
 const svcLease = { submission_id: SVC_SID, repo: REPO, tag: TAG, trigger: "poll", claimed_from: "received" };
 
 /** One `verify` run against a world assembled from the arguments. */
-async function verifyRun({ assets, certRepo = null, repoIds = null, ghFail = null, ownerFile = null, spy = null, fail = {}, actorId = FIXTURE_OWNER_ID } = {}) {
+async function verifyRun({
+  assets, certRepo = null, repoIds = null, ghFail = null, ownerFile = null, spy = null, fail = {}, actorId = FIXTURE_OWNER_ID,
+  // MIG-31 since 6.7.0: what GitHub says of an account that is not the owner.
+  permission = { status: "unreadable", reason: "HTTP 403: Must have push access to view collaborator permission.", permission: null },
+  membership = { status: "not_found", reason: "HTTP 404" },
+  asked = null,
+} = {}) {
   const github = fakeGitHub({ repo: REPO, tag: TAG, assets });
   const assetsDir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-assets-"));
   scratch.push(assetsDir);
@@ -3036,7 +3042,9 @@ async function verifyRun({ assets, certRepo = null, repoIds = null, ghFail = nul
     },
     lastCommitTouching: async () => ({ status: "found", reason: "HTTP 200", commit: "9".repeat(40) }),
     pullsForCommit: async () => ({ status: "found", reason: "HTTP 200", pulls: [4] }),
-    workflowRun: async () => ({ status: "found", reason: "HTTP 200", triggering_actor_id: actorId }),
+    workflowRun: async () => ({ status: "found", reason: "HTTP 200", triggering_actor_id: actorId, triggering_actor_login: "a-pusher" }),
+    collaboratorPermission: async () => permission,
+    publicOrgMember: async (...args) => { asked?.push(args); return membership; },
   });
   return { v, assetsDir };
 }
@@ -3162,7 +3170,8 @@ await test("MIG-31: a mismatched triggering actor's id reaches only `v.actor.tri
   const { v } = await verifyRun({ assets: [conformingAsset()], ownerFile: "astra-binding: Abcdefghijklmnopqrstuv0123\n", actorId: LEAK_ACTOR });
   assertEqual(v.outcome, "ok", JSON.stringify(v.findings ?? v));
   assertEqual(v.actor.triggering_actor_id, LEAK_ACTOR, "the mismatched id still reaches the typed field");
-  assertEqual(v.actor.floor_days, identity.ACTOR_MISMATCH_FLOOR_DAYS, "the floor itself (a number) is not the account id");
+  assertEqual(v.actor.floor_days, 0, "no floor since 6.7.0, and a number is not the account id");
+  assertEqual(v.actor.privileged, false, "an account GitHub shows nothing privileged about is a moderator's");
   const leaks = [];
   const walk = (value, keyPath) => {
     if (value == null) return;
@@ -3178,12 +3187,71 @@ await test("MIG-31: a mismatched triggering actor's id reaches only `v.actor.tri
   walk(v, "v");
   assertEqual(leaks.join(", "), "", `the account id leaked outside its typed field: ${leaks.join(", ")}`);
 
-  // `compareActor` itself, directly: its own "floor" reason does name the
-  // account (it is internal to `verify`, read by nobody outbound) — the
-  // guard is at the one call site, not in this function.
-  const cmp = identity.compareActor({ identity: { repository_owner_id: FIXTURE_OWNER_ID }, actor: { status: "found", triggering_actor_id: LEAK_ACTOR } });
-  assertEqual(cmp.outcome, "floor");
-  assert(cmp.reason.includes(LEAK_ACTOR), "compareActor's own reason names the account; bot/ingest.mjs reads cmp.floor_days for this outcome and never cmp.reason");
+});
+
+// MIG-31 since contract 6.7.0, end to end through `verify`: the floor that
+// hit every organisation's repository is a check. Watched red: verify not
+// asking the permission (the admin case reads as not privileged); verify
+// treating a transient read as an answer.
+await test("MIG-31 (6.7.0): verify — an org repo's admin publishes with no floor, a non-admin is a moderator's, a failed read waits", async () => {
+  const OTHER = "424242424243";
+  const binding = "astra-binding: Abcdefghijklmnopqrstuv0123\n";
+  const admin = await verifyRun({ assets: [conformingAsset()], ownerFile: binding, actorId: OTHER, permission: { status: "found", permission: "admin" } });
+  assertEqual(admin.v.outcome, "ok", JSON.stringify(admin.v));
+  assertEqual(JSON.stringify([admin.v.actor.privileged, admin.v.actor.floor_days, admin.v.actor.basis]), JSON.stringify([true, 0, "admin"]));
+  const asked = [];
+  const member = await verifyRun({ assets: [conformingAsset()], ownerFile: binding, actorId: OTHER, membership: { status: "found", reason: "HTTP 204" }, asked });
+  assertEqual(member.v.actor.privileged, true, "a public member of the owning organisation is privileged");
+  assertEqual(JSON.stringify(asked), JSON.stringify([[FIXTURE_OWNER_ID, "a-pusher"]]),
+    "membership was asked of something other than the repository's owner BY ID (review of #480)");
+  const writer = await verifyRun({ assets: [conformingAsset()], ownerFile: binding, actorId: OTHER, permission: { status: "found", permission: "write" } });
+  assertEqual(JSON.stringify([writer.v.outcome, writer.v.actor.privileged, writer.v.actor.floor_days]), JSON.stringify(["ok", false, 0]),
+    "a non-admin is a moderator's decision: no floor, no wait");
+  const failed = await verifyRun({ assets: [conformingAsset()], ownerFile: binding, actorId: OTHER, permission: { status: "transient", reason: "HTTP 502" } });
+  assertEqual(failed.v.outcome, "wait", "a permission read that failed decided something");
+});
+
+await test("the owner file's newest commit names the GitHub account it is linked to, or none (ID-63; MIG-10's self path)", async () => {
+  const url = `${API}/repositories/${FIXTURE_REPOSITORY_ID}/commits?sha=${"a".repeat(40)}&path=.well-known%2Fastra-plugin-owner&per_page=1`;
+  const ask = (body) => gh.lastCommitTouching(FIXTURE_REPOSITORY_ID, "a".repeat(40), ".well-known/astra-plugin-owner", { fetchImpl: stubFetch({ [url]: { status: 200, body } }) });
+  const linked = await ask(JSON.stringify([{ sha: "9".repeat(40), commit: { author: { name: "x", email: "x@example.invalid" }, verification: { verified: true, reason: "valid" } }, author: { login: "owner", id: 280318216 }, committer: { id: 19864447 } }]));
+  assertEqual(JSON.stringify([linked.commit, linked.author_id, linked.verified]), JSON.stringify(["9".repeat(40), "280318216", true]), "the linked account, not the committer, and the signature verdict");
+  // Re-review of #480: the owner's noreply e-mail on an unsigned commit maps
+  // to the owner's account, and is not verified.
+  const forged = await ask(JSON.stringify([{ sha: "9".repeat(40), commit: { author: { name: "owner", email: "280318216+owner@users.noreply.github.com" }, verification: { verified: false, reason: "unsigned" } }, author: { login: "owner", id: 280318216 } }]));
+  assertEqual(JSON.stringify([forged.author_id, forged.verified]), JSON.stringify(["280318216", false]), "an unsigned commit read as verified");
+  const odd = await ask(JSON.stringify([{ sha: "9".repeat(40), commit: { verification: { verified: "true" } }, author: { id: 280318216 } }]));
+  assertEqual(odd.verified, false, "a signature verdict that is not exactly true read as verified");
+  const unlinked = await ask(JSON.stringify([{ sha: "9".repeat(40), commit: { author: { name: "x" } }, author: null, committer: { id: 19864447 } }]));
+  assertEqual(unlinked.author_id, null, "a commit linked to no account must not borrow the committer's id");
+});
+
+await test("the collaborator permission and public membership reads: admin, push-access 403, rate limit, 204 and 404", async () => {
+  const url = `${API}/repositories/${FIXTURE_REPOSITORY_ID}/collaborators/a-pusher/permission`;
+  const ask = (route) => gh.collaboratorPermission(FIXTURE_REPOSITORY_ID, "a-pusher", { fetchImpl: stubFetch({ [url]: route }) });
+  const admin = await ask({ status: 200, body: JSON.stringify({ permission: "admin", role_name: "admin" }) });
+  assertEqual(JSON.stringify([admin.status, admin.permission]), JSON.stringify(["found", "admin"]));
+  const refused = await ask({ status: 403, body: JSON.stringify({ message: "Must have push access to view collaborator permission." }) });
+  assertEqual(refused.status, "unreadable", "GitHub's push-access refusal is an answer, not a transient failure");
+  const limited = await ask({ status: 403, headers: { "x-ratelimit-remaining": "0" }, body: JSON.stringify({ message: "API rate limit exceeded" }) });
+  assertEqual(limited.status, "transient", "a rate limit is not an answer");
+  const other403 = await ask({ status: 403, body: JSON.stringify({ message: "Resource not accessible by integration" }) });
+  assertEqual(other403.status, "transient", "a 403 that is not the push-access answer waits");
+  // Review of #480: the organisation is the repository's owner BY ID, read
+  // first, never the name in the repository's path.
+  const orgOwner = { status: 200, body: JSON.stringify({ login: "MINICE-AI", id: 280318216, type: "Organization" }) };
+  const m = (status, owner = orgOwner) => gh.publicOrgMember("280318216", "a-pusher", { fetchImpl: stubFetch({
+    [`${API}/user/280318216`]: owner,
+    [`${API}/orgs/MINICE-AI/public_members/a-pusher`]: { status },
+  }) });
+  assertEqual((await m(204)).status, "found");
+  assertEqual((await m(404)).status, "not_found");
+  assertEqual((await m(502)).status, "transient");
+  assertEqual((await m(204, { status: 200, body: JSON.stringify({ login: "someone", id: 280318216, type: "User" }) })).status, "not_found",
+    "a user-owned repository has no organisation to be a member of");
+  assertEqual((await m(204, { status: 200, body: JSON.stringify({ login: "MINICE-AI", id: 1, type: "Organization" }) })).status, "transient",
+    "an owner answer naming another id is not read as the owner");
+  assertEqual((await m(204, { status: 502 })).status, "transient", "an unread owner waits");
 });
 
 await test("check: the facts file carries codes and levels and nothing that names anything; the card is derived under `.12`", async () => {

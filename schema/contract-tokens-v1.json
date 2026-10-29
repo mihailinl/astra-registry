@@ -1,6 +1,6 @@
 {
-  "contract_version": "6.6.0",
-  "source_commit": "9d1cb444faf3df34056bcd0177eb3f8355e08bbe",
+  "contract_version": "6.7.0",
+  "source_commit": "c0aba9c64cd4716d9ed9199cad802159a890ae32",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -1744,6 +1744,26 @@
       ]
     },
     {
+      "id": "code:M_CORRECT_CATEGORY",
+      "kind": "reason_code",
+      "name": "M_CORRECT_CATEGORY",
+      "artefact": "log `correct` naming the corrected entry by `corrects` (MOD-57); none",
+      "emitter": [
+        "panel"
+      ],
+      "acceptor": [
+        "service",
+        "registry"
+      ],
+      "state": "live",
+      "source": "§7.2",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
       "id": "code:M_BINDING_REVOKE",
       "kind": "reason_code",
       "name": "M_BINDING_REVOKE",
@@ -1772,6 +1792,7 @@
         "malicious",
         "account_compromise",
         "account_sanction",
+        "harmful_behaviour",
         "privacy",
         "impersonation",
         "broken",
@@ -2654,6 +2675,19 @@
               "name": "appeal_of",
               "required": false,
               "why": "BOT-80 qualifies this as where they apply and names no code, so no condition is published. MOD-33 does bind it to a decided appeal, and that is a condition a later version may publish from MOD-33; taking it from there in this one would put a rule in BOT-80's entry list that BOT-80 does not state.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "corrects",
+              "required": "conditional",
+              "when": {
+                "iff": {
+                  "code": [
+                    "M_CORRECT_CATEGORY"
+                  ]
+                }
+              },
+              "why": "`corrects` names the applied decision whose category a correction moves (6.7.0), and nothing but a correction names one. Relaxed to `if`, a takedown may carry it and the bot would read the takedown as a correction of another entry. Dropped, a correction arrives naming nothing, and the bot cannot find the entry it is about, so it refuses every one `kind_refused`.",
               "source": "BOT-80"
             },
             {
@@ -4071,6 +4105,32 @@
               "required": false,
               "why": "MOD-12 records it only where that conflict arose",
               "source": "MOD-12; MOD-47"
+            },
+            {
+              "name": "corrects",
+              "required": "conditional",
+              "when": {
+                "iff": {
+                  "action": [
+                    "correct"
+                  ]
+                }
+              },
+              "why": "MOD-57 writes a correction as a new entry naming the one it corrects, and no other action names one",
+              "source": "MOD-57"
+            },
+            {
+              "name": "previous_category",
+              "required": "conditional",
+              "when": {
+                "iff": {
+                  "action": [
+                    "correct"
+                  ]
+                }
+              },
+              "why": "MOD-57 records it on the correction alone, so the history reads in order without rewriting the corrected entry",
+              "source": "MOD-57"
             }
           ]
         },
@@ -6707,6 +6767,15 @@
       "remedy": "A moderator revoked the binding token this repository was bound with. Versions already listed are not touched. Your next release will be refused as an unusable binding; mint a fresh token, commit its line, and cut a new tag to clear that."
     },
     {
+      "code": "M_CORRECT_CATEGORY",
+      "level": "note",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "A moderator corrected the category of an earlier decision",
+      "remedy": "A moderator changed the published category of an earlier decision about this plugin. The decision itself, and anything it withdrew, stands unchanged; only the words that say why moved. Nothing to do."
+    },
+    {
       "code": "M_DELIST",
       "level": "error",
       "stage": "policy",
@@ -7153,7 +7222,7 @@
       "bot/lib/codes.mjs",
       "bot/lib/policy/constants.mjs"
     ],
-    "codes": 151
+    "codes": 152
   },
   "fixed_reasons": {
     "A_YANK": "Yanked at its author's own request, made from the Astra plugins panel.",

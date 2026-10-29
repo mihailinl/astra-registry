@@ -120,14 +120,14 @@
           "enum": [
             "M_YANK", "M_DELIST", "M_DEPRECATE", "M_REVOKE", "M_APPEAL",
             "M_RELIST", "M_UNREVOKE", "M_BINDING_REVOKE", "M_IDENTITY_RESET",
-            "M_REVIEW",
+            "M_REVIEW", "M_CORRECT_CATEGORY",
             "A_YANK", "A_REMOVAL_REQUEST"
           ]
         },
         "category": {
           "$comment": "§7.2's closed list, and it is the token file's `list:moderation_categories` — compared with it in both directions by `bot/tests/moderation-run.test.mjs`. `M_APPEAL` carries none, which §7.2 states by giving `appeal` an empty allowed-category list; that conditional lives in the compiler, where the refusal can say which categories the action allows.",
           "enum": [
-            "review_passed", "malicious", "account_compromise", "account_sanction",
+            "review_passed", "malicious", "harmful_behaviour", "account_compromise", "account_sanction",
             "privacy", "impersonation", "broken", "security_defect", "licence",
             "naming", "legal", "author_request", "error", "appeal_reversed", "path_test",
             "identity_reset"
@@ -166,6 +166,10 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 200
+        },
+        "corrects": {
+          "$comment": "`M_CORRECT_CATEGORY` only (contract 6.7.0): the `service_decision_id` of the applied decision whose category this one corrects. The compiler finds that entry in the moderation log on the tree and refuses `target_changed` when it is not there.",
+          "$ref": "#/$defs/uuid"
         },
         "outcome": {
           "$comment": "`M_APPEAL` only. `reversed` is the estate's one Recheck (FLOW-18); MOD-34 makes it a NEW artefact and leaves the originals alone.",

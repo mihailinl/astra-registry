@@ -66,11 +66,11 @@ import { decide } from "./policy/decision.mjs";
 // the registry writes nothing.
 import { alreadyPublished, noListingNoBinding, terminalOnMain } from "../decide.mjs";
 import { CHECK_FACTS_SCHEMA } from "../ingest.mjs";
-import { artifactDigests, submissionFingerprint } from "./policy/release.mjs";
+import { artifactDigests, submissionDigest, submissionFingerprint } from "./policy/release.mjs";
 import { HOUR_MS, iso } from "./policy/time.mjs";
 import { CODES } from "./codes.mjs";
 import { POLICY_CODES } from "./policy/constants.mjs";
-import { ACTOR_MISMATCH_FLOOR_DAYS, applyIdentity, compareWithBaseline, effectiveBaseline } from "./identity.mjs";
+import { applyIdentity, compareWithBaseline, effectiveBaseline } from "./identity.mjs";
 import { safeRepo, safeTag } from "./safe.mjs";
 import { execFileSync } from "node:child_process";
 import { trackRecord } from "./policy/track-record.mjs";
@@ -194,7 +194,7 @@ export const ALERT_EVENTS = Object.freeze(["approval"]);
  */
 export const OK_SCHEMA = "astra.registry.ok/1";
 export const OK_DIR = "state/ok";
-export const OK_MEMBERS = Object.freeze(["schema", "fingerprint", "approval_decided_at", "run", "at"]);
+export const OK_MEMBERS = Object.freeze(["schema", "fingerprint", "approval_decided_at", "run", "at", "digest", "held_decision_id"]);
 const OK_RUN_RE = /^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9._-]+\/actions\/runs\/[0-9]+$/;
 
 /** Why `doc` is not an OK record for `fingerprint` (its file name's stem), or `[]`. */
@@ -208,6 +208,13 @@ export function okRecordProblems(doc, { fingerprint }) {
   if (doc.fingerprint !== fingerprint) p.push("the `fingerprint` member is not the fingerprint the file name carries");
   if (!isTime(doc.approval_decided_at)) p.push("approval_decided_at");
   if (!isTime(doc.at)) p.push("at");
+  // Contract 6.7.0: an OK binds the whole digest and the held record, copied
+  // from the alert it answers. One without them (none was ever on `main`) is
+  // not read: an OK shortens a wait, so the side a missing binding errs to is
+  // the window running out by itself.
+  if (!/^[0-9a-f]{64}$/.test(String(doc.digest ?? ""))) p.push("digest");
+  else if (doc.digest.slice(0, 16) !== doc.fingerprint) p.push("a `digest` the fingerprint is not the first 16 hex of");
+  if (!/^[0-9a-f]{32}$/.test(String(doc.held_decision_id ?? ""))) p.push("held_decision_id");
   if (!OK_RUN_RE.test(String(doc.run ?? ""))) p.push("run");
   return p;
 }
@@ -508,6 +515,112 @@ export function id41({ identity, record, lineHash }) {
 
 // ── the approval (BOT-26) ───────────────────────────────────────────────────
 
+/** Is the owner file's newest commit the repository owner's own direct commit (ID-63; MIG-10's self path)? */
+function ownFile(ownerFile, ids) {
+  // The linked author alone is GitHub's mapping of the git author's EMAIL,
+  // which a write collaborator can set to the owner's noreply address, so the
+  // commit must also carry a signature GitHub verified (re-review of #480).
+  // An unsigned owner's first binding is a moderator's, on the site.
+  return Boolean(ownerFile)
+    && typeof ownerFile.commit === "string" && /^[0-9a-f]{40}$/.test(ownerFile.commit)
+    && ownerFile.pull_request === false
+    && isStr(ownerFile.author_id) && ownerFile.author_id === ids?.repository_owner_id
+    && ownerFile.verified === true;
+}
+
+/** The accounts whose own first binding needs no moderator (contract 6.7.0, MIG-10): what `compareActor` calls them. */
+export const FIRST_BINDING_SELF_BASES = Object.freeze(["owner", "admin", "maintain"]);
+
+/**
+ * MIG-10 since contract 6.7.0: does this release's binding need no
+ * `R_FIRST_BINDING` hold? Two ways, and nothing else changes: every ID-*
+ * check (ID-41's rows, the recycled repository, the owner id, ID-25) runs
+ * before and after exactly as it did.
+ *
+ *  - `self`: the account that ran the build is the repository's owner, or
+ *    GitHub shows it `admin` or `maintain` on the repository (MIG-31's check,
+ *    `verify`), AND the service answered the binding line `pass` for this
+ *    repository id (ID-9: the token is live and the repository's). Public
+ *    membership of the owning organisation alone does not count here: a
+ *    member binding an organisation's listing to their own account is the
+ *    takeover DEC-10 holds for.
+ *  - `approved`: a moderator already approved a first binding of this
+ *    listing under THIS binding token. The approval is on `main` as the
+ *    alert TRUST-14 raised for it (`state/alerts/<fp>.json`, carrying
+ *    `token_hash` and `held_decision_id` since 6.7.0), whose held record is
+ *    an `R_FIRST_BINDING` hold of the same plugin id, repository id and owner
+ *    id, and whose fingerprint no deny record names. Until 6.7.0 every later
+ *    tag re-held until that first release was published, and each needed a
+ *    second approval of the same binding. Such a release waits out the
+ *    approved one's operator window (TRUST-32) before it publishes, so an
+ *    operator who denies the first never finds the second already out.
+ *
+ * @returns {{by: string, alert?: object, windowEndsAt?: string}|null}
+ */
+export function firstBindingCleared({ actor, verdict, lineHash, records = [], alerts = null, denied = null, ids, pluginId, oks = null, fingerprint = null, ownerFile = null }) {
+  if (!lineHash || verdict !== "pass") return null;
+  // The self path needs the owner FILE to be the owner's too (ID-63): a
+  // stranger's merged pull request can carry a token the stranger minted —
+  // anyone can mint one for any repository id (ID-10, ID-13), so the service
+  // says `pass` — and the owner's own next build would then bind the listing
+  // to the stranger. So the newest commit touching the owner file must be
+  // known, tied to no pull request, and linked to the owner's GitHub account.
+  // Anything unread or otherwise holds for a moderator, as before.
+  if (actor?.privileged === true && FIRST_BINDING_SELF_BASES.includes(actor.basis) && ownFile(ownerFile, ids)) return { by: actor.basis };
+  for (const [fp, alert] of alerts ?? []) {
+    // The approved release itself is not covered by its own approval: it
+    // publishes through that approval, with its moderator on the record.
+    if (fp === fingerprint) continue;
+    if (alert?.event !== "approval" || alert.token_hash !== lineHash || !isStr(alert.held_decision_id)) continue;
+    if (denied?.has(fp)) continue;
+    // MIG-10: "a rejected, stopped, refused or pending hold exempts nothing".
+    // An approved release later rejected (`M_REJECT`, a `refused` record),
+    // refused by the bot, or stopped by its author covers no later tag.
+    if (records.some((r) => r?.fingerprint === fp && (r.state === "stopped" || r.state === "refused"))) continue;
+    const held = records.find((r) => r?.decision_id === alert.held_decision_id && r?.state === "held");
+    if (!held || held.fingerprint !== fp || !(held.reasons ?? []).includes("R_FIRST_BINDING")) continue;
+    if (held.plugin_id !== pluginId || held.repository_id !== ids.repository_id || held.repository_owner_id !== ids.repository_owner_id) continue;
+    // The same rule for the SUBMISSION, not only the fingerprint (re-review of
+    // #480): a stop or an `M_REJECT` record names one fingerprint of its
+    // submission (`terminalSubmissionRecord` records the first, and a stop
+    // may carry none), so re-uploading assets under the same tag leaves the
+    // approved fingerprint unnamed. A `stopped` record, or a `refused` one
+    // carrying `M_REJECT`, of the held record's submission — or, as
+    // `terminalOnMain` matches, a stop of the same tag of the same repository
+    // id — ends the cover.
+    const sameRelease = (r) => (isStr(held.submission_id) && r?.submission_id === held.submission_id)
+      || (isStr(held.tag) && r?.tag === held.tag && r?.repository_id === held.repository_id);
+    if (records.some((r) => sameRelease(r) && (r.state === "stopped" || (r.state === "refused" && (r.reasons ?? []).includes("M_REJECT"))))) continue;
+    if (!isTime(alert.delivered_at)) continue;
+    const okd = oks?.get(fp) && okAnswers({ ok: oks.get(fp), record: alert, fingerprint: fp, digest: alert.digest, heldDecisionId: alert.held_decision_id });
+    const windowEndsAt = okd ? alert.delivered_at : iso(new Date(new Date(alert.delivered_at).getTime() + OPERATOR_WINDOW_HOURS * HOUR_MS));
+    return { by: "approved", alert, fingerprint: fp, windowEndsAt };
+  }
+  return null;
+}
+
+/**
+ * The whole SHA-256 of the six facts a decision record on `main` carries
+ * (`submissionDigest`), or null when they are not all there or do not hash to
+ * the record's own 16-hex label — a record whose label is not its facts' is
+ * not one this bot wrote, and nothing is bound to it. Every `held` record on
+ * `main` carries all six (measured 2026-10-29: the 47 that do not are
+ * `migration` records written before artifact digests were recorded, and none
+ * is a hold), so the digest of the hold an approval clears is DERIVED, never
+ * trusted from a member.
+ */
+export function recordDigest(record) {
+  if (!record || typeof record !== "object") return null;
+  const digests = Array.isArray(record.artifact_digests) ? [...record.artifact_digests].sort() : [];
+  if (!digests.length || !digests.every((d) => DIGEST_RE.test(String(d)))) return null;
+  if (![record.repo, record.tag, record.plugin_id, record.version].every(isStr)) return null;
+  if (!SHA1_RE.test(String(record.commit ?? ""))) return null;
+  const digest = submissionDigest({
+    repo: record.repo, tag: record.tag, id: record.plugin_id, version: record.version, commit: record.commit, digests,
+  });
+  return digest.slice(0, 16) === record.fingerprint ? digest : null;
+}
+
 /**
  * The approval `ask` reported for this fingerprint, held to BOT-26's three
  * conditions and TRUST-27's wait. Returns what `decide()` should be given as
@@ -528,24 +641,16 @@ export function id41({ identity, record, lineHash }) {
  * (1) has no hold of this fingerprint to return to, and TRUST-27's and
  * MIG-31's are waits the approval outlives.
  *
- * **MIG-31.** At a `grandfathered` or `frozen` listing's `R_FIRST_BINDING`
- * hold whose build was started by an account other than the repository's
- * owner, an approval is not honoured before `floorDays` (the identity
- * module's 14) have passed since the hold's record, counted as TRUST-27
- * counts. `floorDays` is `verify`'s `compareActor` answer for the build's
- * run, which is the same run on every re-verification of these bytes. An
- * actor nobody could read is treated as the floor applying: the withholding
- * direction, because a first binding is the one approval that moves who owns
- * a listing. Until 2026-09-24 `verify` read the actor and the decide job
- * reported it (`triggering_actor_is_owner`) and nothing deferred an approval
- * by it; the canary walk ROLL-59 (h) found that (B-T4.1).
- *
- * "Deferred, not lost" (MIG-31): an approval given on the first day of a
- * 14-day floor is still an approval on the fifteenth. Until contract 5.8.0
- * that took counting BOT-26 (4)'s age from the floor's end; with no age
- * limit it is simply true.
+ * **MIG-31 (since contract 6.7.0) defers nothing here.** Until 6.7.0 a
+ * grandfathered or frozen listing's first binding built by an account other
+ * than the owner waited 14 days after its hold before an approval counted, and
+ * that hit every organisation's repository, since the account that presses a
+ * button is never the organisation. The floor is gone; `verify` CHECKS the
+ * account instead (`compareActor`: owner, `admin`/`maintain`, or a public
+ * member of the owning organisation), and where a moderator decides, the
+ * decision takes effect when it is given.
  */
-export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, now, mig31 = null }) {
+export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, now, digest = null, repositoryId = null }) {
   const approvals = (decisions ?? []).filter((d) => d?.code === "M_APPROVE");
   if (approvals.length === 0) return { approval: null, why: null, decision: null };
   // The newest, by the service's own time. Two approvals of one fingerprint
@@ -561,23 +666,42 @@ export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, 
       decision,
     };
   }
-  const firstBinding = (heldCodes ?? []).includes("R_FIRST_BINDING");
-  // MIG-31's floor, in days, or 0 where it does not apply.
-  const actorFloor = firstBinding && mig31?.applies === true
-    ? (Number.isInteger(mig31.floorDays) && mig31.floorDays >= 0 ? mig31.floorDays : ACTOR_MISMATCH_FLOOR_DAYS)
-    : 0;
-  const floorEnd = actorFloor > 0 ? new Date(heldRecord.decided_at).getTime() + actorFloor * DAY_MS : null;
+  // Contract 6.7.0: the hold is the one these bytes are, by the whole digest.
+  // The 16-hex label is a name: an author who controls both sides of a
+  // collision can give two releases one label, get the benign one approved
+  // and re-tag the other, and a label match alone honoured that approval.
+  const heldDigest = recordDigest(heldRecord);
+  if (!heldDigest || !/^[0-9a-f]{64}$/.test(String(digest ?? ""))) {
+    return {
+      approval: null,
+      why: "BOT-26 (1): the `held` record's whole SHA-256 cannot be derived from its six facts, or this run has none to " +
+        "compare it with, and a 16-hex label alone never honours an approval",
+      decision,
+    };
+  }
+  if (heldDigest !== digest) {
+    return {
+      approval: null,
+      why: `BOT-26 (2): the \`held\` record ${heldRecord.decision_id ?? ""} is for SHA-256 ${heldDigest} and this release is ` +
+        `${digest}; they share the 64-bit label ${fingerprint} and nothing else, so the approval of one does not clear the other`,
+      decision,
+    };
+  }
+  if (isStr(heldRecord.repository_id) && isStr(repositoryId) && heldRecord.repository_id !== repositoryId) {
+    return {
+      approval: null,
+      why: `BOT-26 (1): the \`held\` record names repository ${heldRecord.repository_id} and this release comes from ${repositoryId}`,
+      decision,
+    };
+  }
   // No age check (contract 5.8.0 removed BOT-26 (4)): an approval clears the
   // hold it names whatever its `decided_at`, and (2) voids it the moment the
-  // release changes.
+  // release changes. No MIG-31 floor either (contract 6.7.0): an approval of
+  // a first binding takes effect when it is given, whoever ran the build —
+  // the moderator's decision on the site IS the check the floor stood for.
   if ((heldCodes ?? []).includes("R_FIRST_BINDING")) {
     const since = new Date(now).getTime() - new Date(heldRecord.decided_at).getTime();
-    // When MIG-31's floor also stands and ends later, the floor is the answer:
-    // a deferral's `earliest` is when the approval takes effect, which the
-    // panel shows the author, and TRUST-27's earlier end would be a promise
-    // the next run breaks.
-    const floorOutlasts = floorEnd !== null && floorEnd >= new Date(heldRecord.decided_at).getTime() + FIRST_BINDING_WAIT_DAYS * DAY_MS;
-    if (since < FIRST_BINDING_WAIT_DAYS * DAY_MS && !floorOutlasts) {
+    if (since < FIRST_BINDING_WAIT_DAYS * DAY_MS) {
       return {
         approval: null,
         why:
@@ -592,24 +716,6 @@ export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, 
       };
     }
   }
-  if (floorEnd !== null && new Date(now).getTime() < floorEnd) {
-    return {
-      approval: null,
-      why:
-        `MIG-31: this first binding's build was started by ${mig31.actorId ? `account ${mig31.actorId}` : "an account nobody could read"}, ` +
-        `not the repository's owner, so its approval is honoured ${actorFloor} days after the \`held\` record reached ` +
-        `main (${heldRecord.decided_at}), at ${iso(new Date(floorEnd))}. It is deferred, not lost`,
-      decision,
-      earliest: iso(new Date(floorEnd)),
-      // The wait's cause names no account: it is what the panel shows the
-      // author (FLOW-10), and who started the build is the moderator's to see.
-      cause:
-        `MIG-31: the approval stands and takes effect at ${iso(new Date(floorEnd))}. This first binding's build was ` +
-        "started by an account other than the repository's owner, or by one nobody could read, so an approval is " +
-        `honoured ${actorFloor} days after its hold reached main (${heldRecord.decided_at}). The release publishes ` +
-        "then, unless something about it changes.",
-    };
-  }
   return {
     approval: {
       by: String(decision.moderator ?? "moderator"),
@@ -619,6 +725,9 @@ export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, 
     },
     why: null,
     decision,
+    // What TRUST-14's alert and an operator OK bind (6.7.0).
+    digest,
+    held_decision_id: heldRecord.decision_id ?? null,
   };
 }
 
@@ -722,13 +831,28 @@ export function noticeElapsed({ notice, windowSeconds, bindingChanged, now }) {
  *
  * @returns {{ok: boolean, name: object|null, wait: object|null}}
  */
-export function operatorWindow({ record, fingerprint, event, approvalDecidedAt, now, ok = null, hintFrom = now }) {
-  if (!record || record.event !== event || (event === "approval" && record.approval_decided_at !== approvalDecidedAt)) {
+export function operatorWindow({
+  record, fingerprint, event, approvalDecidedAt, now, ok = null, hintFrom = now, digest = null, heldDecisionId = null, tokenHash = null,
+}) {
+  // Contract 6.7.0: an alert record from 6.7.0 on binds the whole digest, and
+  // one that names another digest under the same 16-hex label is an alert
+  // about other bytes — this release's alert has not gone out. A record from
+  // before carries none; it is read for the release whose approval
+  // `honourApproval` has already bound by the whole digest to its held record,
+  // which is the only way this function is reached, and its
+  // `approval_decided_at` ties it to that approval.
+  const otherBytes = record && "digest" in record && (record.digest !== digest || record.held_decision_id !== heldDecisionId);
+  if (!record || otherBytes || record.event !== event || (event === "approval" && record.approval_decided_at !== approvalDecidedAt)) {
     // First read of this event: TRUST-14 names it, and this run cannot publish
     // it — the window is counted from a delivery that has not happened yet.
     return {
       ok: false,
-      name: { fingerprint, event, approval_decided_at: event === "approval" ? approvalDecidedAt : null },
+      name: {
+        fingerprint, event, approval_decided_at: event === "approval" ? approvalDecidedAt : null,
+        digest, held_decision_id: heldDecisionId,
+        // 6.7.0 (MIG-10): the binding the approval covers, for later tags.
+        ...(tokenHash ? { token_hash: tokenHash } : {}),
+      },
       wait: null,
     };
   }
@@ -743,7 +867,7 @@ export function operatorWindow({ record, fingerprint, event, approvalDecidedAt, 
   // else: it is read only here, after the delivery check above, so it never
   // ends `W_ALERT_UNDELIVERED`, and the deny record, the stop and every other
   // wait are decided elsewhere and before.
-  if (okAnswers({ ok, record, fingerprint })) return { ok: true, name: null, wait: null, okd: true };
+  if (okAnswers({ ok, record, fingerprint, digest, heldDecisionId })) return { ok: true, name: null, wait: null, okd: true };
   const due = new Date(record.delivered_at).getTime() + OPERATOR_WINDOW_HOURS * HOUR_MS;
   if (due > new Date(now).getTime()) {
     return {
@@ -767,9 +891,13 @@ export function operatorWindow({ record, fingerprint, event, approvalDecidedAt, 
  * earlier approval of the same fingerprint answers an alert that is no longer
  * the one on `main`.
  */
-export function okAnswers({ ok, record, fingerprint }) {
+export function okAnswers({ ok, record, fingerprint, digest = null, heldDecisionId = null }) {
   if (!ok || !record) return false;
   if (okRecordProblems(ok, { fingerprint }).length) return false;
+  // 6.7.0: the OK, the alert it answers and this release are one digest and
+  // one held record; a label in common is not enough to shorten a window.
+  if (ok.digest !== digest || ok.held_decision_id !== heldDecisionId) return false;
+  if ("digest" in record && (record.digest !== ok.digest || record.held_decision_id !== ok.held_decision_id)) return false;
   return isTime(record.approval_decided_at) && ok.approval_decided_at === record.approval_decided_at;
 }
 
@@ -963,6 +1091,11 @@ export function decideSubmission(input) {
     repo: verified.repo, tag: verified.tag, id: verified.plugin_id, version: verified.version,
     commit: verified.commit, digests: derivedFacts.artifact_digests,
   });
+  // The whole SHA-256 the label is cut from: what an approval binds (6.7.0).
+  const digest = submissionDigest({
+    repo: verified.repo, tag: verified.tag, id: verified.plugin_id, version: verified.version,
+    commit: verified.commit, digests: derivedFacts.artifact_digests,
+  });
   if (recomputed !== verified.fingerprint) {
     return plan("none", {
       why: "the verified fingerprint is not the one its own facts hash to; nothing is written or posted",
@@ -1108,6 +1241,7 @@ export function decideSubmission(input) {
   const lineHash = binding.outcome === "one" ? binding.token_hash ?? null : null;
   const heldCodes = [];
   let recycled = null;
+  let firstCleared = null;
   const listingState = git.listingState ?? null;
 
   if (binding.outcome === "malformed") {
@@ -1138,7 +1272,16 @@ export function decideSubmission(input) {
     if (listedRepo && listedRepo.toLowerCase() !== identity.repo.toLowerCase() && !heldCodes.includes("R_IDENTITY_CHANGED")) {
       heldCodes.push("R_IDENTITY_CHANGED");
     }
-    if (binding.outcome === "one") heldCodes.push("R_FIRST_BINDING"); // MIG-10; ID-41: never R_BINDING_CHANGED
+    // MIG-10; ID-41: never R_BINDING_CHANGED. Since 6.7.0 not for the
+    // repository's own owner or admin with a live token, nor under a binding
+    // a moderator already approved (`firstBindingCleared`).
+    if (binding.outcome === "one") {
+      firstCleared = firstBindingCleared({
+        actor: verified.actor, verdict, lineHash, records, alerts: git.alerts, denied: git.denied, oks: git.oks,
+        ids: identity, pluginId: verified.plugin_id, fingerprint: verified.fingerprint, ownerFile: verified.owner_file,
+      });
+      if (!firstCleared) heldCodes.push("R_FIRST_BINDING");
+    }
     if (binding.outcome === "none" && listingState?.state === "frozen") {
       findings.push({ level: "error", code: "B_UNBOUND", where: null, message: "ID-25: a `frozen` listing publishes only a bound release" });
     }
@@ -1178,12 +1321,8 @@ export function decideSubmission(input) {
     heldRecord,
     heldCodes: heldRecord?.reasons ?? heldCodes,
     now,
-    // MIG-31's scope: a grandfathered or frozen listing's first binding.
-    mig31: {
-      applies: ["grandfathered", "frozen"].includes(listingState?.state) && binding.outcome === "one",
-      floorDays: verified.actor?.floor_days ?? null,
-      actorId: verified.actor?.triggering_actor_id ?? null,
-    },
+    digest,
+    repositoryId: verified.repository_id,
   });
 
   const queued = git.queueEntry ?? null;
@@ -1387,6 +1526,18 @@ export function decideSubmission(input) {
     });
   }
 
+  // MIG-10 since 6.7.0: a release under a binding a moderator approved waits
+  // out that approval's operator window, so a deny of the approved release
+  // within it is never outrun by this one.
+  if (firstCleared?.by === "approved" && new Date(firstCleared.windowEndsAt).getTime() > new Date(now).getTime()) {
+    return waitPlan("W_OPERATOR_WINDOW",
+      `TRUST-32: this release's binding was approved with ${firstCleared.fingerprint}, whose operator window runs until ` +
+      `${firstCleared.windowEndsAt}; it publishes then, unless an operator denies that release`, {
+        earliest: operatorRetryHint({ windowEndsAt: firstCleared.windowEndsAt, from: startedAt }),
+        windowEndsAt: firstCleared.windowEndsAt, reasons, derived: derivedFacts,
+      });
+  }
+
   // DEC-8 — never before the queue entry's `publish_after` on main.
   if (queued && isTime(queued.publish_after) && new Date(queued.publish_after).getTime() > new Date(now).getTime()) {
     return waitPlan("W_NOTICE_PENDING", `DEC-8: the queue entry on main says ${queued.publish_after}`, {
@@ -1433,6 +1584,9 @@ export function decideSubmission(input) {
       now,
       ok: git.oks?.get(verified.fingerprint) ?? null,
       hintFrom: startedAt,
+      digest,
+      heldDecisionId: honoured.held_decision_id ?? null,
+      tokenHash: lineHash,
     });
     if (w.name) {
       return plan("wait", {
