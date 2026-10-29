@@ -3825,6 +3825,29 @@ test("6.7.0: a moderator's delist is never corrected to `author_request`; a corr
   assert.deepEqual(fine.results.compiled, ["0192f3a4-5b6c-7d8e-9f01-2345678930d2"], JSON.stringify(fine.results.refused));
 });
 
+// Re-review of #480: nor AWAY from `author_request` or an account-level
+// category, which would erase that the author asked or that an account was
+// compromised. Watched red: without the refusal, both corrections compile.
+test("6.7.0: an entry carrying `author_request` or an account category is never corrected away from it", async () => {
+  for (const category of ["author_request", "account_compromise"]) {
+    const root = withDocuments(estate());
+    withRemote(root);
+    const DELIST = "0192f3a4-5b6c-7d8e-9f01-2345678930d3";
+    const original = decision({ service_decision_id: DELIST, code: "M_DELIST", category, moderator: "amoderator" });
+    const applied = await commitJob(root, { entries: [original] });
+    assert.deepEqual(applied.results.compiled, [DELIST], `the fixture: a delist with ${category} applies — ${JSON.stringify(applied.results.refused)}`);
+    assert.equal(runApply(root).status, 0);
+    const away = await commitJob(root, {
+      entries: [decision({
+        service_decision_id: "0192f3a4-5b6c-7d8e-9f01-2345678930d4", code: "M_CORRECT_CATEGORY", category: "broken", corrects: DELIST,
+        moderator: "amoderator", declared_interest: false, decided_at: "2026-09-21T12:00:00Z",
+      })],
+      now: new Date("2026-09-21T12:10:00Z"),
+    });
+    assert.deepEqual(away.results.refused.map((r) => r.refusal), ["kind_refused"], `a delist carrying ${category} was corrected away from it`);
+  }
+});
+
 test("R1: abec3f9's tree — an applied `disable` and a stray hold for the same id: zero new advisories, the hold removed, `applied`", async () => {
   // 3f996cae…, game-companion 0.1.1, as abec3f9 committed it.
   const ID = "3f996cae-45c5-43a2-a24a-fd56ee1fcca0";

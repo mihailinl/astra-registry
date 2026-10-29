@@ -1663,6 +1663,15 @@ function compileCorrection(root, d, { decidedAt, date, reason, batch = null }) {
       `category ${JSON.stringify(d.category)} is not one §7.2 allows with the corrected entry's action, ${target.action}: ${allowed.join(", ")}`);
   }
   const current = effectiveCategories(entries).get(d.corrects)?.category ?? target.category;
+  // Nor AWAY from them (re-review of #480): an author's own request, or a
+  // decision about an account, is not a moderator's reason to re-word, and
+  // re-wording it would erase from the public log that the author asked, or
+  // that an account was compromised or sanctioned.
+  if (current === "author_request" || ACCOUNT_LEVEL_CATEGORIES.includes(current)) {
+    return refuse(d, "kind_refused",
+      `${d.corrects} carries ${current}, and a correction may not move an entry away from it: it records that the ` +
+      "author asked, or a decision about an account, which a moderator's correction may not re-word (MOD-57)");
+  }
   if (current === d.category) {
     return refuse(d, "target_changed", `${d.corrects} already carries category ${d.category}, so there is nothing to correct`);
   }
