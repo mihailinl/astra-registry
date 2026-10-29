@@ -128,6 +128,9 @@ const DECIDED = {
   // row: a mark that only adds trust withdraws nothing, so `pass`, and
   // nothing is left to clear, so `none`.
   M_REVIEW: { level: "pass", fix: "none" },
+  // Contract 6.7.0. A correction moves an applied entry's category and
+  // withdraws nothing, so `note`, and nothing is left to clear, so `none`.
+  M_CORRECT_CATEGORY: { level: "note", fix: "none" },
 };
 
 // One `warn` a moderator lifts. The rule in `build()` reads `warn` as a check
@@ -509,8 +512,8 @@ function selftest() {
   // carries only what this program emits.
   check("the level and fix decided for a code the contract gives no fix are what its row carries", () => {
     const byCode = new Map(doc.flow13_table.map((r) => [r.code, r]));
-    assert(Object.keys(DECIDED).length === 11, `DECIDED holds ${Object.keys(DECIDED).length} codes; the decisions named ` +
-      "eleven: ten on 2026-09-24, and M_REVIEW with contract 3.0.0");
+    assert(Object.keys(DECIDED).length === 12, `DECIDED holds ${Object.keys(DECIDED).length} codes; the decisions named ` +
+      "twelve: ten on 2026-09-24, M_REVIEW with contract 3.0.0, and M_CORRECT_CATEGORY with 6.7.0");
     for (const [code, want] of Object.entries(DECIDED)) {
       assert(!Object.hasOwn(B7_FIXES, code), `${code} is in DECIDED and in B7_FIXES; a code whose fix the contract states is not a decision`);
       assert(byCode.has(code), `${code}'s level and fix are decided, and the table carries no row for it`);

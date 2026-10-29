@@ -85,7 +85,7 @@ import { decisionId, recordPath } from "../lib/decisions.mjs";
 import { compareWithBaseline, identityFromCertificate } from "../lib/identity.mjs";
 import { baselineFor } from "../lib/service-decide.mjs";
 import { listingStateAt } from "../lib/listing-state.mjs";
-import { buildModerationLog, checkEntry } from "../lib/moderation.mjs";
+import { buildModerationLog, categoryWords, checkEntry } from "../lib/moderation.mjs";
 import { REVOCATIONS_SCHEMA, publicKeyFromBase64, verifyEnvelope } from "../lib/sign.mjs";
 import { signRevocations } from "../../tools/sign-revocations.mjs";
 import { loadTestRoot } from "../../tools/testkeys/regenerate.mjs";
@@ -390,6 +390,8 @@ const SD_VALUES = Object.freeze({
   reason: MODERATOR_REASON,
   reverses: "2026/0001-widgets-delist",
   appeal_of: SDI2,
+  // 6.7.0 (MOD-57): the applied decision an M_CORRECT_CATEGORY corrects.
+  corrects: "0192f3a4-5b6c-7d8e-9f01-2345678930cc",
   outcome: "stands",
   severity: "high",
   action: "block_install",
@@ -886,7 +888,7 @@ test("an answer missing `shadow` is read as shadow and alerts", () => {
 test("an entry carrying an unnamed member is accepted, and the member reaches no file", () => {
   // M-1, both halves, with the floor written before either mutation.
   const named = ENTRY_ALLOWLIST.moderator;
-  assert.equal(named.length, 14, `BOT-80 names 14 members for a moderator decision and this list has ${named.length}`);
+  assert.equal(named.length, 15, `BOT-80 names 15 members for a moderator decision (\`corrects\` since 6.7.0) and this list has ${named.length}`);
 
   const root = estate();
   const entry = decision({
@@ -3673,6 +3675,81 @@ test("a release or cleanup that changes no advisory does not rewrite the withdra
     assert.equal(JSON.parse(sh(["show", `${headOf(origin)}:${REVOCATIONS_FILE}`], root)).signed.serial,
       serialsAt({ root, sha: headOf(origin) }).revocations);
   }
+});
+
+// Contract 6.7.0 (MOD-57; owner OD-34, 2026-10-29). game-companion (revoke
+// 3f996cae…, ASTRA-2026-0002) drained its users' AI quotas, which is harm and
+// not malice, and was published `malicious` because §7.2 had no category for
+// it and no way to correct one. The correction goes through the console as
+// an `M_CORRECT_CATEGORY`, never as a hand edit of the published entry.
+test("6.7.0: game-companion's revoke is corrected to `harmful_behaviour` by an appended entry, and nothing else moves", async () => {
+  const ID = "3f996cae-45c5-43a2-a24a-fd56ee1fcca0";
+  const FIX = "0192f3a4-5b6c-7d8e-9f01-2345678930cd";
+  const root = withDocuments(estate({ id: "game-companion", versions: ["0.1.0", "0.1.1"], at: "2026-10-29T02:00:00Z" }));
+  const origin = withRemote(root);
+  const revoke = decision({
+    service_decision_id: ID, code: "M_REVOKE", category: "malicious", plugin_id: "game-companion", versions: ["0.1.1"],
+    decided_at: "2026-10-29T02:54:07Z", reason: "Using all ai limits, sends request every minute.", severity: "moderate",
+    action: "disable", moderator: "mod-1", declared_interest: false,
+  });
+  assert.deepEqual((await measuredJob(root, [revoke], { now: new Date("2026-10-29T03:10:00Z") })).results.compiled, [ID]);
+  assert.equal(runApply(root, dated("2026-10-29T03:11:10Z")).status, 0);
+  const revokeFile = sh(["ls-files", "--", "bot/moderation/*game-companion-revoke*.json"], root).trim();
+  assert.ok(revokeFile, "the fixture's revoke left no log entry");
+  const before = {
+    entry: sh(["show", `HEAD:${revokeFile}`], root),
+    list: sh(["show", `HEAD:${REVOCATIONS_FILE}`], root),
+    index: sh(["show", `HEAD:${INDEX_FILE}`], root),
+  };
+
+  const correct = (over = {}) => decision({
+    service_decision_id: FIX, code: "M_CORRECT_CATEGORY", category: "harmful_behaviour", corrects: ID,
+    plugin_id: "game-companion", decided_at: "2026-10-30T09:00:00Z", moderator: "mod-1", declared_interest: false,
+    reason: "It drained its users' AI quotas, which harms them and is not malice.", ...over,
+  });
+  // The refusals first, each on its own tree state and each final.
+  const refusal = async (over) => {
+    const job = await measuredJob(root, [correct(over)], { now: new Date("2026-10-30T09:10:00Z") });
+    fs.rmSync(path.join(root, "moderation"), { recursive: true, force: true });
+    sh(["checkout", "-q", "--", "."], root);
+    return job.results.refused.map((r) => r.refusal);
+  };
+  assert.deepEqual(await refusal({ corrects: "0192f3a4-5b6c-7d8e-9f01-2345678930ce" }), ["target_changed"], "a correction of nothing applied");
+  assert.deepEqual(await refusal({ category: "malicious" }), ["target_changed"], "a correction to the category it already has");
+  assert.deepEqual(await refusal({ category: "broken" }), ["kind_refused"], "a category §7.2 does not allow with a revoke");
+  assert.deepEqual(await refusal({ plugin_id: "widgets" }), ["target_changed"], "a correction naming another plugin's entry");
+
+  const job = await measuredJob(root, [correct()], { now: new Date("2026-10-30T09:10:00Z") });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.compiled, [FIX], JSON.stringify(job.results.refused));
+  assert.equal(job.paths.length, 1, `a correction wrote more than its own log entry: ${job.paths.join(", ")}`);
+  assert.match(job.paths[0], /^bot\/moderation\/2026-10-30-game-companion-correct\.json$/);
+  assert.equal(runApply(root, dated("2026-10-30T09:11:00Z")).status, 0);
+  const landed = headOf(origin);
+  assert.match(sh(["log", "-1", "--format=%B", landed], root), new RegExp(`^Service-Decision: ${FIX}$`, "m"));
+  assert.equal(sh(["show", `${landed}:${revokeFile}`], root), before.entry, "the published revoke entry was rewritten; history is append-only");
+  assert.equal(sh(["show", `${landed}:${REVOCATIONS_FILE}`], root), before.list, "the withdrawal list moved for a category");
+  assert.equal(sh(["show", `${landed}:${INDEX_FILE}`], root), before.index, "the catalogue moved for a category");
+  const fixEntry = JSON.parse(sh(["show", `${landed}:${job.paths[0]}`], root));
+  assert.deepEqual([fixEntry.action, fixEntry.corrects, fixEntry.category, fixEntry.previous_category], ["correct", ID, "harmful_behaviour", "malicious"]);
+
+  // The public text: the built log shows the revoke under its new category,
+  // with the history, and the words §7.2 publishes for it.
+  const log = buildModerationLog({ root });
+  const shown = log.entries.find((e) => e.service_decision_id === ID);
+  assert.equal(shown.category, "harmful_behaviour", "the log still publishes the revoke as malicious");
+  assert.deepEqual(shown.category_history.map((h) => h.category), ["malicious", "harmful_behaviour"]);
+  assert.equal(categoryWords(shown.category), "Harms users' accounts, data or resources");
+  assert.equal(log.entries.filter((e) => e.action === "correct").length, 1);
+  // And the advisory page the site builds says it in §7.2's words.
+  const { advisoryPage } = await import("../../site/templates/advisory.mjs");
+  const page = advisoryPage({ id: "ASTRA-2026-0001", severity: "moderate", action: "disable", reason: revoke.reason, entries: [] },
+    { plugins: new Map(), category: shown.category, categoryWords: categoryWords(shown.category) });
+  assert.match(page, /category <strong>Harms users&#39;? accounts, data or resources<\/strong>|category <strong>Harms users(&#x27;|') accounts, data or resources<\/strong>/);
+  // A second run over the same listed decision applies nothing twice.
+  const again = await measuredJob(root, [correct()], { now: new Date("2026-10-30T09:20:00Z") });
+  assert.deepEqual([again.paths, again.results.compiled], [[], []]);
+  assert.deepEqual(again.results.already_applied.map((a) => a.service_decision_id), [FIX]);
 });
 
 test("R1: abec3f9's tree — an applied `disable` and a stray hold for the same id: zero new advisories, the hold removed, `applied`", async () => {

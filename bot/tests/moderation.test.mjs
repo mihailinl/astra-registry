@@ -372,7 +372,8 @@ test("service_decision_id is §0.7's UUID and nothing else", () => {
   assert.ok(checkEntry({ ...DELIST, service_decision_id: "3f2c1b8a0d4e4c7a9b1f2e5a6c8d0f13" }).some((e) => /lowercase UUID/.test(e)));
   // And priv-scan has to be willing to see a UUID in that member and nowhere
   // else, or a valid entry is a privacy finding.
-  assert.deepEqual(DOCUMENT_MEMBERS["moderation-entry"].uuidOk, ["service_decision_id"]);
+  // 6.7.0: a correction names the corrected entry by its service_decision_id.
+  assert.deepEqual(DOCUMENT_MEMBERS["moderation-entry"].uuidOk, ["service_decision_id", "corrects"]);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

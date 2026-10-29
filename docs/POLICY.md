@@ -749,6 +749,7 @@ above (FLOW-13).
 | `M_BINDING_REVOKE` | A moderator revoked the repository's binding token. Listed versions are not touched, and the next release is refused `B_BINDING_UNUSABLE`. | Nothing on this code. `B_BINDING_UNUSABLE` says what clears that refusal. |
 | `M_IDENTITY_RESET` | A moderator reset the listing's recorded identity (§9, **Reset**). It clears `B_REPOSITORY_RECYCLED` for the identities it voided. | Nothing. |
 | `M_REVIEW` | A moderator marked these versions reviewed (§2.1): a moderator read each of them. It is one person's reading, not a safety guarantee, and a later advisory, yank or delist overrides it. The next version starts not reviewed. | Nothing needs clearing. |
+| `M_CORRECT_CATEGORY` | A moderator changed the published category of an earlier decision about this plugin. The decision, and anything it withdrew, stands as it was; only the words that say why moved. | Nothing needs clearing. |
 
 The waits the bot reports are not in this table: `W_LEASE_EXPIRED`,
 `W_ELIGIBILITY_UNREADABLE`, `W_NOTICE_PENDING`, `W_GITHUB_RATE_LIMITED`,
@@ -927,6 +928,18 @@ moderator's `M_REVIEW` marks versions reviewed (§2.1), and its entry, category
 `review_passed`, names the versions it marked. It undoes nothing, and nothing
 undoes it: a review found wrong is answered by one of the four actions at the
 top of this section.
+
+**Correct** goes in the same log too (contract 6.7.0). A moderator's
+`M_CORRECT_CATEGORY` changes the published category of an earlier yank,
+delist, deprecate or revoke, and nothing else: no listing, advisory or
+withdrawal list moves, and nothing installed notices. It is a new entry that
+names the decision it corrects and the category it replaces; the earlier entry
+is never rewritten, and everywhere the log is shown the decision reads under
+its newest category, with its history. The category `harmful_behaviour` —
+published as *Harms users' accounts, data or resources* — exists for a plugin
+that harms the people who run it without being malicious: one that spends
+their AI quota, their storage or their accounts' allowances against their
+interest.
 
 **A reset binds nothing and publishes nothing.** After it the listing is
 *frozen* — a listing that ever had an identity record is never grandfathered

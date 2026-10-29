@@ -85,8 +85,9 @@ export const DOCUMENT_MEMBERS = {
   // Declared, it is walked like every other member: the shapes apply.
   "moderation-entry": {
     members: ["$comment", "date", "action", "plugin", "versions", "reason", "advisory", "appeal",
-      "category", "reverses", "appeal_of", "outcome", "service_decision_id", "declared_interest"],
-    uuidOk: ["service_decision_id"],
+      "category", "reverses", "appeal_of", "outcome", "service_decision_id", "declared_interest",
+      "corrects", "previous_category"],
+    uuidOk: ["service_decision_id", "corrects"],
     handleOk: [],
     source: "contract MOD-33; bot/moderation/README.md; M-T1.6; `$comment` per bot/moderation/*.json on main",
   },
