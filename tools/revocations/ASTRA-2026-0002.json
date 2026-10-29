@@ -1,0 +1,18 @@
+{
+  "id": "ASTRA-2026-0002",
+  "published": "2026-10-29",
+  "severity": "moderate",
+  "action": "disable",
+  "reason": "Using all ai limits, sends request every minute.",
+  "advisory_url": "https://astra.minice.ai/plugins/_/advisories/ASTRA-2026-0002",
+  "entries": [
+    {
+      "kind": "digest",
+      "value": "6dd0d947271c7c5d40fbcd2907c3b7aee581ab029b918ad3640c76a8baeac513"
+    },
+    {
+      "kind": "id_version",
+      "value": "game-companion@0.1.1"
+    }
+  ]
+}

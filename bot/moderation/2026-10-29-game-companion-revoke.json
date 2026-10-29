@@ -1,0 +1,13 @@
+{
+  "date": "2026-10-29",
+  "action": "revoke",
+  "plugin": "game-companion",
+  "versions": [
+    "0.1.1"
+  ],
+  "reason": "Using all ai limits, sends request every minute.",
+  "advisory": "ASTRA-2026-0002",
+  "category": "malicious",
+  "service_decision_id": "3f996cae-45c5-43a2-a24a-fd56ee1fcca0",
+  "declared_interest": false
+}
