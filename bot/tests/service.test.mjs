@@ -2735,7 +2735,7 @@ const fbVerified = (over = {}) => {
   const tag = over.tag ?? P.tag;
   const fp = submissionFingerprint({ repo: P.repo, tag, id: P.id, version, commit: P.commit, digests: DIGESTS });
   // The owner file: the owner's own direct commit unless a case says otherwise (ID-63).
-  return verified({ binding: FB_LINE, owner_file: { commit: "9".repeat(40), pull_request: false, author_id: P.oid }, version, tag, fingerprint: fp, ...over });
+  return verified({ binding: FB_LINE, owner_file: { commit: "9".repeat(40), pull_request: false, author_id: P.oid, verified: true }, version, tag, fingerprint: fp, ...over });
 };
 const fbRun = ({ actor = null, version, tag, verdict = "pass", records = [baseline()], alerts = new Map(), denied = new Set(), listingState = { state: "grandfathered" } } = {}) => decideWith({
   ...(tag ? { lease: { tag } } : {}),
@@ -2798,19 +2798,24 @@ test("6.7.0 (MIG-10, ID-63): the owner's build over a stranger's merged owner fi
     ask: ask({ verdict: "pass", gates: { stop_status: "no_stop", decisions: [] }, notice: { kind: "first", status: "pending" } }),
     git: git({ existing: existing(), listingState: { state: "grandfathered" }, records: [baseline()] }),
   });
-  const stranger = run({ commit: "9".repeat(40), pull_request: true, author_id: "700000555" });
+  const stranger = run({ commit: "9".repeat(40), pull_request: true, author_id: "700000555", verified: true });
   assert.ok(heldCodesOf(stranger).includes("R_FIRST_BINDING"), "the owner's build over a stranger's merged owner file bound the listing");
   for (const [what, file] of [
-    ["a pull request the owner authored", { commit: "9".repeat(40), pull_request: true, author_id: P.oid }],
-    ["a direct commit by another account", { commit: "9".repeat(40), pull_request: false, author_id: "700000555" }],
-    ["a commit GitHub links to no account", { commit: "9".repeat(40), pull_request: false, author_id: null }],
+    ["a pull request the owner authored", { commit: "9".repeat(40), pull_request: true, author_id: P.oid, verified: true }],
+    ["a direct commit by another account", { commit: "9".repeat(40), pull_request: false, author_id: "700000555", verified: true }],
+    ["a commit GitHub links to no account", { commit: "9".repeat(40), pull_request: false, author_id: null, verified: true }],
     ["an owner file nobody read", null],
-    ["no commit", { commit: null, pull_request: false, author_id: P.oid }],
+    ["no commit", { commit: null, pull_request: false, author_id: P.oid, verified: true }],
+    // Re-review of #480: the owner's noreply e-mail set by a write
+    // collaborator, or a forged patch applied with `git am`: linked to the
+    // owner, unsigned.
+    ["an unsigned commit linked to the owner by its e-mail", { commit: "9".repeat(40), pull_request: false, author_id: P.oid, verified: false }],
+    ["a commit whose signature GitHub did not answer", { commit: "9".repeat(40), pull_request: false, author_id: P.oid }],
   ]) {
     assert.ok(heldCodesOf(run(file)).includes("R_FIRST_BINDING"), `${what} cleared the first binding`);
   }
-  const own = run({ commit: "9".repeat(40), pull_request: false, author_id: P.oid });
-  assert.equal(own.state, "published", `the owner's own direct commit did not clear: ${JSON.stringify(heldCodesOf(own))}`);
+  const own = run({ commit: "9".repeat(40), pull_request: false, author_id: P.oid, verified: true });
+  assert.equal(own.state, "published", `the owner's own verified direct commit did not clear: ${JSON.stringify(heldCodesOf(own))}`);
 });
 
 test("6.7.0 (MIG-10): a second tag under a binding a moderator approved is not held again; it waits the first's window, and a deny stops it", () => {

@@ -3214,8 +3214,14 @@ await test("MIG-31 (6.7.0): verify — an org repo's admin publishes with no flo
 await test("the owner file's newest commit names the GitHub account it is linked to, or none (ID-63; MIG-10's self path)", async () => {
   const url = `${API}/repositories/${FIXTURE_REPOSITORY_ID}/commits?sha=${"a".repeat(40)}&path=.well-known%2Fastra-plugin-owner&per_page=1`;
   const ask = (body) => gh.lastCommitTouching(FIXTURE_REPOSITORY_ID, "a".repeat(40), ".well-known/astra-plugin-owner", { fetchImpl: stubFetch({ [url]: { status: 200, body } }) });
-  const linked = await ask(JSON.stringify([{ sha: "9".repeat(40), commit: { author: { name: "x", email: "x@example.invalid" } }, author: { login: "owner", id: 280318216 }, committer: { id: 19864447 } }]));
-  assertEqual(JSON.stringify([linked.commit, linked.author_id]), JSON.stringify(["9".repeat(40), "280318216"]), "the linked account, not the committer");
+  const linked = await ask(JSON.stringify([{ sha: "9".repeat(40), commit: { author: { name: "x", email: "x@example.invalid" }, verification: { verified: true, reason: "valid" } }, author: { login: "owner", id: 280318216 }, committer: { id: 19864447 } }]));
+  assertEqual(JSON.stringify([linked.commit, linked.author_id, linked.verified]), JSON.stringify(["9".repeat(40), "280318216", true]), "the linked account, not the committer, and the signature verdict");
+  // Re-review of #480: the owner's noreply e-mail on an unsigned commit maps
+  // to the owner's account, and is not verified.
+  const forged = await ask(JSON.stringify([{ sha: "9".repeat(40), commit: { author: { name: "owner", email: "280318216+owner@users.noreply.github.com" }, verification: { verified: false, reason: "unsigned" } }, author: { login: "owner", id: 280318216 } }]));
+  assertEqual(JSON.stringify([forged.author_id, forged.verified]), JSON.stringify(["280318216", false]), "an unsigned commit read as verified");
+  const odd = await ask(JSON.stringify([{ sha: "9".repeat(40), commit: { verification: { verified: "true" } }, author: { id: 280318216 } }]));
+  assertEqual(odd.verified, false, "a signature verdict that is not exactly true read as verified");
   const unlinked = await ask(JSON.stringify([{ sha: "9".repeat(40), commit: { author: { name: "x" } }, author: null, committer: { id: 19864447 } }]));
   assertEqual(unlinked.author_id, null, "a commit linked to no account must not borrow the committer's id");
 });

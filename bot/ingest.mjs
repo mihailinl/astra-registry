@@ -1261,7 +1261,7 @@ export async function verifyFacts(opts, deps = {}) {
       if (pulls.status !== "found") return out("wait", { code: "W_GITHUB_RATE_LIMITED", reason: `ID-63: ${pulls.reason}` });
       pr = pulls.pulls.length > 0;
     }
-    ownerFile = { commit: last.commit, pull_request: pr, author_id: last.author_id ?? null };
+    ownerFile = { commit: last.commit, pull_request: pr, author_id: last.author_id ?? null, verified: last.verified === true };
     if (identity.run_id) {
       const run = await (deps.workflowRun ?? gh.workflowRun)(identity.repository_id, identity.run_id);
       const found = run?.status === "found" ? { status: "found", triggering_actor_id: run.triggering_actor_id } : { status: "transient", reason: run?.reason };

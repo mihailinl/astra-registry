@@ -517,10 +517,15 @@ export function id41({ identity, record, lineHash }) {
 
 /** Is the owner file's newest commit the repository owner's own direct commit (ID-63; MIG-10's self path)? */
 function ownFile(ownerFile, ids) {
+  // The linked author alone is GitHub's mapping of the git author's EMAIL,
+  // which a write collaborator can set to the owner's noreply address, so the
+  // commit must also carry a signature GitHub verified (re-review of #480).
+  // An unsigned owner's first binding is a moderator's, on the site.
   return Boolean(ownerFile)
     && typeof ownerFile.commit === "string" && /^[0-9a-f]{40}$/.test(ownerFile.commit)
     && ownerFile.pull_request === false
-    && isStr(ownerFile.author_id) && ownerFile.author_id === ids?.repository_owner_id;
+    && isStr(ownerFile.author_id) && ownerFile.author_id === ids?.repository_owner_id
+    && ownerFile.verified === true;
 }
 
 /** The accounts whose own first binding needs no moderator (contract 6.7.0, MIG-10): what `compareActor` calls them. */

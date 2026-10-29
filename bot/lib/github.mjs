@@ -553,6 +553,13 @@ export async function lastCommitTouching(repositoryId, sha, filePath, { fetchImp
     reason: answer.reason,
     commit: typeof list[0]?.sha === "string" ? list[0].sha : null,
     author_id: authorId,
+    // GitHub's own verdict on the commit's signature, from the same read
+    // (re-review of #480). The linked `author` is GitHub's mapping of the git
+    // author EMAIL, which anyone with write access — or a forged patch applied
+    // with `git am` — can set to the owner's noreply address; a verified
+    // signature is what ties the commit to the account that holds the key.
+    // Exactly `true` or `false`; anything else is `false`.
+    verified: list[0]?.commit?.verification?.verified === true,
   };
 }
 
