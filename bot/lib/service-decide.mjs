@@ -568,6 +568,10 @@ export function firstBindingCleared({ actor, verdict, lineHash, records = [], al
     if (fp === fingerprint) continue;
     if (alert?.event !== "approval" || alert.token_hash !== lineHash || !isStr(alert.held_decision_id)) continue;
     if (denied?.has(fp)) continue;
+    // MIG-10: "a rejected, stopped, refused or pending hold exempts nothing".
+    // An approved release later rejected (`M_REJECT`, a `refused` record),
+    // refused by the bot, or stopped by its author covers no later tag.
+    if (records.some((r) => r?.fingerprint === fp && (r.state === "stopped" || r.state === "refused"))) continue;
     const held = records.find((r) => r?.decision_id === alert.held_decision_id && r?.state === "held");
     if (!held || held.fingerprint !== fp || !(held.reasons ?? []).includes("R_FIRST_BINDING")) continue;
     if (held.plugin_id !== pluginId || held.repository_id !== ids.repository_id || held.repository_owner_id !== ids.repository_owner_id) continue;

@@ -2738,6 +2738,7 @@ const fbVerified = (over = {}) => {
   return verified({ binding: FB_LINE, owner_file: { commit: "9".repeat(40), pull_request: false, author_id: P.oid }, version, tag, fingerprint: fp, ...over });
 };
 const fbRun = ({ actor = null, version, tag, verdict = "pass", records = [baseline()], alerts = new Map(), denied = new Set(), listingState = { state: "grandfathered" } } = {}) => decideWith({
+  ...(tag ? { lease: { tag } } : {}),
   verified: fbVerified({ actor, ...(version ? { version } : {}), ...(tag ? { tag } : {}) }),
   facts: facts(version ? { version } : {}),
   ...(version ? { listing: listing({ version: versionDoc(version, {
@@ -2814,7 +2815,8 @@ test("6.7.0 (MIG-10, ID-63): the owner's build over a stranger's merged owner fi
 
 test("6.7.0 (MIG-10): a second tag under a binding a moderator approved is not held again; it waits the first's window, and a deny stops it", () => {
   const firstFp = fbVerified().fingerprint;
-  const held = heldRecord({ reasons: ["R_FIRST_BINDING"], decision_id: "3".repeat(32), decided_at: hoursBefore(P.now, 30) });
+  // The first release is another submission than the tag that follows it.
+  const held = heldRecord({ submission_id: P.sid2, reasons: ["R_FIRST_BINDING"], decision_id: "3".repeat(32), decided_at: hoursBefore(P.now, 30) });
   const alertFor = (over = {}) => new Map([[firstFp, {
     schema: ALERT_SCHEMA, fingerprint: firstFp, event: "approval", approval_decided_at: hoursBefore(P.now, 28),
     delivered_at: hoursBefore(P.now, OPERATOR_WINDOW_HOURS + 1), run: "1/1", digest: FULL, held_decision_id: "3".repeat(32),
@@ -2829,6 +2831,13 @@ test("6.7.0 (MIG-10): a second tag under a binding a moderator approved is not h
   assert.equal(running.wait?.code, "W_OPERATOR_WINDOW", "the second tag published inside the approved release's operator window");
   const denied = second({ alerts: alertFor(), denied: new Set([firstFp]) });
   assert.ok(heldCodesOf(denied).includes("R_FIRST_BINDING"), "a denied approval still covered the binding");
+  // Review of #480 (MEDIUM): an approval later rejected, refused or stopped
+  // exempts nothing (MIG-10's first sentence).
+  for (const [state, reasons] of [["refused", ["M_REJECT"]], ["refused", ["E_DERIVED_LISTING_INVALID"]], ["stopped", ["A_STOP"]]]) {
+    const ended = { ...held, state, reasons, decision_id: "5".repeat(32), decided_at: hoursBefore(P.now, 20) };
+    const after = second({ alerts: alertFor(), records: [baseline(), held, ended] });
+    assert.ok(heldCodesOf(after).includes("R_FIRST_BINDING"), `an approval whose release was then ${state} (${reasons}) covered the next tag: ${after.kind} ${after.state} ${after.why ?? ""} ${after.wait?.code ?? ""}`);
+  }
   const otherToken = second({ alerts: alertFor({ token_hash: "4".repeat(16) }) });
   assert.ok(heldCodesOf(otherToken).includes("R_FIRST_BINDING"), "an approval of another binding token covered this one");
   const oldAlert = second({ alerts: alertFor({ token_hash: undefined }) });
