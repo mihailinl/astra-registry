@@ -3951,10 +3951,10 @@ test("docs/POLICY.md §3.2 states the numbers bot/lib/service-decide.mjs enforce
   assert.ok(section.includes(`**${UPDATE_WINDOW_HOURS} hours** earlier`), "the update window");
   assert.ok(section.includes(`**${OPERATOR_WINDOW_HOURS} hours** have passed`), "the operator window");
   assert.ok(section.includes(`**${FIRST_BINDING_WAIT_DAYS} days** after the record`), "TRUST-27's wait");
-  // MIG-31's floor, which service-decide.mjs has enforced since B-T4.1's walk
-  // (h) found it unenforced (registry #334) and which this section did not
-  // state. Watched failing before the sentence below it was written.
-  assert.ok(section.includes(`**${ACTOR_MISMATCH_FLOOR_DAYS} days** after the record`), "MIG-31's floor for a first binding the owner did not build");
+  // MIG-31 since contract 6.7.0: a check, not a floor. The section must say
+  // so and must not state the 14 days as a rule any more.
+  assert.ok(section.includes("**Who built a first binding is checked, not waited out**"), "MIG-31's check");
+  assert.ok(!section.includes(`**${ACTOR_MISMATCH_FLOOR_DAYS} days** after the record`), "the section still states MIG-31's withdrawn floor");
 });
 
 // A hash, not a byte count, so this reads the same whatever the checker's
