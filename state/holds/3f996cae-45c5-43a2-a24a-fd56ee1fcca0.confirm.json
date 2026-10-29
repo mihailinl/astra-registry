@@ -1,0 +1,8 @@
+{
+  "schema": "astra.registry.hold-record/1",
+  "act": "confirm",
+  "service_decision_id": "3f996cae-45c5-43a2-a24a-fd56ee1fcca0",
+  "plugin_id": "game-companion",
+  "at": "2026-10-29T03:05:13Z",
+  "run": "https://github.com/mihailinl/astra-registry/actions/runs/40810101283"
+}
