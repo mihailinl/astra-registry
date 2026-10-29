@@ -19,7 +19,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  ACTOR_MISMATCH_FLOOR_DAYS,
   IDENTITY_CODES,
   applyIdentity,
   bindingDecision,
@@ -318,31 +317,52 @@ test("a record that only looks like a reset voids nothing, so a permanent refusa
   }
 });
 
-test("MIG-31: a different account pressing the button waits; a failed read decides nothing", () => {
+// MIG-31 since contract 6.7.0: a CHECK, where there was a 14-day floor that
+// hit every organisation's repository (the account that presses a button is
+// never the organisation). Watched red: `admin` not counted; `maintain` not
+// counted; a public org member not counted; `unreadable` read as transient
+// (every org release would wait for ever); a transient permission read
+// passing or holding instead of waiting.
+test("MIG-31 (6.7.0): an org repository's admin or maintainer gets no floor; anybody else is a moderator's; a failed read waits", () => {
   const identity = identityFromCertificate(CHESS_FIELDS);
+  const someone = { status: "found", triggering_actor_id: "193032699" };
+  const unreadable = { status: "unreadable", reason: "HTTP 403: Must have push access to view collaborator permission." };
+  const notMember = { status: "not_found", reason: "HTTP 404" };
 
   const owner = compareActor({ identity, actor: { status: "found", triggering_actor_id: "280318216" } });
-  assert.equal(owner.outcome, "ok");
-  assert.equal(owner.floor_days, 0);
+  assert.deepEqual([owner.outcome, owner.privileged, owner.floor_days], ["ok", true, 0]);
 
-  const someoneElse = compareActor({ identity, actor: { status: "found", triggering_actor_id: "193032699" } });
-  assert.equal(someoneElse.outcome, "floor");
-  assert.equal(someoneElse.floor_days, ACTOR_MISMATCH_FLOOR_DAYS);
+  for (const permission of ["admin", "maintain"]) {
+    const a = compareActor({ identity, actor: someone, permission: { status: "found", permission }, membership: notMember });
+    assert.deepEqual([a.outcome, a.privileged, a.floor_days], ["ok", true, 0], `${permission} was not privileged`);
+  }
+  const member = compareActor({ identity, actor: someone, permission: unreadable, membership: { status: "found" } });
+  assert.deepEqual([member.outcome, member.privileged], ["ok", true], "a public member of the owning org was not privileged");
+
+  for (const permission of [{ status: "found", permission: "write" }, { status: "found", permission: "read" }, unreadable]) {
+    const a = compareActor({ identity, actor: someone, permission, membership: notMember });
+    assert.deepEqual([a.outcome, a.privileged, a.floor_days], ["ok", false, 0],
+      `${JSON.stringify(permission)}: not privileged is a moderator's decision, never a floor and never a wait`);
+  }
+
+  for (const [permission, membership] of [
+    [{ status: "transient", reason: "HTTP 502" }, notMember],
+    [unreadable, { status: "transient", reason: "HTTP 502" }],
+    [null, null],
+  ]) {
+    const a = compareActor({ identity, actor: someone, permission, membership });
+    assert.equal(a.outcome, "wait", `a failed privilege read decided something: ${JSON.stringify([permission, membership])}`);
+    assert.equal(a.floor_days, undefined, "a read that did not happen must not impose a floor");
+  }
 
   for (const actor of [
     { status: "transient", reason: "HTTP 502" },
     { status: "not_found", reason: "HTTP 404" },
     { status: "found", triggering_actor_id: null },
-    // The shape that catches a reader keying on the FIELD instead of on the
-    // STATUS: a caller that filled the id in anyway — from a cache, from a
-    // retry, from a half-written object — while the read itself failed. The
-    // status is what says whether GitHub answered.
     { status: "transient", triggering_actor_id: "193032699", reason: "HTTP 502" },
   ]) {
-    const answer = compareActor({ identity, actor });
+    const answer = compareActor({ identity, actor, permission: { status: "found", permission: "admin" } });
     assert.equal(answer.outcome, "wait", JSON.stringify(actor));
-    assert.notEqual(answer.floor_days, ACTOR_MISMATCH_FLOOR_DAYS,
-      "a read that did not happen must not impose the floor either — it decides nothing at all");
   }
 });
 

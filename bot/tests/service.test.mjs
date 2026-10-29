@@ -2037,7 +2037,10 @@ import { TRUST14_CODES, mergeAlerts } from "../lib/trust14.mjs";
 import { ACTED_OUTCOMES, VERDICT_VALUES, leaksIn, scanFiles } from "../lib/scan-verdict-leaks.mjs";
 import { submissionDigest, submissionFingerprint } from "../lib/policy/release.mjs";
 import { cleanEnv } from "../../tools/lib/git-env.mjs";
-import { ACTOR_MISMATCH_FLOOR_DAYS, compareActor } from "../lib/identity.mjs";
+import { compareActor } from "../lib/identity.mjs";
+// The floor MIG-31 imposed until contract 6.7.0, kept here only as the
+// distance historic fixtures put their times at.
+const ACTOR_MISMATCH_FLOOR_DAYS = 14;
 
 const P = {
   sid: "0192f1c2-3b4a-7c5d-8e6f-1a2b3c4d5e6f",
@@ -3590,38 +3593,16 @@ const firstBindingRun = ({ heldAt, givenAt, mig31, now = P.now, alerts = new Map
 });
 const plusDays = (at, d) => hoursBefore(at, -d * 24);
 
-test("MIG-31: a deferred approval is a wait `W_APPROVAL_DEFERRED` until the floor's end, and writes no record and no commit", () => {
+test("MIG-31 (6.7.0): a non-owner's approved first binding is not deferred: no floor, no `W_APPROVAL_DEFERRED`", () => {
   const heldAt = hoursBefore(P.now, 3 * 24);
   const givenAt = hoursBefore(P.now, 2 * 24);
-  const floorEnd = plusDays(heldAt, ACTOR_MISMATCH_FLOOR_DAYS);
   const plan = firstBindingRun({ heldAt, givenAt, mig31: true });
-  assert.equal(plan.kind, "wait", `the deferred approval was planned ${plan.kind} ${plan.state ?? ""}: a held result takes the approval back`);
-  assert.equal(plan.wait.code, "W_APPROVAL_DEFERRED");
-  assert.equal(plan.wait.earliest_retry_at, floorEnd, `the earliest retry is the floor's end, ${ACTOR_MISMATCH_FLOOR_DAYS} days after the hold`);
-  assert.match(plan.wait.cause, /^MIG-31\b/, plan.wait.cause);
-  assert.ok(plan.wait.cause.includes(floorEnd) && plan.wait.cause.includes(heldAt), `the cause names when it takes effect and the hold it counts from: ${plan.wait.cause}`);
-  assert.ok(!plan.wait.cause.includes("700000555"), "the cause names no account");
-  assert.equal(plan.record, null, "a wait writes no record (FLOW-72)");
-  assert.equal(plan.alert, null, "no operator alert before the approval takes effect");
-  assert.ok(!plan.reasons.some((r) => r.code === "P_APPROVAL_STALE"), `a deferred approval is not stale: ${JSON.stringify(plan.reasons.map((r) => r.code))}`);
-
-  // What the service receives, and what the publish job commits: nothing.
-  const body = resultBody(plan);
-  assert.deepEqual(body.wait, plan.wait);
-  assert.ok(!("state" in body) && !("decision_id" in body), JSON.stringify(body));
-  const t = registryTree();
-  try {
-    const out = publishOnto(t, plan, "8/1");
-    assert.equal(out.committed, null, "a deferred approval committed something");
-    assert.deepEqual(out.files, [], "and wrote something into its report");
-    assert.equal(out.result.kind, "wait");
-    assert.equal(out.result.needs_commit, false);
-  } finally {
-    t.cleanup();
-  }
+  assert.notEqual(plan.wait?.code, "W_APPROVAL_DEFERRED", `a moderator's approval of a non-owner's first binding was deferred: ${JSON.stringify(plan.wait)}`);
+  assert.ok(!(plan.reasons ?? []).some((r) => /^MIG-31\b/.test(r.message ?? "")), "a reason still cites MIG-31's floor");
+  assert.ok(!(plan.reasons ?? []).some((r) => r.code === "P_APPROVAL_STALE"), JSON.stringify(plan.reasons?.map((r) => r.code)));
 });
 
-test("TRUST-27 at 0: an owner-built first binding's approval is never deferred, while MIG-31's floor still defers a non-owner's", () => {
+test("TRUST-27 at 0: an owner-built first binding's approval is never deferred, and since 6.7.0 neither is a non-owner's", () => {
   const heldAt = hoursBefore(P.now, 24);
   const givenAt = hoursBefore(P.now, 4);
   // Watched failing at FIRST_BINDING_WAIT_DAYS = 7, which deferred this run to
@@ -3629,11 +3610,9 @@ test("TRUST-27 at 0: an owner-built first binding's approval is never deferred, 
   const owner = firstBindingRun({ heldAt, givenAt, mig31: false });
   assert.notEqual(owner.wait?.code, "W_APPROVAL_DEFERRED", `${owner.kind} ${owner.state ?? ""} ${owner.wait?.code ?? ""}`);
   assert.ok(!(owner.reasons ?? []).some((r) => r.code === "P_APPROVAL_STALE"), JSON.stringify(owner.reasons));
-  // The deferral path stays for MIG-31, which TRUST-27 at 0 does not touch.
+  // Since 6.7.0 MIG-31 defers nothing either.
   const other = firstBindingRun({ heldAt, givenAt, mig31: true });
-  assert.equal(other.kind, "wait", `${other.kind} ${other.state ?? ""}`);
-  assert.equal(other.wait.code, "W_APPROVAL_DEFERRED");
-  assert.match(other.wait.cause, /^MIG-31\b/, other.wait.cause);
+  assert.notEqual(other.wait?.code, "W_APPROVAL_DEFERRED", `${other.kind} ${other.state ?? ""} ${other.wait?.code ?? ""}`);
 });
 
 test("MIG-31: after the floor ends the same approval publishes, however old it is by its own clock", () => {
@@ -3714,59 +3693,32 @@ const actorRun = ({ heldAt, givenAt, actorId, floorDays = ACTOR_MISMATCH_FLOOR_D
   now,
 });
 
-test("MIG-31: the triggering actor's id reaches only the typed `triggering_actor_id` field, never a reason, a wait's cause or a record — floor not reached, floor reached, approval stale, actor unreadable, actor == owner", () => {
-  // floor not reached: deferred. `why` is built WITH the id, but it only
-  // leaves paired with `earliest`, so it is never pushed to `reasons`.
+test("MIG-31: the triggering actor's id reaches only the typed `triggering_actor_id` field, never a reason, a wait's cause or a record — non-owner, approval stale, actor unreadable, actor == owner", () => {
   const heldAt1 = hoursBefore(P.now, 3 * 24);
   const givenAt1 = hoursBefore(P.now, 2 * 24);
-  const notReached = actorRun({ heldAt: heldAt1, givenAt: givenAt1, actorId: LEAK_ACTOR });
-  assert.equal(notReached.kind, "wait");
-  assert.equal(notReached.wait.code, "W_APPROVAL_DEFERRED");
-  assert.match(notReached.wait.cause, /account other than the repository's owner/);
-  assertNoAccountLeak(notReached, LEAK_ACTOR, "floor not reached");
+  const alert = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: givenAt1, delivered_at: hoursBefore(P.now, OPERATOR_WINDOW_HOURS + 1), run: "1/1" };
+  const other = actorRun({ heldAt: heldAt1, givenAt: givenAt1, actorId: LEAK_ACTOR, floorDays: 0, alerts: new Map([[FP, alert]]) });
+  assert.equal(other.state, "published", JSON.stringify(codes(other)));
+  assertNoAccountLeak(other, LEAK_ACTOR, "non-owner, approved");
+  assert.ok(!("triggering_actor_id" in resultBody(other, {})), "a published plan carries no hold extras at all");
 
-  // floor reached: the approval clears the hold, the extras it leaves behind
-  // carry the id in its typed field only, and a published plan carries no
-  // hold extras at all.
-  const heldAt2 = hoursBefore(P.now, 16 * 24);
-  const givenAt2 = hoursBefore(P.now, 15 * 24);
-  const alert = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: givenAt2, delivered_at: hoursBefore(P.now, OPERATOR_WINDOW_HOURS + 1), run: "1/1" };
-  const reached = actorRun({ heldAt: heldAt2, givenAt: givenAt2, actorId: LEAK_ACTOR, alerts: new Map([[FP, alert]]) });
-  assert.equal(reached.state, "published", JSON.stringify(codes(reached)));
-  assertNoAccountLeak(reached, LEAK_ACTOR, "floor reached");
-  assert.ok(!("triggering_actor_id" in resultBody(reached, {})), "a published plan carries no hold extras at all");
-
-  // approval stale: BOT-26's own staleness (no §0.7 `decided_at`), with the
-  // same account id in context — the hold's extras still carry it typed,
-  // and `P_APPROVAL_STALE`'s message (BOT-26's, not MIG-31's) names no id.
-  const stale = actorRun({ heldAt: heldAt1, givenAt: givenAt1, actorId: LEAK_ACTOR, approvalOver: { decided_at: "not a time" } });
+  const stale = actorRun({ heldAt: heldAt1, givenAt: givenAt1, actorId: LEAK_ACTOR, floorDays: 0, approvalOver: { decided_at: "not a time" } });
   assert.ok(stale.reasons?.some((r) => r.code === "P_APPROVAL_STALE"), JSON.stringify(stale.reasons?.map((r) => r.code)));
   assertNoAccountLeak(stale, LEAK_ACTOR, "approval stale");
 
-  // actor unreadable: `verified.actor.triggering_actor_id` is `null` (the
-  // run that reached `decideSubmission` could not read it). MIG-31's floor
-  // still applies — the withholding direction — and names no account at all.
-  const unreadable = actorRun({ heldAt: heldAt1, givenAt: givenAt1, actorId: null });
-  assert.equal(unreadable.kind, "wait");
-  assert.match(unreadable.wait.cause, /nobody could read/);
+  const unreadable = actorRun({ heldAt: heldAt1, givenAt: givenAt1, actorId: null, floorDays: 0 });
+  assert.notEqual(unreadable.wait?.code, "W_APPROVAL_DEFERRED", "an unread actor imposed a floor");
   assertNoAccountLeak(unreadable, LEAK_ACTOR, "actor unreadable");
 
-  // actor == owner: MIG-31's floor is 0 for the owner's own build (verify's
-  // `compareActor` answers `floor_days: 0`), so no id-bearing branch runs —
-  // whatever TRUST-14's operator-alert gate (unrelated to MIG-31) does next.
   const owner = actorRun({ heldAt: heldAt1, givenAt: givenAt1, actorId: P.oid, floorDays: 0 });
   assert.notEqual(owner.wait?.code, "W_APPROVAL_DEFERRED", JSON.stringify(owner.wait));
   assertNoAccountLeak(owner, LEAK_ACTOR, "actor == owner");
 
-  // `compareActor` (bot/lib/identity.mjs) itself: its "floor" outcome's own
-  // `reason` DOES name the account — that string is internal to `verify`,
-  // and `bot/ingest.mjs`'s one call site reads `cmp.floor_days` for this
-  // outcome and returns `cmp.reason` outbound only for `cmp.outcome ===
-  // "wait"`, which the floor outcome is not (bot/tests/ingest.test.mjs
-  // covers that call site end to end).
-  const cmp = compareActor({ identity: { repository_owner_id: P.oid }, actor: { status: "found", triggering_actor_id: LEAK_ACTOR } });
-  assert.equal(cmp.outcome, "floor");
-  assert.ok(cmp.reason.includes(LEAK_ACTOR), "compareActor's own reason names the account; its one caller does not read it for this outcome");
+  // `compareActor` never names the account in any outcome since 6.7.0.
+  for (const permission of [{ status: "found", permission: "admin" }, { status: "unreadable" }, { status: "transient", reason: "HTTP 502" }]) {
+    const cmp = compareActor({ identity: { repository_owner_id: P.oid }, actor: { status: "found", triggering_actor_id: LEAK_ACTOR }, permission, membership: { status: "not_found" } });
+    assert.ok(!cmp.reason.includes(LEAK_ACTOR), `compareActor's reason names the account: ${cmp.reason}`);
+  }
 });
 
 test("TRUST-14: the alert record lands with the delivery the channel reported, and not without one", () => {
@@ -4106,9 +4058,6 @@ test("end to end, in shadow: the same lease commits nothing and posts nothing", 
 // ── §4.4's bound on a wait's earliest retry (contract 3.12.0) ───────────────
 
 import {
-  ACTOR_MISMATCH_FLOOR_DAYS as FLOOR_DAYS_FOR_BOUND,
-} from "../lib/identity.mjs";
-import {
   FIRST_BINDING_WAIT_DAYS as TRUST27_DAYS_FOR_BOUND,
   MAX_WAIT_DAYS,
   boundedEarliest,
@@ -4123,10 +4072,11 @@ test("§4.4: a wait's earliest retry is at most 15 days after the run's start, a
   assert.throws(() => boundedEarliest(start, "not a time"), /at most 15 days/, "an unreadable time refuses");
 });
 
-test("§4.4's 15 days is MIG-31's floor plus a day, and covers TRUST-27's wait", () => {
-  // The contract states the bound as the floor plus a day; if either number
-  // moves, the bound must be re-read with it, so this fails first.
-  assert.equal(MAX_WAIT_DAYS, FLOOR_DAYS_FOR_BOUND + 1);
+test("§4.4's 15 days stays the wire bound with MIG-31's floor gone (6.7.0), and covers TRUST-27's wait", () => {
+  // It was MIG-31's 14-day floor plus a day. 6.7.0 removed the floor and kept
+  // the bound, which the service enforces on every wait; moving it is a wire
+  // change, so it is pinned here as a number.
+  assert.equal(MAX_WAIT_DAYS, 15);
   assert.ok(TRUST27_DAYS_FOR_BOUND < MAX_WAIT_DAYS);
 });
 

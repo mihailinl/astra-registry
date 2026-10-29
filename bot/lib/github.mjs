@@ -423,7 +423,93 @@ export async function workflowRun(repo, runId, { fetchImpl = fetch } = {}) {
   if (!actor.id) {
     return { status: "transient", reason: "HTTP 200 with no triggering_actor id", triggering_actor_id: null };
   }
-  return { status: "found", reason: answer.reason, triggering_actor_id: actor.id };
+  const login = answer.parsed?.triggering_actor?.login;
+  return {
+    status: "found", reason: answer.reason, triggering_actor_id: actor.id,
+    // The login, for MIG-31's two privilege reads (6.7.0), which GitHub keys
+    // by login. The id stays the identity every comparison uses.
+    triggering_actor_login: typeof login === "string" && LOGIN_RE.test(login) ? login : null,
+  };
+}
+
+const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
+
+/**
+ * One by-name read whose answer is a status code, not a body: 204, 404, or
+ * anything else (`transient`). Used where `read` would read a 204's empty
+ * body as a JSON failure.
+ */
+async function readStatus(url, { fetchImpl = fetch } = {}) {
+  let res;
+  try {
+    res = await fetchImpl(url, { headers: headers(), redirect: "manual" });
+  } catch (e) {
+    return { status: "transient", reason: `the request did not complete: ${e.message}` };
+  }
+  if (res.status === 204) return { status: "found", reason: "HTTP 204" };
+  if (res.status === 404) return { status: "not_found", reason: "HTTP 404" };
+  return { status: "transient", reason: `HTTP ${res.status}` };
+}
+
+/**
+ * MIG-31 since contract 6.7.0: the permission the account that started the
+ * build holds on the repository, by repository id and the account's login
+ * (`GET /repositories/{id}/collaborators/{login}/permission`).
+ *
+ * GitHub answers this only to a caller with push access to the repository:
+ * anybody else gets HTTP 403 "Must have push access to view collaborator
+ * permission" (measured 2026-10-29 on a repository the reader could not push
+ * to). That 403 is an ANSWER — this registry cannot see the permission — and
+ * is `unreadable`, never `transient`: retrying it changes nothing, and waiting
+ * on it would hold every such release for ever. A rate-limited 403 or 429, a
+ * 5xx, or a body that is not the shape is `transient`.
+ *
+ * @returns {Promise<{status: "found"|"unreadable"|"transient", reason: string, permission: string|null, role: string|null}>}
+ */
+export async function collaboratorPermission(repositoryId, login, { fetchImpl = fetch } = {}) {
+  if (!BASE10_RE.test(String(repositoryId)) || !LOGIN_RE.test(String(login ?? ""))) {
+    return { status: "transient", reason: "no repository id or no login to ask about", permission: null, role: null };
+  }
+  const url = `${API}/repositories/${repositoryId}/collaborators/${login}/permission`;
+  const answer = await read(url, { fetchImpl });
+  if (answer.status === "found") {
+    const permission = answer.parsed?.permission;
+    const role = answer.parsed?.role_name;
+    if (typeof permission !== "string") {
+      return { status: "transient", reason: "HTTP 200 with no permission", permission: null, role: null };
+    }
+    return { status: "found", reason: answer.reason, permission, role: typeof role === "string" ? role : null };
+  }
+  if (answer.res?.status === 403 && !/rate-limit headers \(/.test(answer.reason)) {
+    let message = "";
+    try {
+      message = String(JSON.parse(await answer.res.text())?.message ?? "");
+    } catch { /* not the shape; transient below */ }
+    if (/push access/i.test(message)) {
+      return { status: "unreadable", reason: `HTTP 403: ${message}`, permission: null, role: null };
+    }
+  }
+  if (answer.status === "not_found") {
+    // The repository by id, or the login, is not there to ask about: an answer
+    // that shows nothing, so nothing is privileged by it.
+    return { status: "unreadable", reason: answer.reason, permission: null, role: null };
+  }
+  return { status: "transient", reason: answer.reason, permission: null, role: null };
+}
+
+/**
+ * MIG-31 since 6.7.0: is `login` a PUBLIC member of the organisation `org`?
+ * (`GET /orgs/{org}/public_members/{login}`: 204 yes, 404 no or not public.)
+ * Readable by any caller; a private membership reads as no, which errs to the
+ * moderator's hold, never to a pass.
+ *
+ * @returns {Promise<{status: "found"|"not_found"|"transient", reason: string}>}
+ */
+export async function publicOrgMember(org, login, { fetchImpl = fetch } = {}) {
+  if (!LOGIN_RE.test(String(org ?? "")) || !LOGIN_RE.test(String(login ?? ""))) {
+    return { status: "not_found", reason: "no organisation or no login to ask about" };
+  }
+  return readStatus(`${API}/orgs/${org}/public_members/${login}`, { fetchImpl });
 }
 
 /**

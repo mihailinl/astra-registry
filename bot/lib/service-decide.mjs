@@ -70,7 +70,7 @@ import { artifactDigests, submissionDigest, submissionFingerprint } from "./poli
 import { HOUR_MS, iso } from "./policy/time.mjs";
 import { CODES } from "./codes.mjs";
 import { POLICY_CODES } from "./policy/constants.mjs";
-import { ACTOR_MISMATCH_FLOOR_DAYS, applyIdentity, compareWithBaseline, effectiveBaseline } from "./identity.mjs";
+import { applyIdentity, compareWithBaseline, effectiveBaseline } from "./identity.mjs";
 import { safeRepo, safeTag } from "./safe.mjs";
 import { execFileSync } from "node:child_process";
 import { trackRecord } from "./policy/track-record.mjs";
@@ -557,24 +557,16 @@ export function recordDigest(record) {
  * (1) has no hold of this fingerprint to return to, and TRUST-27's and
  * MIG-31's are waits the approval outlives.
  *
- * **MIG-31.** At a `grandfathered` or `frozen` listing's `R_FIRST_BINDING`
- * hold whose build was started by an account other than the repository's
- * owner, an approval is not honoured before `floorDays` (the identity
- * module's 14) have passed since the hold's record, counted as TRUST-27
- * counts. `floorDays` is `verify`'s `compareActor` answer for the build's
- * run, which is the same run on every re-verification of these bytes. An
- * actor nobody could read is treated as the floor applying: the withholding
- * direction, because a first binding is the one approval that moves who owns
- * a listing. Until 2026-09-24 `verify` read the actor and the decide job
- * reported it (`triggering_actor_is_owner`) and nothing deferred an approval
- * by it; the canary walk ROLL-59 (h) found that (B-T4.1).
- *
- * "Deferred, not lost" (MIG-31): an approval given on the first day of a
- * 14-day floor is still an approval on the fifteenth. Until contract 5.8.0
- * that took counting BOT-26 (4)'s age from the floor's end; with no age
- * limit it is simply true.
+ * **MIG-31 (since contract 6.7.0) defers nothing here.** Until 6.7.0 a
+ * grandfathered or frozen listing's first binding built by an account other
+ * than the owner waited 14 days after its hold before an approval counted, and
+ * that hit every organisation's repository, since the account that presses a
+ * button is never the organisation. The floor is gone; `verify` CHECKS the
+ * account instead (`compareActor`: owner, `admin`/`maintain`, or a public
+ * member of the owning organisation), and where a moderator decides, the
+ * decision takes effect when it is given.
  */
-export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, now, mig31 = null, digest = null, repositoryId = null }) {
+export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, now, digest = null, repositoryId = null }) {
   const approvals = (decisions ?? []).filter((d) => d?.code === "M_APPROVE");
   if (approvals.length === 0) return { approval: null, why: null, decision: null };
   // The newest, by the service's own time. Two approvals of one fingerprint
@@ -618,23 +610,14 @@ export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, 
       decision,
     };
   }
-  const firstBinding = (heldCodes ?? []).includes("R_FIRST_BINDING");
-  // MIG-31's floor, in days, or 0 where it does not apply.
-  const actorFloor = firstBinding && mig31?.applies === true
-    ? (Number.isInteger(mig31.floorDays) && mig31.floorDays >= 0 ? mig31.floorDays : ACTOR_MISMATCH_FLOOR_DAYS)
-    : 0;
-  const floorEnd = actorFloor > 0 ? new Date(heldRecord.decided_at).getTime() + actorFloor * DAY_MS : null;
   // No age check (contract 5.8.0 removed BOT-26 (4)): an approval clears the
   // hold it names whatever its `decided_at`, and (2) voids it the moment the
-  // release changes.
+  // release changes. No MIG-31 floor either (contract 6.7.0): an approval of
+  // a first binding takes effect when it is given, whoever ran the build —
+  // the moderator's decision on the site IS the check the floor stood for.
   if ((heldCodes ?? []).includes("R_FIRST_BINDING")) {
     const since = new Date(now).getTime() - new Date(heldRecord.decided_at).getTime();
-    // When MIG-31's floor also stands and ends later, the floor is the answer:
-    // a deferral's `earliest` is when the approval takes effect, which the
-    // panel shows the author, and TRUST-27's earlier end would be a promise
-    // the next run breaks.
-    const floorOutlasts = floorEnd !== null && floorEnd >= new Date(heldRecord.decided_at).getTime() + FIRST_BINDING_WAIT_DAYS * DAY_MS;
-    if (since < FIRST_BINDING_WAIT_DAYS * DAY_MS && !floorOutlasts) {
+    if (since < FIRST_BINDING_WAIT_DAYS * DAY_MS) {
       return {
         approval: null,
         why:
@@ -648,24 +631,6 @@ export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, 
           `(${heldRecord.decided_at}). The release publishes then, unless something about it changes.`,
       };
     }
-  }
-  if (floorEnd !== null && new Date(now).getTime() < floorEnd) {
-    return {
-      approval: null,
-      why:
-        `MIG-31: this first binding's build was started by ${mig31.actorId ? `account ${mig31.actorId}` : "an account nobody could read"}, ` +
-        `not the repository's owner, so its approval is honoured ${actorFloor} days after the \`held\` record reached ` +
-        `main (${heldRecord.decided_at}), at ${iso(new Date(floorEnd))}. It is deferred, not lost`,
-      decision,
-      earliest: iso(new Date(floorEnd)),
-      // The wait's cause names no account: it is what the panel shows the
-      // author (FLOW-10), and who started the build is the moderator's to see.
-      cause:
-        `MIG-31: the approval stands and takes effect at ${iso(new Date(floorEnd))}. This first binding's build was ` +
-        "started by an account other than the repository's owner, or by one nobody could read, so an approval is " +
-        `honoured ${actorFloor} days after its hold reached main (${heldRecord.decided_at}). The release publishes ` +
-        "then, unless something about it changes.",
-    };
   }
   return {
     approval: {
@@ -1262,12 +1227,6 @@ export function decideSubmission(input) {
     now,
     digest,
     repositoryId: verified.repository_id,
-    // MIG-31's scope: a grandfathered or frozen listing's first binding.
-    mig31: {
-      applies: ["grandfathered", "frozen"].includes(listingState?.state) && binding.outcome === "one",
-      floorDays: verified.actor?.floor_days ?? null,
-      actorId: verified.actor?.triggering_actor_id ?? null,
-    },
   });
 
   const queued = git.queueEntry ?? null;

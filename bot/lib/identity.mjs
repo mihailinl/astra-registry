@@ -236,34 +236,35 @@ export function checkDownloadRepository({ identity, downloadRepoIds }) {
   };
 }
 
-/**
- * The floor MIG-31 imposes when the account that ran the build is not the
- * account that owns the repository.
- *
- * Fourteen days. It is not in `docs/POLICY.md` and must not be quoted there
- * by this task: `docs/POLICY.md` is reg.61a's (B-T3.3b), which publishes the
- * bound world's numbers in one edit, and a second file publishing a third
- * number is how a document and its code start disagreeing.
- */
-export const ACTOR_MISMATCH_FLOOR_DAYS = 14;
+/** The repository permissions that make the account that ran a build one that may act for the repository (MIG-31, 6.7.0). */
+export const PRIVILEGED_PERMISSIONS = Object.freeze(["admin", "maintain"]);
 
 /**
- * MIG-31: the run's triggering actor against the repository's owner id.
+ * MIG-31 since contract 6.7.0: may the account that ran the build act for
+ * the repository? A CHECK, where until 6.7.0 there was a 14-day floor.
  *
- * `.21` names the run, B-T1.3's `workflowRun` reads its `triggering_actor.id`,
- * and `.17` says whose repository it is. A difference is not a refusal — an
- * organisation member releasing an organisation's plugin is the ordinary case
- * — but it is the shape a stolen credential takes too, so the release waits
- * out a floor before it can publish.
+ * The floor hit every organisation's repository, because the account that
+ * presses a button is never the organisation that owns the repository, and it
+ * bought nothing a check cannot: it was a calendar wait to gain confidence,
+ * which the owner's rule (2026-10-29) replaces with a test. The account is
+ * privileged when it IS the owner, when it holds `admin` or `maintain` on the
+ * repository, or when it is a public member of the organisation that owns it.
+ * Otherwise the release gets no floor either: where a moderator decides (a
+ * first binding is held `R_FIRST_BINDING`), the moderator's decision on the
+ * site is the wait, and it takes effect when given.
  *
- * **A failed read waits.** It does not pass and it does not impose the floor:
- * "GitHub did not answer" is not "somebody else pressed the button", and a
- * decision record that says the second when the first happened cannot be
- * un-written.
+ * **A failed read waits.** A read that did not happen neither passes nor
+ * holds: "GitHub did not answer" is not "somebody else pressed the button".
+ * A read GitHub ANSWERED with "you may not see this" (`unreadable`: the
+ * permission endpoint refuses every caller without push access) is an answer,
+ * and shows nothing privileged.
  *
- * @param {{identity: object, actor: {status: string, triggering_actor_id?: string|null, reason?: string}}} opts
+ * @param {{identity: object, actor: {status: string, triggering_actor_id?: string|null, reason?: string},
+ *   permission?: {status: string, permission?: string|null, reason?: string}|null,
+ *   membership?: {status: string, reason?: string}|null}} opts
+ * @returns {{outcome: "ok"|"wait", privileged?: boolean, basis?: string, floor_days?: 0, code?: string, reason: string}}
  */
-export function compareActor({ identity, actor }) {
+export function compareActor({ identity, actor, permission = null, membership = null }) {
   if (!actor || actor.status === "transient") {
     return {
       outcome: "wait",
@@ -282,15 +283,35 @@ export function compareActor({ identity, actor }) {
     return { outcome: "wait", code: IDENTITY_CODES.W_GITHUB_RATE_LIMITED, reason: "the run carries no triggering actor id" };
   }
   if (actor.triggering_actor_id === identity?.repository_owner_id) {
-    return { outcome: "ok", floor_days: 0, reason: "the account that ran the build owns the repository" };
+    return { outcome: "ok", privileged: true, basis: "owner", floor_days: 0, reason: "the account that ran the build owns the repository" };
+  }
+  if (permission?.status === "found" && PRIVILEGED_PERMISSIONS.includes(permission.permission)) {
+    return { outcome: "ok", privileged: true, basis: permission.permission, floor_days: 0,
+      reason: `the account that ran the build holds \`${permission.permission}\` on the repository (MIG-31)` };
+  }
+  if (membership?.status === "found") {
+    return { outcome: "ok", privileged: true, basis: "org_member", floor_days: 0,
+      reason: "the account that ran the build is a public member of the organisation that owns the repository (MIG-31)" };
+  }
+  const unread = [
+    ...(!permission || permission.status === "transient" ? [`its permission (${permission?.reason ?? "not asked"})`] : []),
+    ...(!membership || membership.status === "transient" ? [`its organisation membership (${membership?.reason ?? "not asked"})`] : []),
+  ];
+  if (unread.length) {
+    return {
+      outcome: "wait",
+      code: IDENTITY_CODES.W_GITHUB_RATE_LIMITED,
+      reason: `the account that ran the build is not the repository's owner, and ${unread.join(" and ")} could not be read; ` +
+        "this run decides nothing and asks again (MIG-31)",
+    };
   }
   return {
-    outcome: "floor",
-    floor_days: ACTOR_MISMATCH_FLOOR_DAYS,
-    reason:
-      `the build was started by account ${actor.triggering_actor_id} and the repository's owner is ` +
-      `${identity?.repository_owner_id}. That is ordinary inside an organisation and it is also what a ` +
-      `stolen credential looks like, so this release waits ${ACTOR_MISMATCH_FLOOR_DAYS} days (MIG-31).`,
+    outcome: "ok",
+    privileged: false,
+    basis: "not_shown",
+    floor_days: 0,
+    reason: "the account that ran the build is not the repository's owner, and GitHub shows it neither `admin` nor " +
+      "`maintain` on the repository nor public membership of its organisation; a moderator decides on the site (MIG-31)",
   };
 }
 
