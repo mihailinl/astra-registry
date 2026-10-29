@@ -1,0 +1,13 @@
+{
+  "schema": "astra.registry.moderation-settled/1",
+  "settled": [
+    {
+      "service_decision_id": "3f996cae-45c5-43a2-a24a-fd56ee1fcca0",
+      "outcome": "applied",
+      "commit": "8bd29d52fd8dfe88f994af146e3bee7106773c79",
+      "answer": "duplicate",
+      "answered_at": "2026-10-29T07:09:45Z",
+      "run": "https://github.com/mihailinl/astra-registry/actions/runs/40833631366"
+    }
+  ]
+}
