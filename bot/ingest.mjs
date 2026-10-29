@@ -1276,7 +1276,7 @@ export async function verifyFacts(opts, deps = {}) {
           ? await (deps.collaboratorPermission ?? gh.collaboratorPermission)(identity.repository_id, login)
           : { status: "transient", reason: "the run names no login for its triggering actor" };
         membership = login
-          ? await (deps.publicOrgMember ?? gh.publicOrgMember)(String(identity.repo).split("/")[0], login)
+          ? await (deps.publicOrgMember ?? gh.publicOrgMember)(identity.repository_owner_id, login)
           : { status: "transient", reason: "the run names no login for its triggering actor" };
       }
       const cmp = compareActor({ identity, actor: found, permission, membership });

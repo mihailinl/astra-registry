@@ -498,17 +498,31 @@ export async function collaboratorPermission(repositoryId, login, { fetchImpl = 
 }
 
 /**
- * MIG-31 since 6.7.0: is `login` a PUBLIC member of the organisation `org`?
- * (`GET /orgs/{org}/public_members/{login}`: 204 yes, 404 no or not public.)
- * Readable by any caller; a private membership reads as no, which errs to the
+ * MIG-31 since 6.7.0: is `login` a PUBLIC member of the organisation whose
+ * account id is `ownerId` — the repository's owner by id (`.17`), never by
+ * the name in the repository's path, which a rename or a stale certificate
+ * can make another account's (review of #480)? The owner is read by id
+ * (`GET /user/{id}`); a `User` owner has no members, and an `Organization`
+ * is asked `GET /orgs/{login}/public_members/{login}` (204 yes, 404 no or
+ * not public). A private membership reads as no, which errs to the
  * moderator's hold, never to a pass.
  *
  * @returns {Promise<{status: "found"|"not_found"|"transient", reason: string}>}
  */
-export async function publicOrgMember(org, login, { fetchImpl = fetch } = {}) {
-  if (!LOGIN_RE.test(String(org ?? "")) || !LOGIN_RE.test(String(login ?? ""))) {
-    return { status: "not_found", reason: "no organisation or no login to ask about" };
+export async function publicOrgMember(ownerId, login, { fetchImpl = fetch } = {}) {
+  if (!BASE10_RE.test(String(ownerId ?? "")) || !LOGIN_RE.test(String(login ?? ""))) {
+    return { status: "not_found", reason: "no owner id or no login to ask about" };
   }
+  const owner = await read(`${API}/user/${ownerId}`, { fetchImpl });
+  if (owner.status !== "found") {
+    return { status: owner.status === "not_found" ? "not_found" : "transient", reason: `the owner account: ${owner.reason}` };
+  }
+  const ownerIdRead = idDigits(owner.raw ?? "");
+  const org = owner.parsed?.login;
+  if (ownerIdRead !== String(ownerId) || typeof org !== "string" || !LOGIN_RE.test(org)) {
+    return { status: "transient", reason: "the owner account's answer is not the shape this bot reads" };
+  }
+  if (owner.parsed?.type !== "Organization") return { status: "not_found", reason: "the repository's owner is not an organisation" };
   return readStatus(`${API}/orgs/${org}/public_members/${login}`, { fetchImpl });
 }
 

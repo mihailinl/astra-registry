@@ -3008,6 +3008,7 @@ async function verifyRun({
   // MIG-31 since 6.7.0: what GitHub says of an account that is not the owner.
   permission = { status: "unreadable", reason: "HTTP 403: Must have push access to view collaborator permission.", permission: null },
   membership = { status: "not_found", reason: "HTTP 404" },
+  asked = null,
 } = {}) {
   const github = fakeGitHub({ repo: REPO, tag: TAG, assets });
   const assetsDir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-assets-"));
@@ -3043,7 +3044,7 @@ async function verifyRun({
     pullsForCommit: async () => ({ status: "found", reason: "HTTP 200", pulls: [4] }),
     workflowRun: async () => ({ status: "found", reason: "HTTP 200", triggering_actor_id: actorId, triggering_actor_login: "a-pusher" }),
     collaboratorPermission: async () => permission,
-    publicOrgMember: async () => membership,
+    publicOrgMember: async (...args) => { asked?.push(args); return membership; },
   });
   return { v, assetsDir };
 }
@@ -3198,8 +3199,11 @@ await test("MIG-31 (6.7.0): verify — an org repo's admin publishes with no flo
   const admin = await verifyRun({ assets: [conformingAsset()], ownerFile: binding, actorId: OTHER, permission: { status: "found", permission: "admin" } });
   assertEqual(admin.v.outcome, "ok", JSON.stringify(admin.v));
   assertEqual(JSON.stringify([admin.v.actor.privileged, admin.v.actor.floor_days, admin.v.actor.basis]), JSON.stringify([true, 0, "admin"]));
-  const member = await verifyRun({ assets: [conformingAsset()], ownerFile: binding, actorId: OTHER, membership: { status: "found", reason: "HTTP 204" } });
+  const asked = [];
+  const member = await verifyRun({ assets: [conformingAsset()], ownerFile: binding, actorId: OTHER, membership: { status: "found", reason: "HTTP 204" }, asked });
   assertEqual(member.v.actor.privileged, true, "a public member of the owning organisation is privileged");
+  assertEqual(JSON.stringify(asked), JSON.stringify([[FIXTURE_OWNER_ID, "a-pusher"]]),
+    "membership was asked of something other than the repository's owner BY ID (review of #480)");
   const writer = await verifyRun({ assets: [conformingAsset()], ownerFile: binding, actorId: OTHER, permission: { status: "found", permission: "write" } });
   assertEqual(JSON.stringify([writer.v.outcome, writer.v.actor.privileged, writer.v.actor.floor_days]), JSON.stringify(["ok", false, 0]),
     "a non-admin is a moderator's decision: no floor, no wait");
@@ -3227,10 +3231,21 @@ await test("the collaborator permission and public membership reads: admin, push
   assertEqual(limited.status, "transient", "a rate limit is not an answer");
   const other403 = await ask({ status: 403, body: JSON.stringify({ message: "Resource not accessible by integration" }) });
   assertEqual(other403.status, "transient", "a 403 that is not the push-access answer waits");
-  const m = (status) => gh.publicOrgMember("MINICE-AI", "a-pusher", { fetchImpl: stubFetch({ [`${API}/orgs/MINICE-AI/public_members/a-pusher`]: { status } }) });
+  // Review of #480: the organisation is the repository's owner BY ID, read
+  // first, never the name in the repository's path.
+  const orgOwner = { status: 200, body: JSON.stringify({ login: "MINICE-AI", id: 280318216, type: "Organization" }) };
+  const m = (status, owner = orgOwner) => gh.publicOrgMember("280318216", "a-pusher", { fetchImpl: stubFetch({
+    [`${API}/user/280318216`]: owner,
+    [`${API}/orgs/MINICE-AI/public_members/a-pusher`]: { status },
+  }) });
   assertEqual((await m(204)).status, "found");
   assertEqual((await m(404)).status, "not_found");
   assertEqual((await m(502)).status, "transient");
+  assertEqual((await m(204, { status: 200, body: JSON.stringify({ login: "someone", id: 280318216, type: "User" }) })).status, "not_found",
+    "a user-owned repository has no organisation to be a member of");
+  assertEqual((await m(204, { status: 200, body: JSON.stringify({ login: "MINICE-AI", id: 1, type: "Organization" }) })).status, "transient",
+    "an owner answer naming another id is not read as the owner");
+  assertEqual((await m(204, { status: 502 })).status, "transient", "an unread owner waits");
 });
 
 await test("check: the facts file carries codes and levels and nothing that names anything; the card is derived under `.12`", async () => {
