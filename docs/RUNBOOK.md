@@ -72,7 +72,10 @@ Actions cache under `astra-alert-state-<workflow>-<job>-*`; deleting those
 entries makes the next red page. The state is signed with
 `ASTRA_ALERT_STATE_HMAC_KEY`, a secret of environment `alerts` (at least 32
 characters, created by the owner); without it, or with a state that does not
-verify, every red pages and nothing is remembered. It still publishes marked not reviewed: an approval is not a
+verify, every red pages and nothing is remembered. Accepted residual: an older
+signed state can be replayed only to quiet pairs (check, code, id) it shows
+already paged within the last 24 hours; a new code or id, or a state older
+than a day, still pages. It still publishes marked not reviewed: an approval is not a
 review.
 
 **What only an operator can do, and where.** Nothing in the normal course.
