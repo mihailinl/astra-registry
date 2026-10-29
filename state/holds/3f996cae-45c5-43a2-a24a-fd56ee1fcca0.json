@@ -1,0 +1,22 @@
+{
+  "schema": "astra.registry.hold/1",
+  "held_for": "disable_confirmation",
+  "service_decision_id": "3f996cae-45c5-43a2-a24a-fd56ee1fcca0",
+  "held_at": "2026-10-29T03:15:35Z",
+  "run": "https://github.com/mihailinl/astra-registry/actions/runs/40811066008",
+  "decision": {
+    "service_decision_id": "3f996cae-45c5-43a2-a24a-fd56ee1fcca0",
+    "code": "M_REVOKE",
+    "category": "malicious",
+    "plugin_id": "game-companion",
+    "versions": [
+      "0.1.1"
+    ],
+    "decided_at": "2026-10-29T02:54:07Z",
+    "reason": "Using all ai limits, sends request every minute.",
+    "severity": "moderate",
+    "action": "disable",
+    "moderator": "mod-1",
+    "declared_interest": false
+  }
+}
