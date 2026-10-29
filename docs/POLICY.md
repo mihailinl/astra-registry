@@ -426,16 +426,21 @@ From R3 a submission can also reach this registry through the plugins service
 (a panel request, an author's CI, or the release poll) rather than through an
 issue. On that path a moderator's approval arrives from the service, and four
 numbers bound what it can do. The first three are the owner's answers of
-2026-09-13, as contract 0.12.0 and 0.20.0 record them; the fourth is contract
-MIG-31's. There used to be a fifth, an approval maximum of 7 days, which
-contract 5.8.0 withdrew. Since contract 3.0.0 an approval there clears only a change of hands
+2026-09-13, as contract 0.12.0 and 0.20.0 record them; the fourth is
+TRUST-27's. There used to be two more: an approval maximum of 7 days, which
+contract 5.8.0 withdrew, and MIG-31's 14-day floor, which 6.7.0 replaced
+with a check. Since contract 3.0.0 an approval there clears only a change of hands
 (§3), because nothing else is held on that path and nothing on it is delayed.
 `bot/lib/service-decide.mjs` enforces exactly these:
 
 - **An approval does not expire.** The bot re-runs every check in the run
   that acts on an approval, and it honours the approval only when a record on
   `main` shows the release held under exactly that fingerprint and nothing is
-  blocking (BOT-26). How long ago it was given does not matter: if the release
+  blocking (BOT-26). "Exactly" is the whole SHA-256 of the release's six facts,
+  derived from the held record, and its repository id, not the 16-character
+  fingerprint a person reads: an author controls both releases, and two of its
+  own can share a 16-character label (since contract 6.7.0). The operator's
+  alert and an OK bind the same digest. How long ago it was given does not matter: if the release
   changes, the fingerprint changes and the approval clears nothing
   (`P_APPROVAL_STALE`), which is all an age limit ever guarded. From contract
   3.7.0 to 5.7.0 an approval older than 7 days was refused and the release
@@ -471,16 +476,25 @@ contract 5.8.0 withdrew. Since contract 3.0.0 an approval there clears only a ch
   binding line — is honoured from **0 days** after the record of that hold
   reached `main` (TRUST-27; 0 since contract 2.1.0, and in this code since
   2026-10-06), so it waits only for the checks below.
-- **A first binding somebody other than the owner built waits 14 days.** When
-  the account that started the release's build is not the repository's owner
-  — or the bot could not read which account it was — an approval of a
-  published listing's first binding is honoured no earlier than
-  **14 days** after the record of that hold reached `main`. The approval is
-  deferred, not lost (MIG-31).
-- **A deferred approval is a wait, not a hold.** While MIG-31's floor runs,
-  the author sees `W_APPROVAL_DEFERRED` with the time the approval takes
-  effect. Nothing is recorded and the approval stands; the release publishes
-  then, unless something about it changes (contract 3.10.0).
+- **Who built a first binding is checked, not waited out** (MIG-31, since
+  contract 6.7.0). The bot asks GitHub whether the account that started the
+  release's build is the repository's owner, holds `admin` or `maintain` on
+  it, or is a public member of the organisation that owns it. Nothing waits
+  on the answer: a moderator's approval takes effect when it is given. A
+  failed read waits and is asked again. Until 6.7.0 an account other than the
+  owner deferred an approval 14 days, which hit every organisation's plugin.
+- **The owner's own first binding needs no moderator** (MIG-10, since 6.7.0).
+  When the owner, or an account GitHub shows `admin` or `maintain` on the
+  repository, built it and the binding token is live for the repository, it
+  is not held. Public membership of the organisation alone does not count:
+  a member binding the organisation's plugin to their own account is what
+  this hold is for. GitHub shows `admin` and `maintain` only to a reader with
+  push access, which this registry does not have to authors' repositories, so
+  in practice an organisation's first binding is a moderator's.
+- **A moderator approves a binding once** (since 6.7.0). A later release
+  under the same binding token, plugin and repository is not held again; it
+  publishes once the approved release's operator window has passed, and not
+  at all if an operator denied that release.
 
 There is no `/publish` on that path, and since contract 3.0.0 no first listing
 on it is held or delayed: it publishes at once, marked not reviewed (§2.1).
@@ -699,7 +713,7 @@ exists first; nothing downstream changes when it arrives.
 | `R_FIRST_LISTING` | First listing, on the issue path — a person reads it, once, ever. On the service path a first listing publishes at once instead, with `P_REVIEW_PRIORITY`. |
 | `R_NEW_HIGH_RISK` | A high-risk permission this plugin did not have before. |
 | `R_IDENTITY_CHANGED` | The repository this plugin is listed from changed. |
-| `R_FIRST_BINDING` | The first release of an already published listing to carry a binding line. A moderator approves it once; later releases under that binding are not held for it again. |
+| `R_FIRST_BINDING` | The first release of an already published listing to carry a binding line, unless the repository's owner (or an admin or maintainer) built it with a live token. A moderator approves it once; later releases under that binding are not held for it again (since contract 6.7.0). |
 | `R_BINDING_CHANGED` | The binding line carries a different token from the one the listing was bound with. The previously bound account is told, and a moderator can approve it only after that account's objection window. |
 | `R_CHECK_HELD` | A check handed the decision to a person; not one of the three, same SLA. |
 | `P_DELAY_HIGH_RISK` | Waiting, because the plugin holds a high-risk permission. |
