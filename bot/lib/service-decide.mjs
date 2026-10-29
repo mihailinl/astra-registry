@@ -544,10 +544,13 @@ export const FIRST_BINDING_SELF_BASES = Object.freeze(["owner", "admin", "mainta
  *
  * @returns {{by: string, alert?: object, windowEndsAt?: string}|null}
  */
-export function firstBindingCleared({ actor, verdict, lineHash, records = [], alerts = null, denied = null, ids, pluginId, oks = null }) {
+export function firstBindingCleared({ actor, verdict, lineHash, records = [], alerts = null, denied = null, ids, pluginId, oks = null, fingerprint = null }) {
   if (!lineHash || verdict !== "pass") return null;
   if (actor?.privileged === true && FIRST_BINDING_SELF_BASES.includes(actor.basis)) return { by: actor.basis };
   for (const [fp, alert] of alerts ?? []) {
+    // The approved release itself is not covered by its own approval: it
+    // publishes through that approval, with its moderator on the record.
+    if (fp === fingerprint) continue;
     if (alert?.event !== "approval" || alert.token_hash !== lineHash || !isStr(alert.held_decision_id)) continue;
     if (denied?.has(fp)) continue;
     const held = records.find((r) => r?.decision_id === alert.held_decision_id && r?.state === "held");
@@ -1240,7 +1243,7 @@ export function decideSubmission(input) {
     if (binding.outcome === "one") {
       firstCleared = firstBindingCleared({
         actor: verified.actor, verdict, lineHash, records, alerts: git.alerts, denied: git.denied, oks: git.oks,
-        ids: identity, pluginId: verified.plugin_id,
+        ids: identity, pluginId: verified.plugin_id, fingerprint: verified.fingerprint,
       });
       if (!firstCleared) heldCodes.push("R_FIRST_BINDING");
     }
