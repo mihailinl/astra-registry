@@ -278,7 +278,7 @@ runs:
         # by bot/alert.mjs; an unreadable one is "never paged". A drill's page
         # is an event BOT-86 counts, so a drill never takes one.
         state_args=()
-        if [ -n "$ASTRA_ALERT_STATE" ]; then
+        if [ -n "${ASTRA_ALERT_STATE:-}" ]; then
           if [ -n "$ASTRA_ALERT_ACK_CHECK" ]; then
             echo "::error::a state was handed to an alarm with an acknowledgement check; BOT-86's drill pages every time, and a start signal after a quiet run would escalate a message nobody was sent"
             exit 1
@@ -290,7 +290,7 @@ runs:
         if [ -n "$ASTRA_ALERT_ACK_CHECK" ]; then
           node bot/alert.mjs --verdict "$ASTRA_ALERT_VERDICT" --if-red --ack
         else
-          node bot/alert.mjs --verdict "$ASTRA_ALERT_VERDICT" --if-red "${state_args[@]}"
+          node bot/alert.mjs --verdict "$ASTRA_ALERT_VERDICT" --if-red ${state_args[@]+"${state_args[@]}"}
         fi
         # The start signal follows a DELIVERED alarm, in this same step, and
         # not before it. BOT-86 escalates to KNICE 48 hours after a start with

@@ -1952,7 +1952,9 @@ export async function run() {
       "the alert; it is broken, or the workflow is smaller than what it has to run");
 
     const declared = /ASTRA_SERVED_SET_JOBS:\s*(.+)/.exec(src)?.[1].trim().split(/\s+/) ?? [];
-    const comparisons = jobNames.filter((n) => n !== "alert");
+    // R4 (2026-10-29): the alert job's two secret-less neighbours, which move
+    // its once-per-state memory, compare nothing.
+    const comparisons = jobNames.filter((n) => !["alert", "alert-state", "alert-save"].includes(n));
     assertEqual(comparisons.slice().sort().join(" "), declared.slice().sort().join(" "),
       "the jobs in served-set.yml and the jobs ASTRA_SERVED_SET_JOBS names are not the same set, so a comparison " +
       "either pages for nothing or reports into nothing");

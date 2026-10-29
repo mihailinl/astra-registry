@@ -550,6 +550,9 @@ jobs:
               git show --stat --format='would push %H' HEAD
             else
               retries=0
+              # The tree rule on the exact commit each push below sends: the
+              # first one here, and a redone one in `commit_listed`.
+              node tools/lib/tree-modes.mjs HEAD
               until git push origin HEAD:main; do
                 retries=$((retries + 1))
                 if [ "$retries" -gt 3 ]; then
@@ -562,7 +565,7 @@ jobs:
                 if ! git rebase origin/main; then
                   git rebase --abort || true
                   why="does not rebase cleanly onto the new main"
-                elif [ "$(git rev-list --count origin/main..HEAD)" = 0 ]; then
+                elif [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ]; then
                   why="is no longer there after the rebase: the new main already carries its change"
                 else
                   node tools/lib/tree-modes.mjs HEAD
