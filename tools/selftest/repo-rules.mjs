@@ -340,6 +340,8 @@ export async function run() {
       "requestedAuthority",
       "ripeQueueEntries",
       "slaReport",
+      // Contract 6.7.0: the whole SHA-256 an approval binds, beside the label.
+      "submissionDigest",
       "submissionFingerprint",
       "trackRecord",
     ];

@@ -3472,9 +3472,14 @@ await test("ROLL-25 (3) — text-utils held `R_FIRST_BINDING`, approved, publish
   assertEqual(s.noticeRunning.plan.alert?.event, "approval", "the alert is named at once");
   assertEqual(`${s.undelivered.plan.kind} ${s.undelivered.plan.wait?.code}`, "wait W_ALERT_UNDELIVERED",
     `with the notice window passed, the approval raises TRUST-14's alert and publishes nothing: ${said(s.undelivered.plan)}`);
-  assertEqual(JSON.stringify(s.undelivered.plan.alert),
+  // 6.7.0: the alert also binds the whole digest and the held record it clears.
+  const { digest: alertDigest, held_decision_id: alertHeld, ...alertLabel } = s.undelivered.plan.alert ?? {};
+  assertEqual(JSON.stringify(alertLabel),
     JSON.stringify({ fingerprint: sub.fingerprint, event: "approval", approval_decided_at: s.approvedAt }),
     "the alert does not name this fingerprint's approval");
+  assertEqual(String(alertDigest).slice(0, 16), sub.fingerprint, "the alert's whole digest is not the one its label is cut from");
+  assertEqual(/^[0-9a-f]{64}$/.test(String(alertDigest)) && /^[0-9a-f]{32}$/.test(String(alertHeld)), true,
+    "the alert does not bind the whole digest and the held record (6.7.0)");
   assertEqual(s.undeliveredLanded.changed.length, 0,
     `no delivery was reported and the run wrote ${s.undeliveredLanded.changed.join(", ")}: TRUST-32 counts only from a reported delivery`);
   assertEqual(JSON.stringify(s.deliveredLanded.changed), JSON.stringify([`state/alerts/${sub.fingerprint}.json`]),

@@ -2032,10 +2032,10 @@ import * as serviceDecide from "../lib/service-decide.mjs";
 const WITHDRAWN_APPROVAL_MAX_DAYS = 7;
 import { askJob, claimJob, heldReasonsOnTree, leaseProblems, reportJob, resultBytes, verdictOutcome } from "../lib/service-jobs.mjs";
 import { RESULT_KINDS, recordAgreement, resultBody } from "../lib/service-results.mjs";
-import { ALERT_MEMBERS, ALERT_SCHEMA, HELD_BACK, alertProblems, commitTrailers, composePublication, finalizeResults } from "../lib/service-publish.mjs";
+import { ALERT_MEMBERS, ALERT_REQUIRED, ALERT_SCHEMA, HELD_BACK, alertProblems, commitTrailers, composePublication, finalizeResults } from "../lib/service-publish.mjs";
 import { TRUST14_CODES, mergeAlerts } from "../lib/trust14.mjs";
 import { ACTED_OUTCOMES, VERDICT_VALUES, leaksIn, scanFiles } from "../lib/scan-verdict-leaks.mjs";
-import { submissionFingerprint } from "../lib/policy/release.mjs";
+import { submissionDigest, submissionFingerprint } from "../lib/policy/release.mjs";
 import { cleanEnv } from "../../tools/lib/git-env.mjs";
 import { ACTOR_MISMATCH_FLOOR_DAYS, compareActor } from "../lib/identity.mjs";
 
@@ -2055,6 +2055,10 @@ const P = {
 const hoursBefore = (at, h) => `${new Date(new Date(at).getTime() - h * 3600e3).toISOString().slice(0, 19)}Z`;
 const DIGESTS = [`linux-x64:${P.sha}`];
 const FP = submissionFingerprint({ repo: P.repo, tag: P.tag, id: P.id, version: P.version, commit: P.commit, digests: DIGESTS });
+/** The whole SHA-256 FP is cut from (6.7.0): what an approval, an alert and an OK bind. */
+const FULL = submissionDigest({ repo: P.repo, tag: P.tag, id: P.id, version: P.version, commit: P.commit, digests: DIGESTS });
+/** The six facts every `held` record on `main` carries, from which its digest is derived (6.7.0). */
+const HELD_FACTS = { repo: P.repo, tag: P.tag, plugin_id: P.id, version: P.version, commit: P.commit, artifact_digests: DIGESTS, repository_id: P.rid };
 
 const lease = (over = {}) => ({
   submission_id: P.sid, lease_expires_at: "2026-09-26T13:00:00Z", attempt: "att-1", claimed_from: "received",
@@ -2391,7 +2395,7 @@ test("SERVE-93: an `unavailable` stop status waits for that submission alone; `s
 // accepted more than BOT-28's update window before `P.now`, so the notice gate
 // is not what these runs wait on unless a test says so.
 const transfer = baseline({ repository_owner_id: "2" });
-const heldRecord = (over = {}) => ({ submission_id: P.sid, fingerprint: FP, state: "held", reasons: ["R_IDENTITY_CHANGED"], decided_at: "2026-09-25T00:00:00Z", decision_id: "1".repeat(32), ...over });
+const heldRecord = (over = {}) => ({ ...HELD_FACTS, submission_id: P.sid, fingerprint: FP, state: "held", reasons: ["R_IDENTITY_CHANGED"], decided_at: "2026-09-25T00:00:00Z", decision_id: "1".repeat(32), ...over });
 const approval = (over = {}) => ({ code: "M_APPROVE", category: "review_passed", decided_at: "2026-09-26T08:00:00Z", moderator: "mod-7", declared_interest: false, ...over });
 const approvedRun = (over = {}) => decideWith({
   lease: { claimed_from: "approved" },
@@ -2403,7 +2407,9 @@ const approvedRun = (over = {}) => decideWith({
 test("TRUST-14/TRUST-32: the three-run sequence — alert only, then the window, then publish", () => {
   const first = approvedRun();
   assert.equal(first.kind, "wait", `run 1 names the alert and publishes nothing: ${first.kind} ${first.state ?? ""}`);
-  assert.deepEqual(first.alert, { fingerprint: FP, event: "approval", approval_decided_at: approval().decided_at });
+  assert.deepEqual(first.alert, {
+    fingerprint: FP, event: "approval", approval_decided_at: approval().decided_at, digest: FULL, held_decision_id: "1".repeat(32),
+  });
   const rec = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: approval().decided_at, delivered_at: "2026-09-26T11:00:00Z", run: "1/1" };
   const second = approvedRun({ alerts: new Map([[FP, rec]]) });
   assert.equal(second.kind, "wait");
@@ -2705,9 +2711,108 @@ test("BOT-28 (5.8.0): `ask` does not ask notice status for an exempt hold, and a
 // instead of its file name — the disagreeing file is honoured.
 const okFor = (over = {}) => ({
   schema: OK_SCHEMA, fingerprint: FP, approval_decided_at: approval().decided_at,
-  run: "https://github.com/mihailinl/astra-registry/actions/runs/1", at: "2026-09-26T11:30:00Z", ...over,
+  run: "https://github.com/mihailinl/astra-registry/actions/runs/1", at: "2026-09-26T11:30:00Z",
+  digest: over.fingerprint && over.fingerprint !== FP ? over.fingerprint.repeat(4) : FULL, held_decision_id: "1".repeat(32), ...over,
 });
 const runningWindow = () => alertsFor(approval().decided_at, hoursBefore(P.now, 1));
+
+// ── 6.7.0 (BOT-26, TRUST-32): the 64-bit label binds nothing ───────────────
+//
+// Adversarial review, 2026-10-29: an author controls both releases of a
+// collision. A deterministic build and a ground commit message give two of
+// its own releases one 16-hex label in about 2^32 hashes a side; it gets the
+// benign one approved and re-tags the other under the same label, and
+// `honourApproval`, `operatorWindow` and `okAnswers` compared the label alone.
+// No real 64-bit collision is in reach of a test, so the colliding release is
+// one whose WHOLE digest shares the label's 16 hex and differs after them —
+// exactly what a collision is to every comparison here.
+//
+// Watched red (each by hand): `honourApproval` without the digest comparison
+// clears the twin; `operatorWindow` without `otherBytes` counts the twin's
+// window from the first release's alert; `okAnswers` without the digest
+// comparison ends the twin's window with the first release's OK; the held
+// record's digest taken from a member instead of derived from its facts.
+const TWIN = `${FP}${"f".repeat(48)}`;
+test("6.7.0: an approval of one release does not clear another that shares its 64-bit label; an exact match still clears", () => {
+  assert.notEqual(TWIN, FULL);
+  assert.equal(TWIN.slice(0, 16), FULL.slice(0, 16), "the fixture: the twin shares the label");
+  const base = { decisions: [approval()], fingerprint: FP, heldRecord: heldRecord(), heldCodes: ["R_IDENTITY_CHANGED"], now: P.now, repositoryId: P.rid };
+  const exact = honourApproval({ ...base, digest: FULL });
+  assert.ok(exact.approval, `the exact release's approval was not honoured: ${exact.why}`);
+  assert.equal(exact.digest, FULL);
+  assert.equal(exact.held_decision_id, "1".repeat(32));
+  const twin = honourApproval({ ...base, digest: TWIN });
+  assert.equal(twin.approval, null, "the approval of one release cleared another that shares only its label");
+  assert.match(twin.why, /share the 64-bit label/);
+  const labelOnly = honourApproval({ ...base, digest: null });
+  assert.equal(labelOnly.approval, null, "a label with no digest to compare honoured an approval");
+  const neither = honourApproval({ ...base, heldRecord: heldRecord({ artifact_digests: undefined }), digest: null });
+  assert.equal(neither.approval, null, "a hold with no derivable digest and a run with none matched on the label");
+  const otherFacts = honourApproval({ ...base, heldRecord: heldRecord({ commit: "c".repeat(40) }), digest: FULL });
+  assert.equal(otherFacts.approval, null, "a held record whose facts are not its label's was bound to");
+  const otherRepo = honourApproval({ ...base, digest: FULL, repositoryId: "999" });
+  assert.equal(otherRepo.approval, null, "a held record of another repository id cleared this release");
+});
+
+test("6.7.0: the operator window and an OK bind the whole digest and the held record", () => {
+  const alert = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: approval().decided_at,
+    delivered_at: hoursBefore(P.now, 1), run: "1/1", digest: FULL, held_decision_id: "1".repeat(32) };
+  const args = { record: alert, fingerprint: FP, event: "approval", approvalDecidedAt: approval().decided_at, now: P.now };
+  const running = operatorWindow({ ...args, digest: FULL, heldDecisionId: "1".repeat(32) });
+  assert.equal(running.wait?.code, "W_OPERATOR_WINDOW", "the fixture's window is running");
+  const twin = operatorWindow({ ...args, digest: TWIN, heldDecisionId: "1".repeat(32) });
+  assert.ok(twin.name, "the twin's window was counted from another release's alert");
+  assert.equal(twin.name.digest, TWIN, "the alert the twin raises does not bind its own digest");
+  const otherHold = operatorWindow({ ...args, digest: FULL, heldDecisionId: "2".repeat(32) });
+  assert.ok(otherHold.name, "an alert for another held record counted for this one");
+  const ok = okFor();
+  assert.equal(operatorWindow({ ...args, ok, digest: FULL, heldDecisionId: "1".repeat(32) }).okd, true, "an exact OK did not end the window");
+  assert.equal(okAnswers({ ok, record: alert, fingerprint: FP, digest: TWIN, heldDecisionId: "1".repeat(32) }), false,
+    "an OK of one release ended the window of another sharing its label");
+  // A record from before 6.7.0 carries no digest: it is read for the release
+  // `honourApproval` bound by the whole digest, and no OK can answer it.
+  const old = (({ digest, held_decision_id, ...rest }) => rest)(alert);
+  assert.equal(operatorWindow({ ...args, record: old, digest: FULL, heldDecisionId: "1".repeat(32) }).wait?.code, "W_OPERATOR_WINDOW");
+  const labelOk = (({ digest, held_decision_id, ...rest }) => rest)(ok);
+  assert.ok(okRecordProblems(labelOk, { fingerprint: FP }).length > 0, "an OK that names only the label is read");
+  assert.ok(okRecordProblems({ ...ok, digest: TWIN.replace(/^./, "0") }, { fingerprint: FP }).length > 0, "an OK whose digest is not its label's is read");
+});
+
+test("6.7.0: the operator's `ok` act copies the alert's digest and held record, and refuses an alert that has none", async () => {
+  const { operatorAct } = await import("../../tools/operator.mjs");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-okact-"));
+  try {
+    fs.mkdirSync(path.join(dir, "state", "alerts"), { recursive: true });
+    const alert = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: approval().decided_at,
+      delivered_at: hoursBefore(P.now, 1), run: "1/1" };
+    const put = (doc) => fs.writeFileSync(path.join(dir, "state", "alerts", `${FP}.json`), JSON.stringify(doc));
+    const { OK_ACTOR_IDS } = await import("../lib/operator-role.mjs");
+    const act = () => operatorAct({ root: dir, act: "ok", fingerprint: FP, now: new Date(P.now), runId: "7", run: "https://github.com/mihailinl/astra-registry/actions/runs/7", actorId: OK_ACTOR_IDS[0] });
+    put(alert);
+    assert.throws(act, /predates contract 6\.7\.0/, "an OK was written for an alert that binds only the label");
+    assert.equal(fs.existsSync(path.join(dir, "state", "ok", `${FP}.json`)), false);
+    put({ ...alert, digest: FULL, held_decision_id: "1".repeat(32) });
+    act();
+    const ok = JSON.parse(fs.readFileSync(path.join(dir, "state", "ok", `${FP}.json`), "utf8"));
+    assert.deepEqual([ok.digest, ok.held_decision_id], [FULL, "1".repeat(32)]);
+    assert.deepEqual(okRecordProblems(ok, { fingerprint: FP }), []);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("6.7.0: end to end, a held record carrying this label over other facts clears nothing", () => {
+  const exact = boundRun({ ...renamed() });
+  assert.equal(exact.state, "published", `the exact release did not publish: ${exact.kind} ${exact.wait?.code ?? ""}`);
+  const twin = decideWith({
+    lease: { claimed_from: "approved" },
+    verified: verified({ binding: renamed().line, owner_file: { commit: "9".repeat(40), pull_request: false } }),
+    ask: ask({ verdict: "pass", gates: { stop_status: "no_stop", decisions: [approval()] }, notice: { kind: "approved", status: "pending" } }),
+    git: git({ existing: existing({ identity: renamed().identity }), records: [baseline(), heldRecord({ commit: "c".repeat(40), reasons: renamed().heldReasons })], alerts: alertsFor() }),
+  });
+  assert.notEqual(twin.state, "published", "an approval bound by the label alone published a release");
+  assert.ok((twin.reasons ?? []).some((r) => r.code === "P_APPROVAL_STALE"), `no P_APPROVAL_STALE: ${JSON.stringify(twin.reasons)}`);
+});
 
 test("TRUST-32 (5.8.0): an operator OK for the alert's approval ends the operator window", () => {
   const waiting = boundRun({ ...renamed(), alerts: runningWindow() });
@@ -3296,7 +3401,7 @@ test("BOT-36: a record already on main is not written again, and the result name
 //     of the fingerprint (the historical re-hold): the second test's floor
 //     restarts — red there.
 
-import { readGitState } from "../lib/service-decide.mjs";
+import { honourApproval, okAnswers, okRecordProblems, operatorWindow, readGitState } from "../lib/service-decide.mjs";
 import { decisionId, keyDomain as keyDomainOf, submissionKey } from "../lib/decisions.mjs";
 
 /** A registry tree whose `main` already holds MIG-20's baseline for the listing, which TRUST-23 holds against. */
@@ -3424,7 +3529,7 @@ test("BOT-34: with a re-hold on main, TRUST-27's wait and MIG-31's floor still c
   const lapsedAt = hoursBefore(P.now, (ACTOR_MISMATCH_FLOOR_DAYS + WITHDRAWN_APPROVAL_MAX_DAYS + 3) * 24);
   const reheldAt = hoursBefore(P.now, 48);
   const givenAt = hoursBefore(P.now, 24);
-  const A = { schema: "astra.registry.decision/1", submission_id: P.sid, fingerprint: FP, state: "held", reasons: ["R_FIRST_BINDING"], decided_at: firstAt,
+  const A = { schema: "astra.registry.decision/1", ...HELD_FACTS, submission_id: P.sid, fingerprint: FP, state: "held", reasons: ["R_FIRST_BINDING"], decided_at: firstAt,
     decision_id: decisionId(submissionKey({ submission_id: P.sid, fingerprint: FP, state: "held" })) };
   const B = { ...A, reasons: ["R_FIRST_BINDING", "P_APPROVAL_STALE"], decided_at: reheldAt,
     decision_id: decisionId(submissionKey({ submission_id: P.sid, fingerprint: FP, state: "held", after: lapsedAt })) };
@@ -3691,7 +3796,7 @@ test("TRUST-14: schema/alert-v1.json types exactly the record the composer write
   const { runValidation } = await import("../../tools/validate.mjs");
   const schema = loadSchemas(REPO_ROOT).alert;
   assert.ok(schema, "schema/alert-v1.json is not loaded by loadSchemas");
-  assert.deepEqual([...schema.required].sort(), [...ALERT_MEMBERS].sort(), "the schema's required members are ALERT_MEMBERS");
+  assert.deepEqual([...schema.required].sort(), [...ALERT_REQUIRED].sort(), "the schema's required members are ALERT_REQUIRED");
   assert.deepEqual(Object.keys(schema.properties).sort(), [...ALERT_MEMBERS].sort(), "and its properties are exactly them");
   const good = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: "2026-09-26T11:00:00Z", delivered_at: "2026-09-26T12:00:05Z", run: "5/1" };
   const cases = [
@@ -3709,13 +3814,16 @@ test("TRUST-14: schema/alert-v1.json types exactly the record the composer write
     ["a delivered_at with a fraction", { ...good, delivered_at: "2026-09-26T12:00:05.5Z" }],
     ["a run that is not a run id", { ...good, run: "five" }],
     ["another schema", { ...good, schema: "astra.registry.alert/2" }],
+    // 6.7.0: the whole digest and the held record, written on every new record.
+    ["a 6.7.0 record", { ...good, digest: FULL, held_decision_id: "1".repeat(32) }],
+    ["a digest cut to the label", { ...good, digest: FP, held_decision_id: "1".repeat(32) }],
   ];
   for (const [what, doc] of cases) {
     const bySchema = validate(schema, doc).length === 0;
     const byComposer = alertProblems(doc).length === 0;
     assert.equal(bySchema, byComposer, `${what}: the schema says ${bySchema ? "valid" : "invalid"} and alertProblems says ${byComposer ? "valid" : "invalid"}`);
   }
-  assert.equal(cases.filter(([, d]) => alertProblems(d).length === 0).length, 2, "the table holds two valid records and ten refusals");
+  assert.equal(cases.filter(([, d]) => alertProblems(d).length === 0).length, 3, "the table holds three valid records and eleven refusals");
   // The validator on a tree: the good record passes, an unnamed member and a
   // day that does not exist are refused, each by name.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-alert-schema-"));
@@ -4107,7 +4215,7 @@ test("BOT-23: a `reported` result whose record is not on main is held back, neve
 // order half is red.
 test("BOT-28: `ask` and `decide` read one union of every held record of the fingerprint, whatever order the tree lists them in", () => {
   const firstId = decisionId(submissionKey({ submission_id: P.sid, fingerprint: FP, state: "held" }));
-  const A = { submission_id: P.sid, fingerprint: FP, state: "held", reasons: ["R_IDENTITY_CHANGED"], decided_at: "2026-09-20T00:00:00Z", decision_id: firstId };
+  const A = { ...HELD_FACTS, submission_id: P.sid, fingerprint: FP, state: "held", reasons: ["R_IDENTITY_CHANGED"], decided_at: "2026-09-20T00:00:00Z", decision_id: firstId };
   const B = { ...A, reasons: ["R_IDENTITY_CHANGED", "R_BINDING_CHANGED"], decided_at: "2026-09-22T00:00:00Z", decision_id: "0".repeat(32) };
   const C = { ...A, decision_id: "f".repeat(32) };
   const expected = ["R_BINDING_CHANGED", "R_IDENTITY_CHANGED"];

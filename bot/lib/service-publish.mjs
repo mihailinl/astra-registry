@@ -44,8 +44,10 @@ import { isTime } from "../../tools/lib/time.mjs";
 
 /** `astra.registry.alert/1` (registry-only; TRUST-14's record). */
 export const ALERT_SCHEMA = "astra.registry.alert/1";
-/** Its members, exactly (registry plan B-T3.3b). */
-export const ALERT_MEMBERS = Object.freeze(["schema", "fingerprint", "event", "approval_decided_at", "delivered_at", "run"]);
+/** Its members, exactly (registry plan B-T3.3b), the last two since contract 6.7.0 and written on every new record. */
+export const ALERT_MEMBERS = Object.freeze(["schema", "fingerprint", "event", "approval_decided_at", "delivered_at", "run", "digest", "held_decision_id"]);
+/** The members every record carries; the other two are written from 6.7.0 on and absent before it. */
+export const ALERT_REQUIRED = Object.freeze(ALERT_MEMBERS.slice(0, 6));
 
 const RUN_RE = /^[0-9]{1,20}(?:\/[0-9]{1,5})?$/;
 const PRESENTATION = /^(README\.md|icon\.(png|webp|svg|jpg|jpeg|ico))$/;
@@ -69,6 +71,11 @@ export function alertProblems(doc) {
   if (!isTime(doc.approval_decided_at)) p.push("approval_decided_at");
   if (!isTime(doc.delivered_at)) p.push("delivered_at");
   if (!RUN_RE.test(String(doc.run))) p.push("run");
+  // 6.7.0: optional, because a record from before carries neither; the gate
+  // reads a record carrying one and not the other as an alert about other
+  // bytes (`operatorWindow`), which errs toward a new alert.
+  if ("digest" in doc && !/^[0-9a-f]{64}$/.test(String(doc.digest))) p.push("digest");
+  if ("held_decision_id" in doc && !/^[0-9a-f]{32}$/.test(String(doc.held_decision_id))) p.push("held_decision_id");
   return p;
 }
 
@@ -217,6 +224,9 @@ export function composePublication({ plans, root, listingsDir, reportsDir, deliv
         approval_decided_at: plan.alert.event === "approval" ? plan.alert.approval_decided_at : null,
         delivered_at: deliveredAt,
         run,
+        // 6.7.0: what the alert binds, beyond the 64-bit label it is filed under.
+        digest: plan.alert.digest,
+        held_decision_id: plan.alert.held_decision_id,
       };
       const problems = alertProblems(doc);
       if (problems.length) throw new Error(`an alert record this run composed is malformed: ${problems.join(", ")}`);

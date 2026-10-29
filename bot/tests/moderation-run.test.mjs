@@ -3988,8 +3988,10 @@ test("M-T3.5: a deny is TRUST-33's four members, written once, and names a finge
 // taken from anywhere but the alert — the record's value disagrees.
 const OWNER_ID = "193032699";
 function alertOnTree(root, fp, over = {}) {
+  // 6.7.0: every alert written binds the whole digest (whose first 16 hex are
+  // the label) and the held record it cleared.
   const rec = { schema: "astra.registry.alert/1", fingerprint: fp, event: "approval", approval_decided_at: "2026-09-23T10:00:00Z",
-    delivered_at: "2026-09-23T10:01:00Z", run: "1/1", ...over };
+    delivered_at: "2026-09-23T10:01:00Z", run: "1/1", digest: `${fp}${"e".repeat(48)}`, held_decision_id: "1".repeat(32), ...over };
   fs.mkdirSync(path.join(root, "state", "alerts"), { recursive: true });
   fs.writeFileSync(path.join(root, "state", "alerts", `${fp}.json`), `${JSON.stringify(rec, null, 2)}\n`);
   return rec;

@@ -93,13 +93,33 @@ export const FINGERPRINT_CHARS = 16;
  * comment rather than typing it, so length costs nothing, and 64 bits puts a
  * deliberate collision (rebuild a bundle until its fingerprint matches the one
  * the maintainer read) far past the effort of simply asking for a second
- * approval. Truncation is safe here for the same reason it would not be in a
- * signature: the full digests are recorded beside it in `decision.json`, and
- * this string is a label on them, not a substitute for them.
+ * approval. That reasoning held against a stranger and failed against the
+ * author, who controls BOTH releases of a collision (`submissionDigest`), so
+ * since contract 6.7.0 this string is a label only: nothing that clears a hold
+ * matches on it alone.
  */
-export function submissionFingerprint({ repo, tag, id, version, commit, digests } = {}) {
+export function submissionFingerprint(facts = {}) {
+  return submissionDigest(facts).slice(0, FINGERPRINT_CHARS);
+}
+
+/**
+ * The whole SHA-256 the fingerprint is the first 16 hex of: what an approval,
+ * an alert record and an operator OK BIND (contract 6.7.0, BOT-26).
+ *
+ * The label above is a name for people, and 64 bits is not a binding against
+ * the one party that controls both sides of a collision: an author can build
+ * two releases of its own — a deterministic build, a commit message ground
+ * until the labels match, about 2^32 hashes per side — get the benign one
+ * approved, and re-tag the other under the same label. Until 6.7.0
+ * `honourApproval` and `operatorWindow` compared the label and nothing else,
+ * so that approval was honoured. Every comparison that clears a hold now
+ * compares this digest, derived on both sides from the six facts (the held
+ * record on `main` carries all six), and a label that matches while the
+ * digest does not clears nothing.
+ */
+export function submissionDigest({ repo, tag, id, version, commit, digests } = {}) {
   const canonical = [repo ?? "", tag ?? "", id ?? "", version ?? "", commit ?? "", ...(digests ?? [])].join("\n");
-  return crypto.createHash("sha256").update(canonical).digest("hex").slice(0, FINGERPRINT_CHARS);
+  return crypto.createHash("sha256").update(canonical).digest("hex");
 }
 
 // ── the decision ────────────────────────────────────────────────────────────

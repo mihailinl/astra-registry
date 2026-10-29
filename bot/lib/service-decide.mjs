@@ -66,7 +66,7 @@ import { decide } from "./policy/decision.mjs";
 // the registry writes nothing.
 import { alreadyPublished, noListingNoBinding, terminalOnMain } from "../decide.mjs";
 import { CHECK_FACTS_SCHEMA } from "../ingest.mjs";
-import { artifactDigests, submissionFingerprint } from "./policy/release.mjs";
+import { artifactDigests, submissionDigest, submissionFingerprint } from "./policy/release.mjs";
 import { HOUR_MS, iso } from "./policy/time.mjs";
 import { CODES } from "./codes.mjs";
 import { POLICY_CODES } from "./policy/constants.mjs";
@@ -194,7 +194,7 @@ export const ALERT_EVENTS = Object.freeze(["approval"]);
  */
 export const OK_SCHEMA = "astra.registry.ok/1";
 export const OK_DIR = "state/ok";
-export const OK_MEMBERS = Object.freeze(["schema", "fingerprint", "approval_decided_at", "run", "at"]);
+export const OK_MEMBERS = Object.freeze(["schema", "fingerprint", "approval_decided_at", "run", "at", "digest", "held_decision_id"]);
 const OK_RUN_RE = /^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9._-]+\/actions\/runs\/[0-9]+$/;
 
 /** Why `doc` is not an OK record for `fingerprint` (its file name's stem), or `[]`. */
@@ -208,6 +208,13 @@ export function okRecordProblems(doc, { fingerprint }) {
   if (doc.fingerprint !== fingerprint) p.push("the `fingerprint` member is not the fingerprint the file name carries");
   if (!isTime(doc.approval_decided_at)) p.push("approval_decided_at");
   if (!isTime(doc.at)) p.push("at");
+  // Contract 6.7.0: an OK binds the whole digest and the held record, copied
+  // from the alert it answers. One without them (none was ever on `main`) is
+  // not read: an OK shortens a wait, so the side a missing binding errs to is
+  // the window running out by itself.
+  if (!/^[0-9a-f]{64}$/.test(String(doc.digest ?? ""))) p.push("digest");
+  else if (doc.digest.slice(0, 16) !== doc.fingerprint) p.push("a `digest` the fingerprint is not the first 16 hex of");
+  if (!/^[0-9a-f]{32}$/.test(String(doc.held_decision_id ?? ""))) p.push("held_decision_id");
   if (!OK_RUN_RE.test(String(doc.run ?? ""))) p.push("run");
   return p;
 }
@@ -509,6 +516,28 @@ export function id41({ identity, record, lineHash }) {
 // ── the approval (BOT-26) ───────────────────────────────────────────────────
 
 /**
+ * The whole SHA-256 of the six facts a decision record on `main` carries
+ * (`submissionDigest`), or null when they are not all there or do not hash to
+ * the record's own 16-hex label — a record whose label is not its facts' is
+ * not one this bot wrote, and nothing is bound to it. Every `held` record on
+ * `main` carries all six (measured 2026-10-29: the 47 that do not are
+ * `migration` records written before artifact digests were recorded, and none
+ * is a hold), so the digest of the hold an approval clears is DERIVED, never
+ * trusted from a member.
+ */
+export function recordDigest(record) {
+  if (!record || typeof record !== "object") return null;
+  const digests = Array.isArray(record.artifact_digests) ? [...record.artifact_digests].sort() : [];
+  if (!digests.length || !digests.every((d) => DIGEST_RE.test(String(d)))) return null;
+  if (![record.repo, record.tag, record.plugin_id, record.version].every(isStr)) return null;
+  if (!SHA1_RE.test(String(record.commit ?? ""))) return null;
+  const digest = submissionDigest({
+    repo: record.repo, tag: record.tag, id: record.plugin_id, version: record.version, commit: record.commit, digests,
+  });
+  return digest.slice(0, 16) === record.fingerprint ? digest : null;
+}
+
+/**
  * The approval `ask` reported for this fingerprint, held to BOT-26's three
  * conditions and TRUST-27's wait. Returns what `decide()` should be given as
  * its approval, and why anything that arrived was not honoured.
@@ -545,7 +574,7 @@ export function id41({ identity, record, lineHash }) {
  * that took counting BOT-26 (4)'s age from the floor's end; with no age
  * limit it is simply true.
  */
-export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, now, mig31 = null }) {
+export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, now, mig31 = null, digest = null, repositoryId = null }) {
   const approvals = (decisions ?? []).filter((d) => d?.code === "M_APPROVE");
   if (approvals.length === 0) return { approval: null, why: null, decision: null };
   // The newest, by the service's own time. Two approvals of one fingerprint
@@ -558,6 +587,34 @@ export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, 
     return {
       approval: null,
       why: "BOT-26 (1): no record on `main` shows `held` for this fingerprint, so there is no hold for this approval to clear",
+      decision,
+    };
+  }
+  // Contract 6.7.0: the hold is the one these bytes are, by the whole digest.
+  // The 16-hex label is a name: an author who controls both sides of a
+  // collision can give two releases one label, get the benign one approved
+  // and re-tag the other, and a label match alone honoured that approval.
+  const heldDigest = recordDigest(heldRecord);
+  if (!heldDigest || !/^[0-9a-f]{64}$/.test(String(digest ?? ""))) {
+    return {
+      approval: null,
+      why: "BOT-26 (1): the `held` record's whole SHA-256 cannot be derived from its six facts, or this run has none to " +
+        "compare it with, and a 16-hex label alone never honours an approval",
+      decision,
+    };
+  }
+  if (heldDigest !== digest) {
+    return {
+      approval: null,
+      why: `BOT-26 (2): the \`held\` record ${heldRecord.decision_id ?? ""} is for SHA-256 ${heldDigest} and this release is ` +
+        `${digest}; they share the 64-bit label ${fingerprint} and nothing else, so the approval of one does not clear the other`,
+      decision,
+    };
+  }
+  if (isStr(heldRecord.repository_id) && isStr(repositoryId) && heldRecord.repository_id !== repositoryId) {
+    return {
+      approval: null,
+      why: `BOT-26 (1): the \`held\` record names repository ${heldRecord.repository_id} and this release comes from ${repositoryId}`,
       decision,
     };
   }
@@ -619,6 +676,9 @@ export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, 
     },
     why: null,
     decision,
+    // What TRUST-14's alert and an operator OK bind (6.7.0).
+    digest,
+    held_decision_id: heldRecord.decision_id ?? null,
   };
 }
 
@@ -722,13 +782,26 @@ export function noticeElapsed({ notice, windowSeconds, bindingChanged, now }) {
  *
  * @returns {{ok: boolean, name: object|null, wait: object|null}}
  */
-export function operatorWindow({ record, fingerprint, event, approvalDecidedAt, now, ok = null, hintFrom = now }) {
-  if (!record || record.event !== event || (event === "approval" && record.approval_decided_at !== approvalDecidedAt)) {
+export function operatorWindow({
+  record, fingerprint, event, approvalDecidedAt, now, ok = null, hintFrom = now, digest = null, heldDecisionId = null,
+}) {
+  // Contract 6.7.0: an alert record from 6.7.0 on binds the whole digest, and
+  // one that names another digest under the same 16-hex label is an alert
+  // about other bytes — this release's alert has not gone out. A record from
+  // before carries none; it is read for the release whose approval
+  // `honourApproval` has already bound by the whole digest to its held record,
+  // which is the only way this function is reached, and its
+  // `approval_decided_at` ties it to that approval.
+  const otherBytes = record && "digest" in record && (record.digest !== digest || record.held_decision_id !== heldDecisionId);
+  if (!record || otherBytes || record.event !== event || (event === "approval" && record.approval_decided_at !== approvalDecidedAt)) {
     // First read of this event: TRUST-14 names it, and this run cannot publish
     // it — the window is counted from a delivery that has not happened yet.
     return {
       ok: false,
-      name: { fingerprint, event, approval_decided_at: event === "approval" ? approvalDecidedAt : null },
+      name: {
+        fingerprint, event, approval_decided_at: event === "approval" ? approvalDecidedAt : null,
+        digest, held_decision_id: heldDecisionId,
+      },
       wait: null,
     };
   }
@@ -743,7 +816,7 @@ export function operatorWindow({ record, fingerprint, event, approvalDecidedAt, 
   // else: it is read only here, after the delivery check above, so it never
   // ends `W_ALERT_UNDELIVERED`, and the deny record, the stop and every other
   // wait are decided elsewhere and before.
-  if (okAnswers({ ok, record, fingerprint })) return { ok: true, name: null, wait: null, okd: true };
+  if (okAnswers({ ok, record, fingerprint, digest, heldDecisionId })) return { ok: true, name: null, wait: null, okd: true };
   const due = new Date(record.delivered_at).getTime() + OPERATOR_WINDOW_HOURS * HOUR_MS;
   if (due > new Date(now).getTime()) {
     return {
@@ -767,9 +840,13 @@ export function operatorWindow({ record, fingerprint, event, approvalDecidedAt, 
  * earlier approval of the same fingerprint answers an alert that is no longer
  * the one on `main`.
  */
-export function okAnswers({ ok, record, fingerprint }) {
+export function okAnswers({ ok, record, fingerprint, digest = null, heldDecisionId = null }) {
   if (!ok || !record) return false;
   if (okRecordProblems(ok, { fingerprint }).length) return false;
+  // 6.7.0: the OK, the alert it answers and this release are one digest and
+  // one held record; a label in common is not enough to shorten a window.
+  if (ok.digest !== digest || ok.held_decision_id !== heldDecisionId) return false;
+  if ("digest" in record && (record.digest !== ok.digest || record.held_decision_id !== ok.held_decision_id)) return false;
   return isTime(record.approval_decided_at) && ok.approval_decided_at === record.approval_decided_at;
 }
 
@@ -960,6 +1037,11 @@ export function decideSubmission(input) {
   // reported, so a verify job that got one of the six wrong disagrees with
   // itself before anything is written under its name.
   const recomputed = submissionFingerprint({
+    repo: verified.repo, tag: verified.tag, id: verified.plugin_id, version: verified.version,
+    commit: verified.commit, digests: derivedFacts.artifact_digests,
+  });
+  // The whole SHA-256 the label is cut from: what an approval binds (6.7.0).
+  const digest = submissionDigest({
     repo: verified.repo, tag: verified.tag, id: verified.plugin_id, version: verified.version,
     commit: verified.commit, digests: derivedFacts.artifact_digests,
   });
@@ -1178,6 +1260,8 @@ export function decideSubmission(input) {
     heldRecord,
     heldCodes: heldRecord?.reasons ?? heldCodes,
     now,
+    digest,
+    repositoryId: verified.repository_id,
     // MIG-31's scope: a grandfathered or frozen listing's first binding.
     mig31: {
       applies: ["grandfathered", "frozen"].includes(listingState?.state) && binding.outcome === "one",
@@ -1433,6 +1517,8 @@ export function decideSubmission(input) {
       now,
       ok: git.oks?.get(verified.fingerprint) ?? null,
       hintFrom: startedAt,
+      digest,
+      heldDecisionId: honoured.held_decision_id ?? null,
     });
     if (w.name) {
       return plan("wait", {
