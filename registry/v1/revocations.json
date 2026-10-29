@@ -3,14 +3,33 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "GUy8/du5PaSWxo010ugfsYb6spChWl9R517ETmanMqbq2coQjIHhOQA8JbVM18+MT3Nu5AKCjXwNIZnjzx1+Dg=="
+      "sig": "e/2R+7UDsCFa+z9fzigAw5bBlLnNx2xqD3W7dLTCdsSGy6hvABYvF4t+BXndypyHhIUcXpQQU+38+A9+YKg7Dg=="
     }
   ],
   "signed": {
-    "expires_at": "2026-11-04T18:53:57Z",
-    "issued_at": "2026-10-28T18:53:57Z",
-    "revocations": [],
+    "expires_at": "2026-11-05T03:11:15Z",
+    "issued_at": "2026-10-29T03:11:15Z",
+    "revocations": [
+      {
+        "action": "disable",
+        "advisory_url": "https://astra.minice.ai/plugins/_/advisories/ASTRA-2026-0002",
+        "id": "ASTRA-2026-0002",
+        "kind": "digest",
+        "reason": "Using all ai limits, sends request every minute.",
+        "severity": "moderate",
+        "value": "6dd0d947271c7c5d40fbcd2907c3b7aee581ab029b918ad3640c76a8baeac513"
+      },
+      {
+        "action": "disable",
+        "advisory_url": "https://astra.minice.ai/plugins/_/advisories/ASTRA-2026-0002",
+        "id": "ASTRA-2026-0002",
+        "kind": "id_version",
+        "reason": "Using all ai limits, sends request every minute.",
+        "severity": "moderate",
+        "value": "game-companion@0.1.1"
+      }
+    ],
     "schema": "astra.registry.revocations/1",
-    "serial": 16
+    "serial": 17
   }
 }
