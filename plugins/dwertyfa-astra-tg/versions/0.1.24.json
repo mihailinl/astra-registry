@@ -1,0 +1,37 @@
+{
+  "$comment": "Derived from dwertyfa288/dwertyfa-astra-tg@v0.1.24. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "dwertyfa-astra-tg",
+  "version": "0.1.24",
+  "published_at": "2026-10-29T05:01:32Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "dwertyfa288/dwertyfa-astra-tg",
+    "tag": "v0.1.24",
+    "commit": "80141b05b30da0d81513935b47367bc1263b49c4"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.24/dwertyfa-astra-tg-0.1.24-noarch.astraplugin",
+      "filename": "dwertyfa-astra-tg-0.1.24-noarch.astraplugin",
+      "sha256": "4c338a277ffe461b6efdc2d36a30d57d98e792c25ff1c1a110a5a5a36c4b9e79",
+      "size": 3912727
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "actions",
+    "tools",
+    "triggers",
+    "ui_contributions"
+  ],
+  "permissions": {
+    "fire_trigger": {
+      "reason": "Starts your Telegram announcement command when a selected chat receives a message"
+    },
+    "send_chat_message": {
+      "reason": "Chooses one of your saved auto-replies when an incoming Telegram message matches multiple rules"
+    }
+  }
+}
