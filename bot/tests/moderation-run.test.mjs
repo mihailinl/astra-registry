@@ -1789,7 +1789,41 @@ function concurrentPush(origin, files, message, when) {
   return headOf(origin);
 }
 
-test("R6: a push rejected because main moved is rebased, re-checked and pushed; a conflict or a moved serial pushes nothing", async () => {
+/**
+ * The redo's gates, in a fixture: the gate steps run `tools/…` and
+ * `bot/moderation.mjs` out of the checkout, which a fixture does not have, so
+ * each is a stub that records it ran and exits with `ASTRA_TEST_GATE_FAIL`'s
+ * verdict for its name. Excluded from the tree like `withTreeRule`'s copies.
+ * The real gates are held to refusing by their own suites; here the question
+ * is only whether the redo runs every one, and stops on a red one.
+ */
+const GATE_STUBS = ["tools/build-index.mjs", "tools/build-revocations.mjs", "tools/validate.mjs", "tools/selftest.mjs", "bot/moderation.mjs"];
+function withGateStubs(root) {
+  const ran = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-gates-")), "ran.txt");
+  tmpRoots.push(path.dirname(ran));
+  for (const rel of GATE_STUBS) {
+    fs.mkdirSync(path.join(root, path.dirname(rel)), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), `import fs from "node:fs";
+fs.appendFileSync(${JSON.stringify(ran)}, ${JSON.stringify(rel)} + " " + process.argv.slice(2).join(" ") + "\\n");
+process.exit((process.env.ASTRA_TEST_GATE_FAIL ?? "") === ${JSON.stringify(rel)} ? 1 : 0);
+`);
+    fs.appendFileSync(path.join(root, ".git", "info", "exclude"), `/${rel}\n`);
+  }
+  return () => (fs.existsSync(ran) ? fs.readFileSync(ran, "utf8").split("\n").filter(Boolean) : []);
+}
+
+/** The compile step's inputs, as the `apply` step's `env:` hands them to a redo. */
+const compileEnv = ({ entries = [], settled = "[]", shadow = false } = {}) => ({
+  ASTRA_ENTRIES: JSON.stringify(entries),
+  ASTRA_SUBMISSIONS: "[]",
+  ASTRA_REFUSED: "[]",
+  ASTRA_SHADOW: shadow ? "true" : "false",
+  ASTRA_SETTLED: typeof settled === "string" ? settled : JSON.stringify(settled),
+  ASTRA_DELIVERED_AT: "",
+  GITHUB_RUN_ID: "35502265394",
+});
+
+test("R6: a push rejected because main moved is rebased, re-checked and pushed; a conflict or a moved serial is compiled again and lands", async () => {
   // Main moves on a file this commit does not touch: rebased and pushed.
   const root = withDocuments(estate());
   const origin = withRemote(root);
@@ -1804,27 +1838,145 @@ test("R6: a push rejected because main moved is rebased, re-checked and pushed; 
   assert.equal(sh(["rev-parse", `${landed}^`], root).trim(), theirs, "the moderation commit was not rebased onto the commit that beat it");
   assert.match(sh(["log", "-1", "--format=%B", landed], root), new RegExp(`^Service-Decision: ${SDI}$`, "m"));
 
-  // Main moved on the same document: the rebase conflicts, nothing is pushed.
+  // Main moved on the same document: the rebase conflicts, the compile runs
+  // again over the new main with every gate, and what it produces lands.
   const clash = withDocuments(estate());
   const clashOrigin = withRemote(clash);
+  const clashGates = withGateStubs(clash);
   assert.equal((await commitJob(clash, { entries: [delistOf(SDI)] })).code, 0);
   const index = JSON.parse(fs.readFileSync(path.join(clash, INDEX_FILE), "utf8"));
   const moved = concurrentPush(clashOrigin, { [INDEX_FILE]: { ...index, $comment: "another writer" } }, "registry: publish", "2026-09-20T12:31:00Z");
-  const refused = runApply(clash);
-  assert.notEqual(refused.status, 0, "a commit that does not rebase cleanly was pushed");
-  assert.equal(headOf(clashOrigin), moved, "something was pushed over the conflicting commit");
+  const redone = runApply(clash, compileEnv({ entries: [delistOf(SDI)] }));
+  assert.equal(redone.status, 0, `a conflicting rebase was not compiled again: ${redone.stderr} ${redone.stdout}`);
+  assert.match(redone.stdout + redone.stderr, /the compile runs again against the new main/);
+  assert.equal(sh(["rev-parse", `${headOf(clashOrigin)}^`], clash).trim(), moved, "the redone commit is not on top of the commit that beat it");
+  assert.equal(redone.outputs.main_commit, headOf(clashOrigin));
+  assert.match(sh(["log", "-1", "--format=%B", headOf(clashOrigin)], clash), new RegExp(`^Service-Decision: ${SDI}$`, "m"));
+  assert.deepEqual(clashGates().map((l) => l.split(" ")[0]), GATE_STUBS, "the redo did not run every gate, once, in order");
 
-  // Main moved under the withdrawal list's serial: rebased cleanly, refused by the re-check.
+  // A redo whose gate is red pushes nothing and fails the step.
+  const red = withDocuments(estate());
+  const redOrigin = withRemote(red);
+  withGateStubs(red);
+  assert.equal((await commitJob(red, { entries: [delistOf(SDI)] })).code, 0);
+  const redIndex = JSON.parse(fs.readFileSync(path.join(red, INDEX_FILE), "utf8"));
+  const redMoved = concurrentPush(redOrigin, { [INDEX_FILE]: { ...redIndex, $comment: "another writer" } }, "registry: publish", "2026-09-20T12:31:00Z");
+  const refused = runApply(red, { ...compileEnv({ entries: [delistOf(SDI)] }), ASTRA_TEST_GATE_FAIL: "tools/validate.mjs" });
+  assert.notEqual(refused.status, 0, "a redo whose rules gate is red was pushed");
+  assert.equal(headOf(redOrigin), redMoved, "something was pushed past a red gate");
+
+  // Main moved under the withdrawal list's serial: rebased cleanly, the
+  // re-check refuses the stale list, and the compile runs again at the serial
+  // the landing commit gets.
   const serial = withDocuments(estate());
   const serialOrigin = withRemote(serial);
+  withGateStubs(serial);
   const revoke = decision({ code: "M_REVOKE", category: "security_defect", severity: "high", action: "block_install", moderator: "amoderator", versions: ["1.0.0"] });
   assert.equal((await commitJob(serial, { entries: [revoke] })).code, 0);
   const advanced = concurrentPush(serialOrigin, { "tools/revocations/README.md": "a note beside the advisories\n" }, "docs", "2026-09-20T12:31:00Z");
-  const stale = runApply(serial);
-  assert.notEqual(stale.status, 0,
-    "a rebased commit whose withdrawal list claims a serial the landing commit does not get was pushed");
-  assert.match(`${stale.stdout}${stale.stderr}`, /revocations\.json at HEAD is not what the generator produces/);
-  assert.equal(headOf(serialOrigin), advanced);
+  const restaled = runApply(serial, compileEnv({ entries: [revoke] }));
+  assert.equal(restaled.status, 0, `a moved serial was not compiled again: ${restaled.stderr} ${restaled.stdout}`);
+  assert.match(`${restaled.stdout}${restaled.stderr}`, /revocations\.json at HEAD is not what the generator produces/);
+  assert.equal(sh(["rev-parse", `${headOf(serialOrigin)}^`], serial).trim(), advanced);
+  const atHead = spawnSync(process.execPath, [path.join(REPO, "bot", "moderation-run.mjs"), "--job", "documents-at-head", "--registry-dir", serial],
+    { cwd: serial, encoding: "utf8", env: fixtureEnv(serial) });
+  assert.equal(atHead.status, 0, `the redone commit's list is not at the serial it landed at: ${atHead.stderr}`);
+});
+
+// Run 40833642707, 2026-10-29T07:15Z: two moderation runs were handed the
+// same settled result. The first recorded it and landed; the second's commit
+// recorded the same row, its rebase conflicted, the step failed "does not
+// rebase cleanly onto the new main", and the run paged although nothing was
+// wrong. The second run now compiles again over the new main, finds the row
+// recorded, has nothing to commit, and is green.
+test("two runs over the same settled result give one commit and a green second run", async () => {
+  for (const identical of [false, true]) {
+    const ID = hid(identical ? 31 : 30);
+    const { root, sha, origin } = handCancelled([ID], { documents: true, remote: true });
+    const base = headOf(origin);
+    // The second run's checkout is the same commit: its run was queued on it.
+    const peer = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-peer-"));
+    tmpRoots.push(peer);
+    sh(["clone", "-q", origin, peer], os.tmpdir());
+    withGateStubs(root);
+    withGateStubs(peer);
+    const rowA = rowFor(ID, sha[ID]);
+    // Identical rows make the second commit a patch main already has, which
+    // the rebase drops: the work is no longer there. Different rows conflict.
+    const rowB = identical ? rowA : rowFor(ID, sha[ID], {
+      answered_at: "2026-09-21T09:10:00Z", run: "https://github.com/mihailinl/astra-registry/actions/runs/35502265999",
+    });
+
+    const first = await commitJob(root, { entries: [], env: { ASTRA_SETTLED: JSON.stringify([rowA]) } });
+    assert.equal(first.code, 0, first.logs.join("\n"));
+    assert.deepEqual(first.paths, [SETTLED_FILE_PATH]);
+    const one = runApply(root, compileEnv({ settled: [rowA] }));
+    assert.equal(one.status, 0, `${one.stderr} ${one.stdout}`);
+    const landed = headOf(origin);
+    assert.equal(sh(["rev-parse", `${landed}^`], root).trim(), base);
+
+    // Another run, so another run id and another commit message: the two
+    // commits differ though the change may not.
+    const RUN_B = { GITHUB_RUN_ID: "35502265999" };
+    const second = await commitJob(peer, { entries: [], env: { ASTRA_SETTLED: JSON.stringify([rowB]), ...RUN_B } });
+    assert.equal(second.code, 0, second.logs.join("\n"));
+    assert.deepEqual(second.paths, [SETTLED_FILE_PATH], "the second run did not record the row too, so it does not race");
+    const two = runApply(peer, { ...compileEnv({ settled: [rowB] }), ...RUN_B });
+    assert.equal(two.status, 0, `the second run over a settled result is red: ${two.stderr} ${two.stdout}`);
+    assert.match(two.stdout + two.stderr, identical
+      ? /is no longer there after the rebase/
+      : /does not rebase cleanly onto the new main; the compile runs again/);
+    assert.match(two.stdout, /nothing left to commit/);
+    assert.equal(headOf(origin), landed, "the second run pushed a commit over a result the first had already recorded");
+    assert.equal(two.outputs.main_commit, "", "a run that pushed nothing names a commit");
+    const results = JSON.parse(two.outputs.results);
+    assert.deepEqual(results.settled.recorded, [], "the redo recorded the row a second time");
+    const record = JSON.parse(sh(["show", `${landed}:${SETTLED_FILE_PATH}`], root));
+    assert.deepEqual(record.settled.map((r) => r.service_decision_id), [ID], "the record on main holds the row once");
+  }
+});
+
+// The redo is the compile step and the two gate steps again, inside `apply`.
+// Two copies of one list drift; this holds them to one: every gate line the
+// `documents` and `rules` steps run is in the redo, in order, and every input
+// the compile step is handed is in the `apply` step's `env:` with the same
+// expression — a redo missing `ASTRA_SETTLED` would record nothing, and one
+// missing `ASTRA_ENTRIES` would compile an empty list and land nothing.
+test("the redo inside `apply` runs every gate the gate steps run, over the compile step's own inputs", () => {
+  const lines = read(".github/workflows/plugins-moderation.yml").split("\n");
+  const stepBlock = (id) => {
+    const at = lines.findIndex((l) => new RegExp(`^\\s+id: ${id}\\s*$`).test(l));
+    assert.ok(at > 0, `no step \`${id}\``);
+    const indent = lines[at].search(/\S/);
+    let from = at;
+    while (from > 0 && !/^\s+- /.test(lines[from])) from--;
+    const block = [lines[from]];
+    for (let j = from + 1; j < lines.length; j++) {
+      if (lines[j].trim() !== "" && lines[j].search(/\S/) < indent) break;
+      if (/^\s+- /.test(lines[j]) && lines[j].search(/\S/) === indent - 2) break;
+      block.push(lines[j]);
+    }
+    return block;
+  };
+  const envOf = (block) => Object.fromEntries(block
+    .map((l) => /^\s+(ASTRA_[A-Z_]+): (\$\{\{.*\}\})\s*$/.exec(l)).filter(Boolean).map((m) => [m[1], m[2]]));
+  const gateLines = (block) => block.map((l) => l.trim()).filter((l) => /^node (tools|bot)\//.test(l));
+  const want = [...gateLines(stepBlock("documents")), ...gateLines(stepBlock("rules"))];
+  assert.ok(want.length >= 5, `the gate steps run ${want.length} lines; the reader lost them`);
+  const apply = applyStep().split("\n");
+  const from = apply.findIndex((l) => /^\s*redo\(\) \{/.test(l));
+  assert.ok(from >= 0, "the `apply` step has no `redo` function");
+  const to = apply.findIndex((l, i) => i > from && /^\s*\}\s*$/.test(l));
+  const redo = apply.slice(from, to).map((l) => l.trim());
+  assert.deepEqual(redo.filter((l) => /^node (tools|bot)\//.test(l)), want,
+    "the redo's gates are not exactly the gate steps' lines, in order; a redone commit would skip a gate the first one passed");
+  assert.ok(redo.some((l) => /bot\/moderation-run\.mjs" --job commit --registry-dir \. --out moderation$/.test(l)),
+    "the redo does not run the commit job's compile");
+  const compile = envOf(stepBlock("compile"));
+  assert.ok(Object.keys(compile).length >= 5, "the compile step's inputs were not found");
+  assert.deepEqual(envOf(stepBlock("apply")), compile,
+    "the `apply` step is not handed exactly the compile step's inputs, so its redo compiles something else");
+  assert.doesNotMatch(applyStep(), /git push[^\n]*(--force|\s-f\b|\+HEAD)/, "the push may be forced");
 });
 
 test("a run with nothing to commit leaves the commit step nothing to fail on", async () => {

@@ -458,25 +458,52 @@ jobs:
       # identity record) so the rules step reads the index this commit holds;
       # `git add` here takes what is still on disk, and a listed path gone from
       # disk but still in the index is a deletion nothing staged, which fails.
+      #
+      # **A push that `main` moved under is redone, never forced.** R6
+      # (2026-10-29) rebased a rejected commit and re-checked it. The second
+      # of two runs over the SAME settled result (run 40833642707,
+      # 2026-10-29T07:15Z) then failed "does not rebase cleanly onto the new
+      # main" and paged, though nothing was wrong: both runs had recorded the
+      # same row, and the first had landed it. So now a rebase that conflicts,
+      # a rebase that leaves this run no commit of its own (the new `main`
+      # already carries the work), or a rebased commit whose documents are no
+      # longer the generators' own at the serial it lands at, each RE-RUN THE
+      # COMPILE against the new `main` (`redo`) — the same job, the same
+      # inputs (this step's `env:` is the compile step's), every gate above
+      # again — and commit what that run produces. It is idempotent by
+      # `service_decision_id` (R1) and by the settled record, so the work the
+      # other run landed is answered from history and nothing is applied
+      # twice; a re-run with nothing left to commit is a green no-op. Only
+      # three re-runs that still do not land, or a compile or gate that fails,
+      # fail the step. The redo runs the new `main`'s bot over the new
+      # `main`, as R6's re-check already did. Never `--force`: losing the
+      # other writer's commit is the one outcome worse than a red run.
       - name: "Commit once, with a Service-Decision: trailer per decision, and push"
         id: apply
         if: ${{ !cancelled() && steps.compile.conclusion == 'success' && steps.documents.conclusion == 'success' && steps.rules.conclusion == 'success' }}
+        env:
+          ASTRA_SHADOW: ${{ needs.list.outputs.shadow }}
+          ASTRA_ENTRIES: ${{ needs.list.outputs.entries }}
+          ASTRA_SUBMISSIONS: ${{ needs.list.outputs.submissions }}
+          ASTRA_REFUSED: ${{ needs.list.outputs.refused }}
+          ASTRA_SETTLED: ${{ needs.list.outputs.settled }}
+          ASTRA_DELIVERED_AT: ${{ needs.alert.outputs.delivered_at }}
         run: |
           set -euo pipefail
-          if [ ! -f moderation/paths.txt ]; then
-            echo "::error::the commit job left no moderation/paths.txt, so this step cannot tell a run with nothing to commit from a job that never finished"
-            exit 1
-          fi
-          main_commit=""
-          if [ ! -s moderation/paths.txt ]; then
-            if [ -e moderation/commit-message.txt ]; then
+          # The handoff's one rule: a zero-byte paths.txt and no message is
+          # "nothing to commit"; a missing paths.txt is a job that never
+          # finished.
+          check_handoff() {
+            if [ ! -f moderation/paths.txt ]; then
+              echo "::error::the commit job left no moderation/paths.txt, so this step cannot tell a run with nothing to commit from a job that never finished"
+              exit 1
+            fi
+            if [ ! -s moderation/paths.txt ] && [ -e moderation/commit-message.txt ]; then
               echo "::error::moderation/paths.txt is empty and moderation/commit-message.txt exists; the commit job writes a message only with a path to commit"
               exit 1
             fi
-            echo "nothing to commit: the commit job listed no path, so nothing is added, committed or pushed"
-          else
-            git config user.name "astra-registry-bot"
-            git config user.email "bot@users.noreply.github.com"
+          }
+          commit_listed() {
             : > moderation/present.txt
             while IFS= read -r p; do
               if [ -e "$p" ] || [ -L "$p" ]; then
@@ -491,45 +518,71 @@ jobs:
             fi
             git commit --file=moderation/commit-message.txt
             # The tree rule on the commit just made, before it leaves the
-            # runner (ops couplings 216). The validator above read the commit
-            # this job started from, and `git add` takes whatever stands at a
+            # runner (ops couplings 216). The validator read the commit this
+            # job started from, and `git add` takes whatever stands at a
             # listed path, a link included; a refusal ends the step here.
             node tools/lib/tree-modes.mjs HEAD
+          }
+          # The compile step and the two gate steps above, again, over the
+          # `main` that moved. The gate lines are the gate steps' own, and
+          # bot/tests/moderation-run.test.mjs holds the two lists to one.
+          redo() {
+            git reset -q --hard origin/main
+            rm -rf moderation
+            node "${ASTRA_BOT_DIR:-.}/bot/moderation-run.mjs" --job commit --registry-dir . --out moderation
+            node tools/build-index.mjs --check
+            node tools/build-revocations.mjs --check
+            node tools/validate.mjs --allow-staging
+            node tools/selftest.mjs
+            node bot/moderation.mjs --check
+            check_handoff
+          }
+          check_handoff
+          main_commit=""
+          if [ ! -s moderation/paths.txt ]; then
+            echo "nothing to commit: the commit job listed no path, so nothing is added, committed or pushed"
+          else
+            git config user.name "astra-registry-bot"
+            git config user.email "bot@users.noreply.github.com"
+            commit_listed
             if [ "${DRY_RUN:-}" != "false" ]; then
               echo "::warning::DRY_RUN is '${DRY_RUN:-}', not exactly \"false\": this commit stays on the runner and nothing is pushed"
               git show --stat --format='would push %H' HEAD
             else
-              # R6 (2026-10-29): another writer of `main` (ingest, the
-              # operator) can land between this job's checkout and its push;
-              # run 40274912876 lost a decision for a cycle on a non-fast-
-              # forward. So a rejected push fetches, rebases this one commit
-              # onto the new `main`, re-checks the rebased commit — the tree
-              # rule, and both generated documents at the serial it now gets
-              # (`--job documents-at-head`) — and pushes again, three times at
-              # most. A conflict or a failed re-check pushes nothing: the next
-              # run does the work again, and applies nothing twice (R1). Not
-              # one shared `concurrency` group across the writers: GitHub keeps
-              # one PENDING run per group and cancels the older, so an
-              # operator's dispatch could be cancelled by a moderation tick.
-              for attempt in 1 2 3; do
-                if git push origin HEAD:main; then
-                  main_commit=$(git rev-parse HEAD)
-                  break
-                fi
-                if [ "$attempt" = 3 ]; then
-                  echo "::error::main moved under this run three times; nothing is pushed, and the next run does the work again"
+              retries=0
+              until git push origin HEAD:main; do
+                retries=$((retries + 1))
+                if [ "$retries" -gt 3 ]; then
+                  echo "::error::main moved under this run, and three tries against the new main did not land; nothing is pushed"
                   exit 1
                 fi
-                echo "::warning::the push was rejected (attempt ${attempt}); rebasing this commit onto the main that moved"
+                echo "::warning::the push was rejected (try ${retries} of 3); rebasing this commit onto the main that moved"
                 git fetch origin main
+                why=""
                 if ! git rebase origin/main; then
                   git rebase --abort || true
-                  echo "::error::this commit does not rebase cleanly onto the new main; nothing is pushed, and the next run does the work again"
-                  exit 1
+                  why="does not rebase cleanly onto the new main"
+                elif [ "$(git rev-list --count origin/main..HEAD)" = 0 ]; then
+                  why="is no longer there after the rebase: the new main already carries its change"
+                else
+                  node tools/lib/tree-modes.mjs HEAD
+                  if ! node "${ASTRA_BOT_DIR:-.}/bot/moderation-run.mjs" --job documents-at-head --registry-dir .; then
+                    why="carries documents the new main's generators no longer produce"
+                  fi
                 fi
-                node tools/lib/tree-modes.mjs HEAD
-                node "${ASTRA_BOT_DIR:-.}/bot/moderation-run.mjs" --job documents-at-head --registry-dir .
+                if [ -n "$why" ]; then
+                  echo "::warning::this run's commit ${why}; the compile runs again against the new main"
+                  redo
+                  if [ ! -s moderation/paths.txt ]; then
+                    echo "the compile against the new main has nothing left to commit: the work this run listed is already on main, and nothing is pushed"
+                    break
+                  fi
+                  commit_listed
+                fi
               done
+              if [ -s moderation/paths.txt ]; then
+                main_commit=$(git rev-parse HEAD)
+              fi
             fi
           fi
           {
