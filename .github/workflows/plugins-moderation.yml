@@ -650,6 +650,42 @@ jobs:
           ASTRA_MAIN_COMMIT: ${{ needs.commit.outputs.main_commit }}
         run: node bot/moderation-run.mjs --job report
 
+  # ── settled-state: R4's memory for `settled`, restored without the alarm credential ──
+  #
+  # The Actions cache is restored HERE, in a job with no environment, no
+  # secret and no write, and reaches `settled` only as this job's `state` output,
+  # which bot/alert.mjs re-reads against its schema. `settled` holds the alarm
+  # credential and takes no cache, no artifact and no token
+  # (bot/tests/workflows.test.mjs). A failed restore is "never paged".
+  settled-state:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: none
+    outputs:
+      state: ${{ steps.state.outputs.state }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert-state
+            bot/alert.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: ./.github/actions/alert-state
+        id: state
+        with:
+          mode: restore
+          key: plugins-moderation-settled
+
   # ── settled: every listed id got a result, and the run said it was alive ───
   #
   # It runs `always()` and it is the last job, which is what makes it the one
@@ -662,7 +698,7 @@ jobs:
   # place in the estate that can see an id which was listed, not refused, not
   # compiled and not held — a decision that fell out of the run in silence.
   settled:
-    needs: [list, alert, commit, report]
+    needs: [list, alert, commit, report, settled-state]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -670,6 +706,9 @@ jobs:
     permissions:
       contents: read
       id-token: none
+    outputs:
+      next_state: ${{ steps.alert.outputs.next-state }}
+      state_changed: ${{ steps.alert.outputs.state-changed }}
     env:
       ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
       ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
@@ -713,6 +752,7 @@ jobs:
       - uses: ./.github/actions/alert
         id: alert
         with:
+          state: ${{ needs.settled-state.outputs.state }}
           verdict: verdict.json
           check: moderation-run
 
@@ -728,3 +768,36 @@ jobs:
           set -euo pipefail
           echo "::error::a decision the service listed got no result in this run; the alarm above carries the reason"
           exit 1
+
+  # ── settled-save: the state `settled` moved, saved without the alarm credential ──
+  #
+  # Only when `settled` says the state moved (a page, or "resolved"), from its
+  # `next_state` output, under a new cache key.
+  settled-save:
+    needs: settled
+    if: always() && needs.settled.outputs.state_changed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: none
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert-state
+            bot/alert.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: ./.github/actions/alert-state
+        with:
+          mode: save
+          key: plugins-moderation-settled
+          state: ${{ needs.settled.outputs.next_state }}

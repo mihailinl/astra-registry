@@ -30,8 +30,10 @@ import {
   TELEGRAM_API,
   copyChat,
   credentialProblems,
+  alertDecision,
   rfc3339,
   runAlert,
+  stepOutputs,
 } from "../alert.mjs";
 import { postHeartbeat } from "../heartbeat.mjs";
 import {
@@ -1208,6 +1210,162 @@ await test("R4: with no state file, and with an unreadable one, every red pages 
     assert.equal(api.texts.length, 4, "an unreadable state file withheld a page");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── R4 wired (2026-10-29): the state crosses the alarm job only as outputs ───
+//
+// The three jobs, as the workflows run them: `<alert job>-state` restores the
+// cache and runs the composite's restore line; the alert job hands that output
+// to the alert action, whose step writes it to a file and runs bot/alert.mjs
+// with `--state`, and appends `stepOutputs`; `<alert job>-save` runs the
+// composite's save line over the alert job's `next_state`. The cache between
+// runs is a directory this test carries; nothing else carries anything.
+
+const STATE_ACTION = path.join(REPO, ".github", "actions", "alert-state", "action.yml");
+const EMIT_LINE = "node bot/alert.mjs --emit-state .astra-alert-state/state.json";
+const SAVE_LINE = "node bot/alert.mjs --save-state .astra-alert-state/state.json";
+
+/** The state jobs' sparse checkout, as the workflows list it: exactly these, so a missing import is red here. */
+const STATE_SPARSE = ["bot/alert.mjs", "bot/lib/alert-verdict.mjs", "bot/lib/alert-checks.mjs", "tools/lib/ids.mjs"];
+function sparseCheckout(dir) {
+  for (const rel of STATE_SPARSE) {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.copyFileSync(path.join(REPO, rel), path.join(dir, rel));
+  }
+}
+
+function outputsOf(text) {
+  return Object.fromEntries(text.split("\n").filter(Boolean).map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
+}
+
+/** One line of the composite, in `dir` (a runner's workspace holding the sparse checkout), with a `$GITHUB_OUTPUT`. */
+function compositeLine(dir, line, env = {}) {
+  const out = path.join(dir, "github-output");
+  fs.writeFileSync(out, "");
+  const r = spawnSync("bash", ["-euo", "pipefail", "-c", line], {
+    cwd: dir, encoding: "utf8", env: { PATH: process.env.PATH, GITHUB_OUTPUT: out, ...env },
+  });
+  assert.equal(r.status, 0, `\`${line}\` failed: ${r.stderr}`);
+  return outputsOf(fs.readFileSync(out, "utf8"));
+}
+
+async function wiredRun({ cache, verdict, api, now }) {
+  // `<alert job>-state`: a fresh runner, the cache restored into it (or not).
+  const pre = fs.mkdtempSync(path.join(REPO, ".alert-wired-pre-"));
+  const post = fs.mkdtempSync(path.join(REPO, ".alert-wired-post-"));
+  const job = fs.mkdtempSync(path.join(REPO, ".alert-wired-job-"));
+  try {
+    for (const d of [pre, post]) sparseCheckout(d);
+    if (fs.existsSync(path.join(cache, "state.json"))) {
+      fs.mkdirSync(path.join(pre, ".astra-alert-state"));
+      fs.copyFileSync(path.join(cache, "state.json"), path.join(pre, ".astra-alert-state", "state.json"));
+    }
+    const { state } = compositeLine(pre, EMIT_LINE);
+    // The alert job: the action's step, `printf '%s' "$ASTRA_ALERT_STATE" > file`.
+    const stateFile = path.join(job, "astra-alert-state.json");
+    fs.writeFileSync(stateFile, state);
+    const out = await runAlert({ verdict, env: ONE_GROUP, ifRed: true, fetchImpl: api.fetchImpl, log: quiet, stateFile, now });
+    assert.equal(out.code, 0, out.problems.join("; "));
+    const outputs = outputsOf(stepOutputs(out, stateFile));
+    // `<alert job>-save`, only when the alert job says the state moved.
+    if (outputs.state_changed === "true") {
+      compositeLine(post, SAVE_LINE, { ASTRA_ALERT_NEXT_STATE: outputs.next_state });
+      fs.copyFileSync(path.join(post, ".astra-alert-state", "state.json"), path.join(cache, "state.json"));
+    }
+    return { state, outputs };
+  } finally {
+    for (const d of [pre, post, job]) fs.rmSync(d, { recursive: true, force: true });
+  }
+}
+
+await test("R4 wired: ten red runs in a row, through the three jobs' outputs only, give one page", async () => {
+  const action = fs.readFileSync(STATE_ACTION, "utf8");
+  for (const line of [EMIT_LINE, SAVE_LINE]) {
+    assert.ok(action.split("\n").some((l) => l.trim() === `run: ${line}` || l.trim() === line),
+      `the alert-state action does not run \`${line}\`, so this test runs something the workflows do not`);
+  }
+  // The alert action's own step, run as the runner runs it, with `node`
+  // replaced by a recorder: it must hand bot/alert.mjs `--state` and a file
+  // holding exactly the output it was given, and nothing when given none.
+  const actionLines = fs.readFileSync(path.join(REPO, ".github", "actions", "alert", "action.yml"), "utf8").split("\n");
+  const at = actionLines.findIndex((l) => /^\s+id: alarm\s*$/.test(l));
+  const runAt = actionLines.findIndex((l, i) => i > at && /^\s+run: \|\s*$/.test(l));
+  const indent = actionLines[runAt].search(/\S/);
+  const script = [];
+  for (let i = runAt + 1; i < actionLines.length && (actionLines[i].trim() === "" || actionLines[i].search(/\S/) > indent); i++) {
+    script.push(actionLines[i].slice(indent + 2));
+  }
+  const bin = fs.mkdtempSync(path.join(REPO, ".alert-wired-bin-"));
+  try {
+    const log = path.join(bin, "argv.json");
+    fs.writeFileSync(path.join(bin, "node"), `#!/bin/sh\n${JSON.stringify(process.execPath)} -e 'const fs=require("fs");const a=process.argv.slice(1);const i=a.indexOf("--state");fs.writeFileSync(${JSON.stringify(log)},JSON.stringify({a,state:i<0?null:fs.readFileSync(a[i+1],"utf8")}))' -- "$@"\n`);
+    fs.chmodSync(path.join(bin, "node"), 0o755);
+    const step = (state) => {
+      const r = spawnSync("bash", ["-e", "-c", script.join("\n")], {
+        cwd: bin, encoding: "utf8",
+        env: { PATH: `${bin}:${process.env.PATH}`, RUNNER_TEMP: bin, ASTRA_ALERT_VERDICT: "verdict.json", ASTRA_ALERT_ACK_CHECK: "", ASTRA_ALERT_STATE: state },
+      });
+      assert.equal(r.status, 0, r.stderr);
+      return JSON.parse(fs.readFileSync(log, "utf8"));
+    };
+    const line = JSON.stringify({ schema: "astra.registry.alert-state/1", checks: {} });
+    const given = step(line);
+    assert.deepEqual(given.a.slice(0, 4), ["bot/alert.mjs", "--verdict", "verdict.json", "--if-red"]);
+    assert.equal(given.a[4], "--state", "the alert action's step does not hand bot/alert.mjs the state it was given");
+    assert.equal(given.state, line, "the file the step hands on is not the output it was given");
+    const none = step("");
+    assert.equal(none.a.includes("--state"), false, "the step invents a state when it was handed none");
+  } finally {
+    fs.rmSync(bin, { recursive: true, force: true });
+  }
+
+  const cache = fs.mkdtempSync(path.join(REPO, ".alert-wired-cache-"));
+  try {
+    const api = counting();
+    const at = (min) => new Date(Date.parse("2026-10-29T03:00:00Z") + min * 60_000);
+    for (let i = 0; i < 10; i++) await wiredRun({ cache, verdict: VERDICT, api, now: at(i * 10) });
+    assert.equal(api.texts.length, 1, `ten red runs of one state sent ${api.texts.length} pages through the wired jobs`);
+    const green = { schema: VERDICT_SCHEMA, check: VERDICT.check, status: "green", run: VERDICT.run };
+    await wiredRun({ cache, verdict: green, api, now: at(100) });
+    await wiredRun({ cache, verdict: green, api, now: at(110) });
+    assert.equal(api.texts.length, 2, "green after a page sent no `resolved`, or sent it twice");
+    await wiredRun({ cache, verdict: VERDICT, api, now: at(120) });
+    assert.equal(api.texts.length, 3, "red after `resolved` did not page at once");
+  } finally {
+    fs.rmSync(cache, { recursive: true, force: true });
+  }
+});
+
+await test("R4 wired: no cache, an unreadable one, a forged handoff or a state from the future each page", async () => {
+  const api = counting();
+  const now = new Date("2026-10-29T03:00:00Z");
+  const cache = fs.mkdtempSync(path.join(REPO, ".alert-wired-cache-"));
+  try {
+    const first = await wiredRun({ cache, verdict: VERDICT, api, now });
+    assert.equal(api.texts.length, 1, "with no cache entry the first red did not page");
+    assert.equal(JSON.parse(first.state).checks && Object.keys(JSON.parse(first.state).checks).length, 0);
+    fs.writeFileSync(path.join(cache, "state.json"), "{ not json");
+    await wiredRun({ cache, verdict: VERDICT, api, now: new Date(now.getTime() + 60_000) });
+    assert.equal(api.texts.length, 2, "an unreadable cache entry withheld a page");
+    const future = { schema: "astra.registry.alert-state/1", checks: { [VERDICT.check]: {
+      pairs: alertDecision(VERDICT, { checks: {} }, { now }).state.checks[VERDICT.check].pairs,
+      first_red: "9999-01-01T00:00:00Z", last_sent: "9999-01-01T00:00:00Z",
+    } } };
+    fs.writeFileSync(path.join(cache, "state.json"), JSON.stringify(future));
+    await wiredRun({ cache, verdict: VERDICT, api, now: new Date(now.getTime() + 120_000) });
+    assert.equal(api.texts.length, 3, "a state that says it paged in the future quieted a red verdict");
+    // The save job refuses anything but a state document, and keeps the entry it had.
+    const post = fs.mkdtempSync(path.join(REPO, ".alert-wired-post-"));
+    try {
+      sparseCheckout(post);
+      compositeLine(post, SAVE_LINE, { ASTRA_ALERT_NEXT_STATE: '{"schema":"something-else","checks":{}}' });
+      assert.equal(fs.existsSync(path.join(post, ".astra-alert-state", "state.json")), false, "a forged handoff was saved");
+    } finally {
+      fs.rmSync(post, { recursive: true, force: true });
+    }
+  } finally {
+    fs.rmSync(cache, { recursive: true, force: true });
   }
 });
 

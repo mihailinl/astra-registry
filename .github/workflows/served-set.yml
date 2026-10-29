@@ -227,8 +227,44 @@ jobs:
           echo "::error::trust-runway reported ${{ steps.check.outputs.status || 'nothing at all' }}"
           exit 1
 
+  # ── alert-state: R4's memory for `alert`, restored without the alarm credential ──
+  #
+  # The Actions cache is restored HERE, in a job with no environment, no
+  # secret and no write, and reaches `alert` only as this job's `state` output,
+  # which bot/alert.mjs re-reads against its schema. `alert` holds the alarm
+  # credential and takes no cache, no artifact and no token
+  # (bot/tests/workflows.test.mjs). A failed restore is "never paged".
+  alert-state:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: none
+    outputs:
+      state: ${{ steps.state.outputs.state }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert-state
+            bot/alert.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: ./.github/actions/alert-state
+        id: state
+        with:
+          mode: restore
+          key: served-set-alert
+
   alert:
-    needs: [main-vs-signed, served-vs-signed, host-vs-signed, trust-runway]
+    needs: [main-vs-signed, served-vs-signed, host-vs-signed, trust-runway, alert-state]
     # `always()` so a red comparison still pages — the jobs above fail on
     # purpose — and `!cancelled()` so a cancelled run does not send an alarm
     # about a comparison that never finished.
@@ -243,6 +279,9 @@ jobs:
     # this job posts to. Nothing else — a job that mapped another check's URL
     # would be a job whose compromise silences a check it never posts to
     # (attack M-5), and `bot/tests/workflows.test.mjs` refuses one.
+    outputs:
+      next_state: ${{ steps.alarm.outputs.next-state }}
+      state_changed: ${{ steps.alarm.outputs.state-changed }}
     env:
       ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
       ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
@@ -292,6 +331,41 @@ jobs:
         run: node tools/served-set/compose.mjs --out verdict.json --check served-set
 
       - uses: ./.github/actions/alert
+        id: alarm
         with:
+          state: ${{ needs.alert-state.outputs.state }}
           verdict: verdict.json
           check: served-set
+
+  # ── alert-save: the state `alert` moved, saved without the alarm credential ──
+  #
+  # Only when `alert` says the state moved (a page, or "resolved"), from its
+  # `next_state` output, under a new cache key.
+  alert-save:
+    needs: alert
+    if: always() && needs.alert.outputs.state_changed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: none
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert-state
+            bot/alert.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: ./.github/actions/alert-state
+        with:
+          mode: save
+          key: served-set-alert
+          state: ${{ needs.alert.outputs.next_state }}

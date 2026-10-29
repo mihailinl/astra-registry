@@ -188,15 +188,27 @@ async function sendMessage({ token, chatId, text, apiBase, fetchImpl }) {
 //   * a check turning green after a page sends "resolved", once.
 //
 // The state is a small file (`--state`). A missing or unreadable file is
-// "never paged", so every fault is a page sent, never one withheld. Without
-// `--state` every red pages, as before — and that is what every caller does
-// TODAY: the composite action does not pass it yet, because the only store
-// within reach, the Actions cache, is one bot/tests/workflows.test.mjs
-// forbids in an `alerts` job on purpose (a cache restore extracts bytes into
-// the job that holds the alarm credential). Where the state may live is the
-// open half of R4. The two alert jobs whose `delivered_at` gates publication
-// (MOD-8, TRUST-14, TRUST-32: ingest's and moderation's `alert`) must never
-// pass it: their pages are events, not states.
+// "never paged", so every fault is a page sent, never one withheld.
+//
+// **Where it lives (wired 2026-10-29).** In the Actions cache — and never in
+// the job that holds the alarm credential, which bot/tests/workflows.test.mjs
+// forbids a cache, an artifact and the GitHub token, because a restore
+// extracts bytes into that job. So the state crosses into it only as a JOB
+// OUTPUT, a string this file re-reads against its schema:
+//
+//   * `<alert job>-state` (no environment, no secret) restores the cache and
+//     emits the state as one line (`--emit-state`);
+//   * the alert job hands that line to `.github/actions/alert` as `state:`,
+//     decides here, and outputs `next_state` when the state moved;
+//   * `<alert job>-save` (no environment, no secret) writes that line back
+//     (`--save-state`) and saves it under a new cache key.
+//
+// The jobs whose page is an EVENT never pass it: ingest's and moderation's
+// `alert` (TRUST-14, TRUST-32 and MOD-8 gate publication on their
+// `delivered_at`), the weekly drill (BOT-86 must see it every week), and the
+// operator's refused act (each refusal is somebody trying). A state can only
+// QUIET a red verdict whose every (code, id) was paged in the last 24 hours,
+// at a time not in the future; a state from the future pages.
 
 /** How long the same red state goes without a repeat page. */
 export const REPEAT_HOURS = 24;
@@ -214,6 +226,41 @@ export function readAlertState(file) {
     if (doc?.schema === "astra.registry.alert-state/1" && doc.checks && typeof doc.checks === "object") return doc;
   } catch { /* absent or unreadable: nothing was paged, so the next red pages */ }
   return { schema: "astra.registry.alert-state/1", checks: {} };
+}
+
+/** The state as the one line a job output carries (`--emit-state`): always a whole, valid document. */
+export function stateLine(file) {
+  return JSON.stringify(readAlertState(file));
+}
+
+/**
+ * The `save` job's half (`--save-state`): the line the alert job handed on,
+ * written to `file` only when it is a state document. Anything else writes
+ * nothing, so the cache keeps the state it had and the next red pages.
+ */
+export function saveStateLine(text, file) {
+  let doc;
+  try {
+    doc = JSON.parse(text ?? "");
+  } catch {
+    return false;
+  }
+  if (doc?.schema !== "astra.registry.alert-state/1" || !doc.checks || typeof doc.checks !== "object" || Array.isArray(doc.checks)) return false;
+  fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`);
+  return true;
+}
+
+/** What the alert step appends to `$GITHUB_OUTPUT` after `runAlert`. */
+export function stepOutputs(out, stateFile = null) {
+  const lines = [
+    `alerted=${out.alerted}`,
+    `delivered_at=${out.delivered_at ?? ""}`,
+    `copy_delivered=${out.copy_delivered ?? "none"}`,
+    `state_changed=${out.state_changed === true}`,
+  ];
+  if (stateFile && out.state_changed === true) lines.push(`next_state=${stateLine(stateFile)}`);
+  return `${lines.join("\n")}\n`;
 }
 
 /**
@@ -234,10 +281,14 @@ export function alertDecision(verdict, state, { now = new Date() } = {}) {
     next.checks[verdict.check] = { pairs, first_red: prior?.first_red ?? at, last_sent: at };
     return { act: "page", why, state: next, changed: true };
   };
-  if (!prior) return page("the check turned red");
+  if (!prior || !Array.isArray(prior.pairs)) return page("the check turned red");
   const fresh = pairs.filter((p) => !prior.pairs.includes(p));
   if (fresh.length) return page(`a code or id not paged since it turned red: ${fresh.join(", ")}`);
   const since = now.getTime() - Date.parse(prior.last_sent);
+  // A page "sent" in the future is not one this registry sent: the state is
+  // forged or the clock is wrong, and either way the page goes out. Without
+  // this a `last_sent` in year 9999 would quiet the state for ever.
+  if (since < -5 * 60_000) return page(`the state says it was paged at ${prior.last_sent}, which is in the future`);
   if (!(since < REPEAT_HOURS * 3600_000)) return page(`still red, and the last page was ${REPEAT_HOURS} hours or more ago`);
   return {
     act: "quiet",
@@ -389,7 +440,7 @@ export async function runAlert({
 }
 
 function parseArgs(argv) {
-  const args = { verdict: null, ack: false, ifRed: false, checkCredentials: false, state: null };
+  const args = { verdict: null, ack: false, ifRed: false, checkCredentials: false, state: null, emitState: null, saveState: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--verdict") args.verdict = argv[++i];
@@ -397,6 +448,8 @@ function parseArgs(argv) {
     else if (a === "--if-red") args.ifRed = true;
     else if (a === "--check-credentials") args.checkCredentials = true;
     else if (a === "--state") args.state = argv[++i];
+    else if (a === "--emit-state") args.emitState = argv[++i];
+    else if (a === "--save-state") args.saveState = argv[++i];
     else throw new Error(`unknown argument: ${a}`);
   }
   return args;
@@ -404,6 +457,23 @@ function parseArgs(argv) {
 
 async function main(argv) {
   const args = parseArgs(argv);
+
+  // R4's two secret-less jobs. Neither sends anything or reads a channel
+  // secret; each moves the state between the cache and a job output.
+  if (args.emitState) {
+    const line = `state=${stateLine(args.emitState)}\n`;
+    if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, line);
+    else process.stdout.write(line);
+    return 0;
+  }
+  if (args.saveState) {
+    if (saveStateLine(process.env.ASTRA_ALERT_NEXT_STATE, args.saveState)) {
+      console.log(`ok    the alert state is written to ${args.saveState}`);
+      return 0;
+    }
+    console.log("::warning::the alert job handed on no state document, so none is saved; the cache keeps the one it had");
+    return 0;
+  }
 
   // Asked on every alert job, red or green, BEFORE the heartbeat. A green run
   // whose channel is missing its token is the state this whole task exists to
@@ -434,11 +504,7 @@ async function main(argv) {
   const out = await runAlert({ verdict, ack: args.ack, ifRed: args.ifRed, stateFile: args.state });
   if (out.delivered_at) console.log(`delivered_at=${out.delivered_at}`);
   if (process.env.GITHUB_OUTPUT && out.code === 0) {
-    fs.appendFileSync(
-      process.env.GITHUB_OUTPUT,
-      `alerted=${out.alerted}\ndelivered_at=${out.delivered_at ?? ""}\ncopy_delivered=${out.copy_delivered ?? "none"}\n` +
-      `state_changed=${out.state_changed === true}\n`,
-    );
+    fs.appendFileSync(process.env.GITHUB_OUTPUT, stepOutputs(out, args.state));
   }
   return out.code;
 }

@@ -1,0 +1,79 @@
+name: Alert state, restored or saved
+description: >-
+  R4's once-per-state memory for one alert job, moved between the Actions cache
+  and a job output. Runs ONLY in the secret-less jobs either side of an alert
+  job (`<alert job>-state` before it, `<alert job>-save` after it), never in a
+  job of environment `alerts`: a cache restore extracts bytes into the job that
+  runs it, and the job holding the alarm credential takes no such bytes
+  (bot/tests/workflows.test.mjs). The alert job reads the state only as the
+  `state` output of the job before it.
+
+# A missing, evicted or unreadable cache entry is "never paged": the restore
+# step may fail without failing the job, and `--emit-state` then hands on an
+# empty state, so the next red pages. A save that fails keeps the older entry,
+# which is the same direction. Each save is a new key (caches are immutable),
+# and a restore takes the newest entry under the prefix.
+
+inputs:
+  mode:
+    description: "`restore` (before the alert job) or `save` (after it)."
+    required: true
+  key:
+    description: The cache key's stem for this alert job, `<workflow>-<job>`.
+    required: true
+  state:
+    description: In `save` mode, the alert job's `next_state` output.
+    required: false
+    default: ''
+
+outputs:
+  state:
+    description: In `restore` mode, the state as one line, for the alert action's `state` input.
+    value: ${{ steps.emit.outputs.state }}
+
+runs:
+  using: composite
+  steps:
+    - name: The mode is one of two
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+      run: |
+        set -euo pipefail
+        case "$MODE" in
+          restore|save) ;;
+          *) echo "::error::alert-state mode is '$MODE', not restore or save"; exit 1 ;;
+        esac
+
+    - name: Restore the newest state for this alert job
+      if: inputs.mode == 'restore'
+      continue-on-error: true
+      uses: actions/cache/restore@v4
+      with:
+        path: .astra-alert-state
+        key: astra-alert-state-${{ inputs.key }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: astra-alert-state-${{ inputs.key }}-
+
+    - name: Hand the state on as one line
+      id: emit
+      if: inputs.mode == 'restore'
+      shell: bash
+      run: node bot/alert.mjs --emit-state .astra-alert-state/state.json
+
+    - name: Write the state the alert job handed on
+      id: write
+      if: inputs.mode == 'save'
+      shell: bash
+      env:
+        ASTRA_ALERT_NEXT_STATE: ${{ inputs.state }}
+      run: |
+        set -euo pipefail
+        node bot/alert.mjs --save-state .astra-alert-state/state.json
+        if [ -f .astra-alert-state/state.json ]; then echo "saved=true" >> "$GITHUB_OUTPUT"; fi
+
+    - name: Save it under a new key
+      if: inputs.mode == 'save' && steps.write.outputs.saved == 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: .astra-alert-state
+        key: astra-alert-state-${{ inputs.key }}-${{ github.run_id }}-${{ github.run_attempt }}

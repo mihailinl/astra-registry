@@ -491,6 +491,43 @@ jobs:
           path: .poll-memory
           key: poll-memory-${{ github.run_id }}-${{ github.run_attempt }}
 
+  # ── poll-alert-state: R4's memory for `poll-alert`, restored without the alarm credential ──
+  #
+  # The Actions cache is restored HERE, in a job with no environment, no
+  # secret and no write, and reaches `poll-alert` only as this job's `state` output,
+  # which bot/alert.mjs re-reads against its schema. `poll-alert` holds the alarm
+  # credential and takes no cache, no artifact and no token
+  # (bot/tests/workflows.test.mjs). A failed restore is "never paged".
+  poll-alert-state:
+    needs: roots
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: none
+    outputs:
+      state: ${{ steps.state.outputs.state }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert-state
+            bot/alert.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: ./.github/actions/alert-state
+        id: state
+        with:
+          mode: restore
+          key: plugins-ingest-poll-alert
+
   # ── poll-alert: BOT-87's verdict, and BOT-85's heartbeat for it ───────────
   #
   # The `alert` job below cannot carry this: it posts no heartbeat, for a
@@ -504,7 +541,7 @@ jobs:
   # the relay turns the missing verdict into a red one. It is skipped with
   # `load`, which today means while `load` is held.
   poll-alert:
-    needs: [roots, load, remember]
+    needs: [roots, load, remember, poll-alert-state]
     if: >-
       always() && !cancelled() && needs.roots.result == 'success' &&
       needs.load.result != 'skipped'
@@ -514,6 +551,9 @@ jobs:
     permissions:
       contents: read
       id-token: none
+    outputs:
+      next_state: ${{ steps.alarm.outputs.next-state }}
+      state_changed: ${{ steps.alarm.outputs.state-changed }}
     env:
       ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
       ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
@@ -543,9 +583,44 @@ jobs:
         run: node bot/lib/relay-verdict.mjs --check poll-and-sweep --code BOT_87_DID_NOT_REPORT --out verdict.json
 
       - uses: ./.github/actions/alert
+        id: alarm
         with:
+          state: ${{ needs.poll-alert-state.outputs.state }}
           verdict: verdict.json
           check: poll-and-sweep
+
+  # ── poll-alert-save: the state `poll-alert` moved, saved without the alarm credential ──
+  #
+  # Only when `poll-alert` says the state moved (a page, or "resolved"), from its
+  # `next_state` output, under a new cache key.
+  poll-alert-save:
+    needs: [roots, poll-alert]
+    if: always() && needs.roots.result == 'success' && needs.poll-alert.outputs.state_changed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: none
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert-state
+            bot/alert.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: ./.github/actions/alert-state
+        with:
+          mode: save
+          key: plugins-ingest-poll-alert
+          state: ${{ needs.poll-alert.outputs.next_state }}
 
   # ── verify: identity comes from the certificate, never from the archive ────
   #

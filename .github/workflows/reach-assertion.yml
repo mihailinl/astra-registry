@@ -29,12 +29,53 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # ── reach-state: R4's memory for `reach`, restored without the alarm credential ──
+  #
+  # The Actions cache is restored HERE, in a job with no environment, no
+  # secret and no write, and reaches `reach` only as this job's `state` output,
+  # which bot/alert.mjs re-reads against its schema. `reach` holds the alarm
+  # credential and takes no cache, no artifact and no token
+  # (bot/tests/workflows.test.mjs). A failed restore is "never paged".
+  reach-state:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: none
+    outputs:
+      state: ${{ steps.state.outputs.state }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert-state
+            bot/alert.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: ./.github/actions/alert-state
+        id: state
+        with:
+          mode: restore
+          key: reach-assertion-reach
+
   reach:
+    needs: reach-state
+    if: always() && !cancelled()
     runs-on: ubuntu-24.04
     environment: alerts
     permissions:
       contents: read
     timeout-minutes: 5
+    outputs:
+      next_state: ${{ steps.alarm.outputs.next-state }}
+      state_changed: ${{ steps.alarm.outputs.state-changed }}
     env:
       ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
       ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
@@ -97,10 +138,45 @@ jobs:
           fi
 
       - uses: ./.github/actions/alert
+        id: alarm
         if: always() && !cancelled()
         with:
+          state: ${{ needs.reach-state.outputs.state }}
           verdict: verdict.json
           no-heartbeat-because: >-
             dispatched by hand at each exit walk and never scheduled, so its
             silence means nothing; alarm-drill's weekly run is what notices a
             channel that stopped
+
+  # ── reach-save: the state `reach` moved, saved without the alarm credential ──
+  #
+  # Only when `reach` says the state moved (a page, or "resolved"), from its
+  # `next_state` output, under a new cache key.
+  reach-save:
+    needs: reach
+    if: always() && needs.reach.outputs.state_changed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: none
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert-state
+            bot/alert.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: ./.github/actions/alert-state
+        with:
+          mode: save
+          key: reach-assertion-reach
+          state: ${{ needs.reach.outputs.next_state }}

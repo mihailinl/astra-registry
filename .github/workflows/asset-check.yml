@@ -136,16 +136,55 @@ jobs:
         if: steps.check.outputs.code != '0'
         run: exit 1
 
+  # ── alert-state: R4's memory for `alert`, restored without the alarm credential ──
+  #
+  # The Actions cache is restored HERE, in a job with no environment, no
+  # secret and no write, and reaches `alert` only as this job's `state` output,
+  # which bot/alert.mjs re-reads against its schema. `alert` holds the alarm
+  # credential and takes no cache, no artifact and no token
+  # (bot/tests/workflows.test.mjs). A failed restore is "never paged".
+  alert-state:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: none
+    outputs:
+      state: ${{ steps.state.outputs.state }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert-state
+            bot/alert.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: ./.github/actions/alert-state
+        id: state
+        with:
+          mode: restore
+          key: asset-check-alert
+
   # The alarm, in environment `alerts`, reading nothing but the verdict the
   # check job composed. Replaces the issue the check job used to open.
   alert:
-    needs: check
+    needs: [check, alert-state]
     if: always() && !cancelled() && needs.check.outputs.verdict != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     environment: alerts
     permissions:
       contents: read
+    outputs:
+      next_state: ${{ steps.alarm.outputs.next-state }}
+      state_changed: ${{ steps.alarm.outputs.state-changed }}
     env:
       ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
       ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
@@ -171,7 +210,9 @@ jobs:
           VERDICT: ${{ needs.check.outputs.verdict }}
         run: printf '%s\n' "$VERDICT" > verdict.json
       - uses: ./.github/actions/alert
+        id: alarm
         with:
+          state: ${{ needs.alert-state.outputs.state }}
           verdict: verdict.json
           no-heartbeat-because: >-
             The nightly asset check has no receiver check of its own: it is not
@@ -179,3 +220,36 @@ jobs:
             re-uploaded artifact, which Astra's digest check already makes
             uninstallable rather than dangerous. A red run is also the job's
             own red X.
+
+  # ── alert-save: the state `alert` moved, saved without the alarm credential ──
+  #
+  # Only when `alert` says the state moved (a page, or "resolved"), from its
+  # `next_state` output, under a new cache key.
+  alert-save:
+    needs: alert
+    if: always() && needs.alert.outputs.state_changed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: none
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert-state
+            bot/alert.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: ./.github/actions/alert-state
+        with:
+          mode: save
+          key: asset-check-alert
+          state: ${{ needs.alert.outputs.next_state }}
