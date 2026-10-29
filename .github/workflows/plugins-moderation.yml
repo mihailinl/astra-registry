@@ -463,21 +463,19 @@ jobs:
       # (2026-10-29) rebased a rejected commit and re-checked it. The second
       # of two runs over the SAME settled result (run 40833642707,
       # 2026-10-29T07:15Z) then failed "does not rebase cleanly onto the new
-      # main" and paged, though nothing was wrong: both runs had recorded the
-      # same row, and the first had landed it. So now a rebase that conflicts,
-      # a rebase that leaves this run no commit of its own (the new `main`
-      # already carries the work), or a rebased commit whose documents are no
-      # longer the generators' own at the serial it lands at, each RE-RUN THE
-      # COMPILE against the new `main` (`redo`) — the same job, the same
+      # main" and paged, though nothing was wrong; and a CLEAN rebase pushed a
+      # commit compiled against the old tree, whose TRUST-26 bound was never
+      # counted again (review of #480). So a rejected push now always RE-RUNS
+      # THE COMPILE against the new `main` (`redo`) — the same job, the same
       # inputs (this step's `env:` is the compile step's), every gate above
-      # again — and commit what that run produces. It is idempotent by
+      # again — and commits what that run produces. It is idempotent by
       # `service_decision_id` (R1) and by the settled record, so the work the
       # other run landed is answered from history and nothing is applied
       # twice; a re-run with nothing left to commit is a green no-op. Only
       # three re-runs that still do not land, or a compile or gate that fails,
       # fail the step. The redo runs the new `main`'s bot over the new
-      # `main`, as R6's re-check already did. Never `--force`: losing the
-      # other writer's commit is the one outcome worse than a red run.
+      # `main`. Never `--force`: losing the other writer's commit is the one
+      # outcome worse than a red run.
       - name: "Commit once, with a Service-Decision: trailer per decision, and push"
         id: apply
         if: ${{ !cancelled() && steps.compile.conclusion == 'success' && steps.documents.conclusion == 'success' && steps.rules.conclusion == 'success' }}
@@ -553,35 +551,26 @@ jobs:
               # The tree rule on the exact commit each push below sends: the
               # first one here, and a redone one in `commit_listed`.
               node tools/lib/tree-modes.mjs HEAD
+              # Review of #480: a rejected push is ALWAYS compiled again over
+              # the new main, never rebased and pushed. A clean rebase carried
+              # a commit compiled against the old tree, and TRUST-26's bound
+              # was not counted again: two runs could each admit a takedown
+              # under a bound one of them had already filled. The redo counts
+              # the window out of the new main's history like any compile.
               until git push origin HEAD:main; do
                 retries=$((retries + 1))
                 if [ "$retries" -gt 3 ]; then
                   echo "::error::main moved under this run, and three tries against the new main did not land; nothing is pushed"
                   exit 1
                 fi
-                echo "::warning::the push was rejected (try ${retries} of 3); rebasing this commit onto the main that moved"
+                echo "::warning::the push was rejected (try ${retries} of 3); the compile runs again against the new main"
                 git fetch origin main
-                why=""
-                if ! git rebase origin/main; then
-                  git rebase --abort || true
-                  why="does not rebase cleanly onto the new main"
-                elif [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ]; then
-                  why="is no longer there after the rebase: the new main already carries its change"
-                else
-                  node tools/lib/tree-modes.mjs HEAD
-                  if ! node "${ASTRA_BOT_DIR:-.}/bot/moderation-run.mjs" --job documents-at-head --registry-dir .; then
-                    why="carries documents the new main's generators no longer produce"
-                  fi
+                redo
+                if [ ! -s moderation/paths.txt ]; then
+                  echo "the compile against the new main has nothing left to commit: the work this run listed is already on main, and nothing is pushed"
+                  break
                 fi
-                if [ -n "$why" ]; then
-                  echo "::warning::this run's commit ${why}; the compile runs again against the new main"
-                  redo
-                  if [ ! -s moderation/paths.txt ]; then
-                    echo "the compile against the new main has nothing left to commit: the work this run listed is already on main, and nothing is pushed"
-                    break
-                  fi
-                  commit_listed
-                fi
+                commit_listed
               done
               if [ -s moderation/paths.txt ]; then
                 main_commit=$(git rev-parse HEAD)

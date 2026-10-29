@@ -1825,19 +1825,22 @@ const compileEnv = ({ entries = [], settled = "[]", shadow = false } = {}) => ({
   GITHUB_RUN_ID: "35502265394",
 });
 
-test("R6: a push rejected because main moved is rebased, re-checked and pushed; a conflict or a moved serial is compiled again and lands", async () => {
+test("R6: a push rejected because main moved is compiled again over the new main and pushed, never rebased; a conflict or a moved serial lands too", async () => {
   // Main moves on a file this commit does not touch: rebased and pushed.
   const root = withDocuments(estate());
   const origin = withRemote(root);
+  withGateStubs(root);
   const job = await commitJob(root, { entries: [delistOf(SDI)] });
   assert.equal(job.code, 0, job.logs.join("\n"));
   const theirs = concurrentPush(origin, { "README.md": "an ingest landed first\n" }, "registry: publish (plugins ingest)", "2026-09-20T12:31:00Z");
-  const step = runApply(root);
-  assert.equal(step.status, 0, `the rebased retry did not push: ${step.stderr} ${step.stdout}`);
+  const step = runApply(root, compileEnv({ entries: [delistOf(SDI)] }));
+  assert.equal(step.status, 0, `the redone retry did not push: ${step.stderr} ${step.stdout}`);
+  assert.match(step.stdout + step.stderr, /the compile runs again against the new main/, "a rejected push was not compiled again");
+  assert.doesNotMatch(step.stdout + step.stderr, /Rebasing|Successfully rebased/, "a rejected push was rebased (review of #480)");
   const landed = headOf(origin);
   assert.notEqual(landed, theirs, "the moderation commit never landed");
   assert.equal(step.outputs.main_commit, landed, "`main_commit` is not the rebased commit that landed");
-  assert.equal(sh(["rev-parse", `${landed}^`], root).trim(), theirs, "the moderation commit was not rebased onto the commit that beat it");
+  assert.equal(sh(["rev-parse", `${landed}^`], root).trim(), theirs, "the redone commit is not on top of the commit that beat it");
   assert.match(sh(["log", "-1", "--format=%B", landed], root), new RegExp(`^Service-Decision: ${SDI}$`, "m"));
 
   // Main moved on the same document: the rebase conflicts, the compile runs
@@ -1878,11 +1881,57 @@ test("R6: a push rejected because main moved is rebased, re-checked and pushed; 
   const advanced = concurrentPush(serialOrigin, { "tools/revocations/README.md": "a note beside the advisories\n" }, "docs", "2026-09-20T12:31:00Z");
   const restaled = runApply(serial, compileEnv({ entries: [revoke] }));
   assert.equal(restaled.status, 0, `a moved serial was not compiled again: ${restaled.stderr} ${restaled.stdout}`);
-  assert.match(`${restaled.stdout}${restaled.stderr}`, /revocations\.json at HEAD is not what the generator produces/);
   assert.equal(sh(["rev-parse", `${headOf(serialOrigin)}^`], serial).trim(), advanced);
   const atHead = spawnSync(process.execPath, [path.join(REPO, "bot", "moderation-run.mjs"), "--job", "documents-at-head", "--registry-dir", serial],
     { cwd: serial, encoding: "utf8", env: fixtureEnv(serial) });
   assert.equal(atHead.status, 0, `the redone commit's list is not at the serial it landed at: ${atHead.stderr}`);
+});
+
+// Review of #480 (LOW, pre-existing): a clean rebase pushed a commit compiled
+// against the old tree, and TRUST-26's bound was never counted again, so two
+// runs that each admitted a takedown under a bound with one slot left landed
+// both. Every rejected push is compiled again now, and the redo counts the
+// window out of the new main. Watched red: with a clean rebase pushed as
+// before, origin carries four withdrawals in the trailing 24 h.
+test("two takedowns raced across a rejected push never make four withdrawals in 24 h", async () => {
+  assert.equal(TAKEDOWN_BOUND, 3);
+  const now = new Date();
+  const iso = (ms) => `${new Date(now.getTime() - ms).toISOString().slice(0, 19)}Z`;
+  const root = withDocuments(crowd({ at: iso(10 * 3600_000) }));
+  withdrawnInGit(root, ["gadgets", "gizmos"], iso(3600_000));
+  const origin = withRemote(root);
+  const peer = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-peer-"));
+  tmpRoots.push(peer);
+  sh(["clone", "-q", origin, peer], os.tmpdir());
+  for (const r of [root, peer]) withGateStubs(r);
+  // A delist (the listing and the index) and a revoke (an advisory and the
+  // withdrawal list) touch no file in common, so the second commit REBASES
+  // CLEANLY onto the first: the case a clean rebase used to push.
+  const a = [takedownOf("widgets", 0)];
+  const b = [decision({ service_decision_id: SDIS[1], plugin_id: "doohickeys", code: "M_REVOKE", category: "security_defect",
+    severity: "high", action: "block_install", moderator: "amoderator", versions: ["1.0.0"] })];
+  const first = await measuredJob(root, a, { now });
+  assert.deepEqual(first.results.compiled, [SDIS[0]], "the fixture: two withdrawn leave one slot, and A takes it");
+  const second = await measuredJob(peer, b, { now, env: { GITHUB_RUN_ID: "35502265999" } });
+  assert.deepEqual(second.results.compiled, [SDIS[1]], "the fixture: B, from the same tree, also sees one slot");
+  assert.equal(runApply(root, compileEnv({ entries: a })).status, 0);
+  const two = runApply(peer, { ...compileEnv({ entries: b }), GITHUB_RUN_ID: "35502265999" });
+  assert.equal(two.status, 0, `${two.stderr} ${two.stdout}`);
+  const listed = (id) => {
+    try {
+      return JSON.parse(sh(["show", `refs/heads/main:plugins/${id}/plugin.json`], origin)).unlisted !== true;
+    } catch {
+      return true;
+    }
+  };
+  const advisories = sh(["ls-tree", "--name-only", "refs/heads/main", "tools/revocations/"], origin).split("\n").filter((f) => f.endsWith(".json"));
+  const withdrawn = ["widgets", ...PEERS].filter((id) => !listed(id)).length + advisories.length;
+  assert.ok(withdrawn <= TAKEDOWN_BOUND,
+    `origin carries ${withdrawn} withdrawals in the trailing 24 h under a bound of ${TAKEDOWN_BOUND}: ${advisories.join(", ")}`);
+  assert.equal(advisories.length, 0, "the second run's revoke went out over a full bound");
+  const results = JSON.parse(two.outputs.results);
+  assert.deepEqual(results.held.map((h) => [h.service_decision_id, h.held_for]), [[SDIS[1], "bound"]],
+    "the second run's takedown was not held for the bound after the redo");
 });
 
 // Run 40833642707, 2026-10-29T07:15Z: two moderation runs were handed the
@@ -1925,9 +1974,7 @@ test("two runs over the same settled result give one commit and a green second r
     assert.deepEqual(second.paths, [SETTLED_FILE_PATH], "the second run did not record the row too, so it does not race");
     const two = runApply(peer, { ...compileEnv({ settled: [rowB] }), ...RUN_B });
     assert.equal(two.status, 0, `the second run over a settled result is red: ${two.stderr} ${two.stdout}`);
-    assert.match(two.stdout + two.stderr, identical
-      ? /is no longer there after the rebase/
-      : /does not rebase cleanly onto the new main; the compile runs again/);
+    assert.match(two.stdout + two.stderr, /the push was rejected \(try 1 of 3\); the compile runs again against the new main/);
     assert.match(two.stdout, /nothing left to commit/);
     assert.equal(headOf(origin), landed, "the second run pushed a commit over a result the first had already recorded");
     assert.equal(two.outputs.main_commit, "", "a run that pushed nothing names a commit");
