@@ -65,6 +65,7 @@ import {
   main,
   readShadow,
   resultsFor,
+  resultsFromState,
   schemaMembers,
   terminalSubmissionRecord,
   unsettled,
@@ -3335,6 +3336,157 @@ test("6.6.0: a `disable_confirmation` left from before is released as a bound ho
     `a leftover disable_confirmation with room in the window stayed stuck: nothing will confirm it now: ${released.logs.join(" | ")}`);
   assert.ok(released.paths.some((p) => /^tools\/revocations\/ASTRA-.*\.json$/.test(p)), released.paths.join(" "));
 });
+// ── R1/R2 (2026-10-29): a decision is applied once, and a release passes the rules ──
+//
+// Run 40810498499 released game-companion's `disable` (8bd29d5), its rules
+// step failed — self-test (b): the deleted hold entry was still in the index —
+// the `apply` step pushed anyway, `report` was skipped, and the service listed
+// the decision again. Run 40811066008 compiled it as a fresh `disable` and held
+// it a second time (abec3f9). Under 6.6.0 that stale listing would have
+// applied it twice: a second advisory on every installed copy.
+
+/** Every path the index holds is on disk: what `tools/selftest.mjs`'s (b) compares, and what failed. */
+function indexMatchesDisk(root) {
+  const tracked = sh(["ls-files", "-z"], root).split("\0").filter(Boolean);
+  return tracked.filter((p) => !fs.existsSync(path.join(root, p)));
+}
+const advisoriesOn = (root) => sh(["ls-files", "--", "tools/revocations/*.json"], root).split("\n").filter(Boolean);
+const disableOf = (sdi, id = "widgets", versions = ["1.0.0"]) => decision({
+  service_decision_id: sdi, plugin_id: id, code: "M_REVOKE", category: "malicious", severity: "high",
+  action: "disable", moderator: "amoderator", versions,
+});
+
+test("R1/R2: hold → confirm → release → a stale list still naming the id: one revoke commit, no new hold, and every release passes the index check", async () => {
+  const root = withDocuments(crowd());
+  const origin = withRemote(root);
+  withdrawnInGit(root, ["gadgets", "gizmos", "doohickeys"], "2026-09-20T11:30:00Z");
+  sh(["push", "-q", "origin", "HEAD:main"], root);
+  const d = disableOf(SDIS[0]);
+
+  const held = await measuredJob(root, [d], { now: new Date("2026-09-20T12:30:00Z") });
+  assert.deepEqual(held.results.held.map((h) => [h.service_decision_id, h.held_for]), [[SDIS[0], "bound"]]);
+  assert.equal(runApply(root, dated("2026-09-20T12:35:00Z")).status, 0);
+
+  const act = operatorAct({ root, act: "confirm", serviceDecisionId: SDIS[0], now: new Date("2026-09-20T12:40:00Z"), runId: "7" });
+  sh(["add", "--", ...act.paths], root);
+  sh(["commit", "-q", "-m", act.message], root, dated("2026-09-20T12:40:00Z"));
+  sh(["push", "-q", "origin", "HEAD:main"], root);
+
+  const released = await measuredJob(root, [], { now: new Date("2026-09-20T12:50:00Z") });
+  assert.deepEqual(released.results.released_holds, [SDIS[0]], released.logs.join(" | "));
+  assert.deepEqual(indexMatchesDisk(root), [],
+    "the release deleted the hold entry and its confirm record from disk and left both in the index; the rules step's " +
+    "self-test (b) then fails every release, which is what pushed 8bd29d5 past a red gate (R2)");
+  const step = runApply(root, dated("2026-09-20T12:55:00Z"));
+  assert.equal(step.status, 0, step.stderr);
+  const releaseCommit = headOf(origin);
+  assert.deepEqual(advisoriesOn(root).length, 1);
+
+  // `report` never ran. The service lists the decision again, and again.
+  for (const now of ["2026-09-20T13:00:00Z", "2026-09-20T13:10:00Z"]) {
+    const stale = await measuredJob(root, [d], { now: new Date(now) });
+    assert.equal(stale.code, 0, stale.logs.join("\n"));
+    assert.deepEqual([stale.paths, stale.results.held, stale.results.compiled], [[], [], []],
+      `a decision main already applied was compiled or held again (${JSON.stringify(stale.results.held)}): the 2026-10-29 re-hold, ` +
+      "and under 6.6.0 a second advisory");
+    assert.deepEqual(stale.results.already_applied, [{ service_decision_id: SDIS[0], commit: releaseCommit }]);
+    const { post } = resultsFromState(stale.results, { commit: "" });
+    assert.deepEqual(post.map((r) => [r.service_decision_id, r.outcome, r.commit]), [[SDIS[0], "applied", releaseCommit]],
+      "the stale listing was not answered `applied` naming the commit that applied it");
+  }
+  const revokes = sh(["log", "--format=%H", "origin/main", "--", "tools/revocations"], root).split("\n").filter(Boolean);
+  assert.equal(revokes.length, 1, `${revokes.length} commits touched tools/revocations; one decision, one revoke commit`);
+  assert.ok(!fs.existsSync(path.join(root, holdEntryPath(SDIS[0]))), "a new hold entry was written for an applied decision");
+});
+
+test("R1: abec3f9's tree — an applied `disable` and a stray hold for the same id: zero new advisories, the hold removed, `applied`", async () => {
+  // 3f996cae…, game-companion 0.1.1, as abec3f9 committed it.
+  const ID = "3f996cae-45c5-43a2-a24a-fd56ee1fcca0";
+  const root = withDocuments(estate({ id: "game-companion", versions: ["0.1.0", "0.1.1"], at: "2026-10-29T02:00:00Z" }));
+  const origin = withRemote(root);
+  const d = decision({
+    service_decision_id: ID, code: "M_REVOKE", category: "malicious", plugin_id: "game-companion", versions: ["0.1.1"],
+    decided_at: "2026-10-29T02:54:07Z", reason: "Using all ai limits, sends request every minute.", severity: "moderate",
+    action: "disable", moderator: "mod-1", declared_interest: false,
+  });
+  const applied = await measuredJob(root, [d], { now: new Date("2026-10-29T03:10:00Z") });
+  assert.deepEqual(applied.results.compiled, [ID], applied.logs.join(" | "));
+  assert.equal(runApply(root, dated("2026-10-29T03:11:10Z")).status, 0);
+  const appliedAt = headOf(origin);
+  const before = advisoriesOn(root);
+  assert.equal(before.length, 1);
+  // abec3f9: the stale listing compiled again and held, under the old rule.
+  writeAll(root, { [holdEntryPath(ID)]: holdFixture(d, { held_for: "disable_confirmation", held_at: "2026-10-29T03:15:35Z" }) });
+  commitAt(root, "2026-10-29T03:17:00Z", "registry: moderation (1 hold(s))");
+  sh(["push", "-q", "origin", "HEAD:main"], root);
+
+  for (const entries of [[d], []]) {
+    const job = await measuredJob(root, entries, { now: new Date("2026-10-29T04:00:00Z") });
+    assert.equal(job.code, 0, job.logs.join("\n"));
+    assert.deepEqual([job.results.compiled, job.results.held, job.results.released_holds], [[], [], []],
+      `the stray hold was applied or held again (listed: ${entries.length > 0})`);
+    assert.deepEqual(job.results.stray_holds, [ID], "the stray hold entry was not removed by the bot");
+    assert.deepEqual(job.paths, [holdEntryPath(ID)], `the stray's removal wrote more than the deletion: ${job.paths.join(" ")}`);
+    const { post } = resultsFromState(job.results, { commit: "" });
+    assert.deepEqual(post.map((r) => [r.service_decision_id, r.outcome, r.commit]), [[ID, "applied", appliedAt]],
+      "the stray was not settled `applied` naming the commit that applied the decision");
+    if (entries.length) fs.rmSync(path.join(root, "moderation"), { recursive: true, force: true });
+    else {
+      const step = runApply(root, dated("2026-10-29T04:05:00Z"));
+      assert.equal(step.status, 0, step.stderr);
+    }
+    sh(["checkout", "-q", "--", "."], root);
+    sh(["reset", "-q"], root);
+    sh(["checkout", "-q", "--", "."], root);
+  }
+  assert.deepEqual(advisoriesOn(root), before, "a new advisory was minted for a decision already applied");
+  assert.ok(!fs.existsSync(path.join(root, holdEntryPath(ID))), "the stray hold entry is still on main");
+  // And the next run reads the removal as `applied` against the original commit, never `cancelled`.
+  const next = await historyJob(root, { now: new Date("2026-10-29T04:20:00Z") });
+  assert.deepEqual(next.bodies.map((b) => [b.service_decision_id, b.outcome, b.commit]), [[ID, "applied", appliedAt]]);
+});
+
+test("R1: two different decision ids on one plugin both apply — the key is the id, never the plugin", async () => {
+  const root = withDocuments(crowd());
+  withRemote(root);
+  const revoke = decision({
+    service_decision_id: SDIS[0], code: "M_REVOKE", category: "security_defect", severity: "high",
+    action: "block_install", moderator: "amoderator", versions: ["1.0.0"],
+  });
+  const first = await measuredJob(root, [revoke]);
+  assert.deepEqual(first.results.compiled, [SDIS[0]]);
+  assert.equal(runApply(root).status, 0);
+  const deprecate = decision({
+    service_decision_id: SDIS[1], code: "M_DEPRECATE", category: "broken", severity: "low", moderator: "amoderator",
+    versions: ["1.1.0"],
+  });
+  const second = await measuredJob(root, [revoke, deprecate], { now: new Date("2026-09-20T13:00:00Z") });
+  assert.equal(second.code, 0, second.logs.join("\n"));
+  assert.deepEqual(second.results.compiled, [SDIS[1]],
+    "a second decision on a plugin with an applied one was skipped as if applied: the key is the plugin, not the id");
+  assert.deepEqual(second.results.already_applied.map((a) => a.service_decision_id), [SDIS[0]]);
+});
+
+test("R1: the push runs only after green gates, and `report` runs whenever a push happened", () => {
+  const yaml = read(".github/workflows/plugins-moderation.yml");
+  const ifOf = (id) => {
+    const lines = yaml.split("\n");
+    const at = lines.findIndex((l) => new RegExp(`^\\s+id: ${id}\\s*$`).test(l));
+    assert.ok(at > 0, `no step with id ${id}`);
+    for (let j = at - 2; j <= at + 3; j++) if (/^\s+if:/.test(lines[j] ?? "")) return lines[j];
+    return "";
+  };
+  const apply = ifOf("apply");
+  for (const gate of ["documents", "rules"]) {
+    assert.match(apply, new RegExp(`steps\\.${gate}\\.conclusion == 'success'`),
+      `the apply step pushes without its \`${gate}\` gate being green: a failed gate under \`!cancelled()\` still pushed 8bd29d5`);
+  }
+  const report = /^ {2}report:\n(?:.*\n)*? {4}if: (.*)$/m.exec(yaml)?.[1] ?? "";
+  assert.match(report, /needs\.commit\.outputs\.main_commit != ''/,
+    "report does not run after a push the commit job then failed on; the service then lists an applied decision again");
+});
+
+
 
 
 // ── M-T3.5: the operator's five acts (MOD-52, TRUST-33, BOT-70; TRUST-32's `ok`) ─
@@ -3767,11 +3919,14 @@ test("B-T4.2 (ii): a bound listing's reset applies in the run that compiles it, 
   const posted = await reportJob({ ASTRA_RESULTS: step.outputs.results, ASTRA_MAIN_COMMIT: step.outputs.main_commit });
   assert.equal(posted.code, 0, posted.logs.join("\n"));
   assert.deepEqual(posted.bodies.map((b) => [b.service_decision_id, b.outcome, b.commit]), [[SDI, "applied", landed]]);
-  // Listed again (its result lost): MOD-10 now refuses it, so nothing applies twice.
+  // Listed again (its result lost): main already carries it, so it is
+  // answered `applied`, naming the commit that applied it, and nothing is
+  // compiled or written a second time.
   const again = await commitJob(root, { entries: [resetOf()], now: new Date("2026-09-20T13:00:00Z") });
   assert.equal(again.code, 0, again.logs.join("\n"));
   assert.deepEqual(again.paths, [], "a reset was applied a second time");
-  assert.deepEqual(again.results.refused.map((r) => [r.service_decision_id, r.refusal]), [[SDI, "target_changed"]]);
+  assert.deepEqual(again.results.already_applied, [{ service_decision_id: SDI, commit: landed }]);
+  assert.deepEqual(again.results.refused, []);
 
   // Detector A9 excuses the deletion because the voiding record is beside it.
   const detected = detect({ root });

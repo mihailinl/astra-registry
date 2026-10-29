@@ -396,6 +396,7 @@ jobs:
       # gives the commit that lands it, which only that job knows (entry 69).
       # This step holds what it wrote to the generators' own `--check`.
       - name: The documents this commit produces are the generators' own
+        id: documents
         if: ${{ !cancelled() && steps.compile.conclusion == 'success' }}
         run: |
           set -euo pipefail
@@ -408,6 +409,7 @@ jobs:
       # here (ops entry 102). `bot/tests/workflows.test.mjs` holds every gate on
       # the validator to one set of flags.
       - name: Every registry rule, over the staged tree
+        id: rules
         if: ${{ !cancelled() && steps.compile.conclusion == 'success' }}
         run: |
           set -euo pipefail
@@ -442,9 +444,23 @@ jobs:
       # that would have named it (`resultsFor`) and `settled` pages for those
       # decisions: a dry run that had a takedown to land is RED, because the
       # takedown did not land, and that is what the alarm says.
+      #
+      # **It runs only when the documents and the rules are green.** Until
+      # 2026-10-29 this step shared the two gates' `if`, which `!cancelled()`
+      # makes true after a FAILED gate: run 40810498499's rules step failed, this
+      # step pushed anyway (8bd29d5, the release of game-companion's revoke),
+      # the job went red and `report` was skipped, so the service never heard
+      # `applied`, listed the decision again, and the next run held it a second
+      # time (abec3f9). A gate that does not stop the push is not a gate.
+      #
+      # **Deletions are staged already.** The commit job `git rm --cached`s
+      # every listed path it deleted (a released or cancelled hold, a reset's
+      # identity record) so the rules step reads the index this commit holds;
+      # `git add` here takes what is still on disk, and a listed path gone from
+      # disk but still in the index is a deletion nothing staged, which fails.
       - name: "Commit once, with a Service-Decision: trailer per decision, and push"
         id: apply
-        if: ${{ !cancelled() && steps.compile.conclusion == 'success' }}
+        if: ${{ !cancelled() && steps.compile.conclusion == 'success' && steps.documents.conclusion == 'success' && steps.rules.conclusion == 'success' }}
         run: |
           set -euo pipefail
           if [ ! -f moderation/paths.txt ]; then
@@ -461,7 +477,18 @@ jobs:
           else
             git config user.name "astra-registry-bot"
             git config user.email "bot@users.noreply.github.com"
-            git add --pathspec-from-file=moderation/paths.txt
+            : > moderation/present.txt
+            while IFS= read -r p; do
+              if [ -e "$p" ] || [ -L "$p" ]; then
+                printf '%s\n' "$p" >> moderation/present.txt
+              elif git ls-files --error-unmatch -- "$p" > /dev/null 2>&1; then
+                echo "::error::$p is listed for this commit and gone from disk, and its deletion is not staged"
+                exit 1
+              fi
+            done < moderation/paths.txt
+            if [ -s moderation/present.txt ]; then
+              git add --pathspec-from-file=moderation/present.txt
+            fi
             git commit --file=moderation/commit-message.txt
             # The tree rule on the commit just made, before it leaves the
             # runner (ops couplings 216). The validator above read the commit
@@ -485,9 +512,10 @@ jobs:
 
   # ── report: the result, and only once the commit landed ───────────────────
   #
-  # BOT-6. There is no `always()` here, so the default success() condition is
-  # the gate. A promise without a commit is this registry's oldest defect, and
-  # the service records what this job posts.
+  # BOT-6. It runs when `commit` succeeded or pushed (`main_commit` set), and
+  # never otherwise: a promise without a commit is this registry's oldest
+  # defect, and a commit without its result is the 2026-10-29 one. The service
+  # records what this job posts.
   #
   # Under a `shadow: true` list answer it posts NOTHING for the work that answer
   # names, a `held` result included: a settled `held` takes the decision off
@@ -509,7 +537,10 @@ jobs:
   # the next live run's `list`, until an answer settles it (ops entry 100).
   report:
     needs: [list, commit]
-    if: needs.commit.result == 'success'
+    # Whenever a push happened (R1, 2026-10-29): a commit that landed and was
+    # never reported is a decision the service lists again. A commit job that
+    # pushed and then failed still hands on `main_commit`.
+    if: ${{ !cancelled() && (needs.commit.result == 'success' || needs.commit.outputs.main_commit != '') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     environment: plugins-service

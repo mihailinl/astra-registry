@@ -1240,6 +1240,116 @@ export function holdDeletions(root = REPO_ROOT, { present = new Set() } = {}) {
   return out;
 }
 
+// ── idempotency: a decision `main` already applied is never applied again ───
+
+/**
+ * Which of `ids` the moderation log on this tree already carries, each with
+ * the first-parent commit that wrote its entry (`entryLanding`).
+ *
+ * **A decision is applied once, keyed by its exact `service_decision_id`.**
+ * On 2026-10-29 a run's rules step failed after its push had already landed
+ * the release of game-companion's `disable` (8bd29d5), so `report` never ran
+ * and the service never heard `applied`. It listed the decision again, and
+ * the next run compiled it as a fresh `disable` and held it a second time
+ * (abec3f9). Under contract 6.6.0 the same stale listing would have APPLIED it
+ * a second time — a duplicate advisory on every installed copy. The log entry
+ * is the fact that answers "was this applied": every applied decision but an
+ * `M_BINDING_REVOKE` (which writes nothing, so applying it again changes
+ * nothing) writes exactly one, naming `service_decision_id`, in the commit
+ * that applies it under `Service-Decision:`. Keyed by the id and never by the
+ * plugin: two different decisions on one plugin are two decisions.
+ *
+ * The earliest entry wins: a later one naming the same id can only be a
+ * person's, and the commit that applied the decision is the one BOT-81's
+ * `applied` names. A commit that cannot be read (a shallow checkout) is
+ * `null`, and the decision is still never applied again — only its result
+ * waits for a checkout that can name the commit.
+ *
+ * @param {string} root
+ * @param {Iterable<string>|null} [ids] the ids to answer for; all, when null.
+ * @returns {Map<string, {commit: string|null, at: string|null, file: string}>}
+ */
+export function appliedOnMain(root = REPO_ROOT, ids = null) {
+  const want = ids ? new Set(ids) : null;
+  const out = new Map();
+  if (want && want.size === 0) return out;
+  const { entries, files } = loadLogEntries({ root });
+  entries.forEach((e, i) => {
+    const id = e?.service_decision_id;
+    if (typeof id !== "string" || (want && !want.has(id))) return;
+    const file = `${MODERATION_DIR}/${files[i]}`;
+    const landed = entryLanding(root, file);
+    const row = { commit: landed.sha ?? null, at: landed.at ?? null, file };
+    const prev = out.get(id);
+    if (!prev || (row.at && (!prev.at || row.at < prev.at))) out.set(id, row);
+  });
+  return out;
+}
+
+/**
+ * The hold entries `walkHolds` found for a decision `main` already applied
+ * (`stray`), removed in one commit under each decision's `Service-Decision:`
+ * and with NO log entry, so nothing is applied again. The next run reads that
+ * commit through `holdDeletions`, and `walkHolds` reports it `applied`,
+ * naming the commit that applied the decision, never `cancelled`.
+ *
+ * @returns {{compiled: object[]}}
+ */
+export function settleStrays(stray, { root = REPO_ROOT } = {}) {
+  const out = { compiled: [] };
+  for (const { service_decision_id: id, hold } of stray ?? []) {
+    if (!id || hold?.entry?.service_decision_id !== id) {
+      throw new Error(`settleStrays was handed ${id} with a hold entry for ${hold?.entry?.service_decision_id}`);
+    }
+    const records = ["cancel", "confirm"]
+      .filter((act) => fs.existsSync(path.join(root, HOLDS_DIR, `${id}.${act}.json`)))
+      .map((act) => ({ op: "delete", file: `${HOLDS_PREFIX}/${id}.${act}.json` }));
+    out.compiled.push({
+      outcome: "compiled",
+      code: hold.entry.decision?.code ?? null,
+      service_decision_id: id,
+      edits: [{ op: "delete", file: holdEntryPath(id) }, ...records],
+      log: [],
+      advisories: [],
+      records: [],
+      alerts: [],
+      trailers: { "Service-Decision": id },
+    });
+  }
+  return out;
+}
+
+/**
+ * Tell the index about every path this commit lists that is gone from disk —
+ * a released or cancelled hold's entry and records, a reset's identity record
+ * — so that the workflow's rules step reads the tree this commit will hold.
+ *
+ * `tools/selftest.mjs`'s check (b) compares `git ls-files` with the tree on
+ * disk. The commit job deletes those files with `fs`, and until 2026-10-29 the
+ * index kept them until the `apply` step's `git add`, which runs AFTER the
+ * rules: every hold release failed the self-test (R2). `git rm --cached` here,
+ * and the `apply` step stages only what is still on disk.
+ *
+ * @returns {string[]} the paths whose deletion this staged.
+ */
+export function stageDeletions(root, paths) {
+  const gone = (paths ?? []).filter((p) => {
+    try {
+      fs.lstatSync(path.join(root, ...p.split("/")));
+      return false;
+    } catch {
+      return true;
+    }
+  });
+  if (!gone.length) return [];
+  execFileSync("git", ["-C", root, "rm", "--cached", "--quiet", "--ignore-unmatch", "--", ...gone], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...cleanEnv(), GIT_PAGER: "cat" },
+  });
+  return gone;
+}
+
 // ── holds, which run whether or not `list` answered ──────────────────────────
 
 /**
@@ -1306,9 +1416,11 @@ export function reversalCoverageRed(root, { coverage = coverageRun, log = consol
  * @returns {{admitted: Set<string>, confirmed: string[], waiting: string[]}}
  *   `admitted` is what `walkHolds` hands `resolveHold` as `boundAdmits`.
  */
-export function admitHeldTakedowns(root = REPO_ROOT, { ledger = null, head = null } = {}) {
+export function admitHeldTakedowns(root = REPO_ROOT, { ledger = null, head = null, applied = new Map() } = {}) {
   const out = { admitted: new Set(), confirmed: [], waiting: [] };
-  const holds = readHolds(root).filter((h) => h.entry && !h.problems?.length && !h.cancel);
+  // A hold for a decision `main` already applied is a stray (`walkHolds`):
+  // it is removed, never released, so it spends nothing.
+  const holds = readHolds(root).filter((h) => h.entry && !h.problems?.length && !h.cancel && !applied.has(h.entry.service_decision_id));
   if (!holds.length) return out;
   const listing = head ?? headListing(root);
   const id = (h) => h.entry.service_decision_id;
@@ -1388,10 +1500,35 @@ export function walkHolds({
 } = {}) {
   const out = {
     released: [], cancelled: [], waiting: [], due: [], releasable: [], cancellable: [], unclear: [], alerts: [],
-    pending: [], settled: [],
+    pending: [], settled: [], stray: [],
   };
   const onTree = readHolds(root);
+  const deletions = holdDeletions(root, { present: new Set(onTree.map((h) => h.id)) });
+  // The idempotency key (`appliedOnMain`): a hold for a decision the log on
+  // this tree already carries is a stray, and a deleted one settles `applied`.
+  const applied = appliedOnMain(root, [
+    ...onTree.map((h) => h.entry?.service_decision_id ?? h.id),
+    ...deletions.map((g) => g.id),
+  ]);
   for (const hold of onTree) {
+    const strayOf = applied.get(hold.entry?.service_decision_id ?? "");
+    if (hold.entry && strayOf) {
+      // Never released, never cancelled: the decision is applied already.
+      // The entry is removed (`settleStrays`) and the decision settles
+      // `applied`, naming the commit that applied it — posted now, since that
+      // commit is on `main` already.
+      const id = hold.entry.service_decision_id;
+      out.stray.push({
+        service_decision_id: id, hold, commit: strayOf.commit,
+        reason: `the moderation log on this tree already carries ${id} (${strayOf.file}), so this hold entry is a stray ` +
+          "and is removed; the decision is never applied twice",
+      });
+      const row = { service_decision_id: id, outcome: "applied", commit: strayOf.commit };
+      if (!strayOf.commit) continue;
+      if (settled.has(settledKey(row))) out.settled.push({ ...row, act: "release", hand: false, reason: "stray" });
+      else out.pending.push(row);
+      continue;
+    }
     // MOD-9's other end of a removal request: a bot-applied `author_request`
     // delist of the listing, dated on or after the hold. Read off the log on
     // this tree — which carries this run's own delists, written before the
@@ -1435,9 +1572,20 @@ export function walkHolds({
     });
   }
 
-  for (const gone of holdDeletions(root, { present: new Set(onTree.map((h) => h.id)) })) {
-    const c = classifyHoldCommit(gone);
-    const row = { service_decision_id: gone.id, act: c.act, outcome: c.result, commit: gone.sha, hand: c.hand, reason: c.reason };
+  for (const gone of deletions) {
+    let c = classifyHoldCommit(gone);
+    let commit = gone.sha;
+    const done = applied.get(gone.id);
+    if (done?.commit && (c.act === "cancel" || c.act === "release")) {
+      // The decision is in the log: whatever removed the entry — the release
+      // that applied it, a stray's removal, a hand deletion — it settles
+      // `applied`, naming the commit that wrote the log entry. Reading a
+      // stray's removal as `cancelled` would give the decision a second,
+      // contradictory final result.
+      c = { act: "release", result: "applied", hand: false, reason: `the moderation log carries ${gone.id} from ${done.commit}, so it was applied there` };
+      commit = done.commit;
+    }
+    const row = { service_decision_id: gone.id, act: c.act, outcome: c.result, commit, hand: c.hand, reason: c.reason };
     if (c.act === "unclear") {
       out.unclear.push(row);
       out.alerts.push({ kind: "hold_unclear", service_decision_id: gone.id, commit: gone.sha, why: c.reason });
@@ -1446,13 +1594,13 @@ export function walkHolds({
     if (c.act !== "release" && c.act !== "cancel") {
       throw new Error(`${gone.sha} deleted the hold entry for ${gone.id} and classifyHoldCommit answered ${c.act}`);
     }
-    if (settled.has(settledKey({ service_decision_id: gone.id, outcome: c.result, commit: gone.sha }))) {
+    if (settled.has(settledKey({ service_decision_id: gone.id, outcome: c.result, commit }))) {
       out.settled.push(row);
       continue;
     }
     if (c.hand) out.alerts.push({ kind: "hold_hand_cancelled", service_decision_id: gone.id, commit: gone.sha, why: c.reason });
     (c.act === "cancel" ? out.cancelled : out.released).push(row);
-    out.pending.push({ service_decision_id: gone.id, outcome: c.result, commit: gone.sha });
+    out.pending.push({ service_decision_id: gone.id, outcome: c.result, commit });
   }
   return out;
 }
@@ -1619,9 +1767,14 @@ export function cancelHolds(cancellable, { root = REPO_ROOT } = {}) {
  * (BOT-82), and one with no commit is a result it can only reject — or, worse,
  * record.
  */
-export function resultsFor({ compiled = [], refused = [], held = [], holds = { pending: [] }, commit = null, shadow = true }) {
+export function resultsFor({ compiled = [], refused = [], held = [], holds = { pending: [] }, alreadyApplied = [], commit = null, shadow = true }) {
   const pushed = typeof commit === "string" && commit !== "" ? commit : null;
   const results = [];
+  // A listed decision `main` already applied (`appliedOnMain`): `applied`,
+  // naming the commit that applied it, and nothing else — never `held`.
+  for (const a of alreadyApplied) {
+    results.push({ service_decision_id: a.service_decision_id, outcome: "applied", commit: a.commit ?? null, refusal_code: null });
+  }
   for (const r of compiled) {
     results.push({ service_decision_id: r.service_decision_id, outcome: "applied", commit: pushed, refusal_code: null });
   }
@@ -1729,6 +1882,7 @@ export function resultsFromState(state, { commit = null } = {}) {
     refused: state.refused ?? [],
     held: state.held,
     holds: state.holds ?? { pending: [] },
+    alreadyApplied: state.already_applied ?? [],
     commit,
     shadow: state.shadow === false ? false : true,
   });
@@ -2116,19 +2270,6 @@ export async function main(argv = [], {
     const counted = countWindow(root, { now });
     const ledger = boundLedger(counted, { staging: stagingListingId(root) });
     log.log(`bound  ${ledger.reason()}`);
-    // MOD-9 since contract 6.6.0: the takedowns already held are spent first —
-    // confirmed ones, then `bound` holds oldest first while the window admits
-    // them — so a hold releases by itself in the first run with room, and a
-    // takedown that arrived after it queues behind it. In shadow too: a hold's
-    // release is not work the list answer names.
-    const admission = admitHeldTakedowns(root, { ledger });
-    if (admission.admitted.size || admission.confirmed.length) {
-      log.log(`bound  held takedowns released this run: ${[...admission.confirmed, ...admission.admitted].join(", ")}; ` +
-        ledger.reason());
-    }
-    if (admission.waiting.length) {
-      log.log(`bound  held takedowns still waiting for room in the trailing 24 h: ${admission.waiting.join(", ")}`);
-    }
 
     // Re-checked, never trusted: `list` is a different job and its outputs
     // travel through the run's metadata. Re-reading them through the same
@@ -2155,9 +2296,42 @@ export async function main(argv = [], {
     }
     const refusedAtList = listRefused.decisions.map((r) => ({ service_decision_id: r.service_decision_id, refusal: r.code }));
 
+    // Idempotency by the exact `service_decision_id` (`appliedOnMain`): a
+    // listed decision the moderation log on this tree already carries was
+    // applied by an earlier run whose result never reached the service. It is
+    // not compiled, not held and not written again; it is answered `applied`,
+    // naming the commit that applied it. So is a hold entry on the tree for
+    // one (`walkHolds`'s `stray`, removed below).
+    const applied = appliedOnMain(root, [
+      ...recheck.entries.map((e) => e.service_decision_id),
+      ...readHolds(root).map((h) => h.entry?.service_decision_id).filter(Boolean),
+    ]);
+    const alreadyApplied = recheck.entries
+      .filter((e) => applied.has(e.service_decision_id))
+      .map((e) => ({ service_decision_id: e.service_decision_id, commit: applied.get(e.service_decision_id).commit }));
+    for (const a of alreadyApplied) {
+      log.log(`once  ${a.service_decision_id} is already applied on main in ${a.commit ?? "a commit this checkout cannot name"}; ` +
+        "it is answered `applied` and nothing is compiled or written for it");
+    }
+    const fresh = recheck.entries.filter((e) => !applied.has(e.service_decision_id));
+
+    // MOD-9 since contract 6.6.0: the takedowns already held are spent first —
+    // confirmed ones, then `bound` holds oldest first while the window admits
+    // them — so a hold releases by itself in the first run with room, and a
+    // takedown that arrived after it queues behind it. In shadow too: a hold's
+    // release is not work the list answer names.
+    const admission = admitHeldTakedowns(root, { ledger, applied });
+    if (admission.admitted.size || admission.confirmed.length) {
+      log.log(`bound  held takedowns released this run: ${[...admission.confirmed, ...admission.admitted].join(", ")}; ` +
+        ledger.reason());
+    }
+    if (admission.waiting.length) {
+      log.log(`bound  held takedowns still waiting for room in the trailing 24 h: ${admission.waiting.join(", ")}`);
+    }
+
     // Compiled in both modes: in shadow for timing (OPEN-OPS-13), and so that a
     // compile that throws is red in shadow too rather than first at R3's exit.
-    const compiledAll = compileAll(recheck.entries, { root, ledger });
+    const compiledAll = compileAll(fresh, { root, ledger });
     if (ledger.admitted.length) log.log(`bound  this run withdraws ${ledger.admitted.join(", ")}; ${ledger.reason()}`);
 
     // BOT-92: from here to `composeCommit`, the work the list answer names is
@@ -2207,6 +2381,9 @@ export async function main(argv = [], {
     written.push(...applyCompiled(releases.compiled, { root }));
     const cancels = cancelHolds(holds.cancellable, { root });
     written.push(...applyCompiled(cancels.compiled, { root }));
+    const strays = settleStrays(holds.stray, { root });
+    written.push(...applyCompiled(strays.compiled, { root }));
+    for (const s of holds.stray) log.log(`once  ${s.service_decision_id}: ${s.reason}`);
     const handed = parseSettled(env.ASTRA_SETTLED, log);
     let recorded = [];
     const refusedRows = [];
@@ -2231,7 +2408,7 @@ export async function main(argv = [], {
     }
     for (const p of refusedRows) log.error(`::warning::settled_row_refused: ${p}`);
     const composed = {
-      compiled: [...(live ? compiledAll.compiled : []), ...releases.compiled, ...cancels.compiled],
+      compiled: [...(live ? compiledAll.compiled : []), ...releases.compiled, ...cancels.compiled, ...strays.compiled],
       held: holdsEntered.entered,
       submissions: terminal,
       settled: recorded,
@@ -2284,6 +2461,13 @@ export async function main(argv = [], {
       // M-T3.3: the holds this commit cancels. Like a release, posted by the
       // next live run from the commit (`holdDeletions`), not by this one.
       cancelled_holds: cancels.compiled.map((r) => r.service_decision_id),
+      // Idempotency: listed decisions `main` had already applied, answered
+      // `applied` naming the commit that did; and stray hold entries for such
+      // decisions, removed by this commit with no log entry.
+      // Written in shadow too: it is no work, and `resultsFor` withholds its
+      // `applied` under a shadow answer like every other result.
+      already_applied: alreadyApplied,
+      stray_holds: strays.compiled.map((r) => r.service_decision_id),
       // Ops entry 100: what the record on this tree was, and the rows this
       // run added to it. `holds.settled` is what the walk passed over.
       settled: { record: record.state, recorded, problems: [...record.problems, ...refusedRows] },
@@ -2311,6 +2495,10 @@ export async function main(argv = [], {
     fs.rmSync(messageFile, { force: true });
     if (commit.message) fs.writeFileSync(messageFile, commit.message);
     fs.writeFileSync(path.join(out, "paths.txt"), commit.paths.length ? `${commit.paths.join("\n")}\n` : "");
+    // R2: the deletions this commit makes, staged now, so the workflow's rules
+    // step — `tools/selftest.mjs` compares the index with the tree — reads the
+    // tree this commit will hold (`stageDeletions`).
+    stageDeletions(root, commit.paths);
     // An unclear deletion is an error: nobody can say what happened, and no
     // result will be posted until a person does. A hand cancellation is the
     // documented way to end a hold, so it is a warning — but it is said,
