@@ -1501,7 +1501,7 @@
           "ui_contributions"
         ],
         "description": "AI chat, web search, and image and video generation. Automatic model routing, manual model selection, and connection checks in the plugin settings.",
-        "download_url": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.12/dwertyfa-prime-ai-0.2.12-noarch.astraplugin",
+        "download_url": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.14/dwertyfa-prime-ai-0.2.14-noarch.astraplugin",
         "downloads": 0,
         "i18n": {
           "ru": {
@@ -1514,12 +1514,38 @@
         "license": "MIT",
         "name": "PrimeAI",
         "platform_downloads": {
-          "linux-x64": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.12/dwertyfa-prime-ai-0.2.12-noarch.astraplugin",
-          "noarch": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.12/dwertyfa-prime-ai-0.2.12-noarch.astraplugin",
-          "windows-x64": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.12/dwertyfa-prime-ai-0.2.12-noarch.astraplugin"
+          "linux-x64": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.14/dwertyfa-prime-ai-0.2.14-noarch.astraplugin",
+          "noarch": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.14/dwertyfa-prime-ai-0.2.14-noarch.astraplugin",
+          "windows-x64": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.14/dwertyfa-prime-ai-0.2.14-noarch.astraplugin"
         },
         "readme": "# PrimeAI for Astra\n\nAI provider using the Router API with automatic route selection.\n\nKnown routing failures report unavailable providers, timeouts or stream interruptions without exposing upstream details.\nChat requests retry temporary connection failures, HTTP 5xx and incomplete streams up to three attempts before any response content is delivered. After output starts, provider fallback continues on the server with the original conversation and partial answer. Completed tool results stay in the history; failed attempts do not publish tool calls. Generation requests are not repeated.\n\nThe plugin connects to `https://sphereprime.online` automatically using short-lived sessions. No shared server key is included in the source or bundle.\n\nThe settings panel includes a persistent **Краткие ответы** toggle, enabled by default. Its value is sent separately from Astra's unchanged system prompt. The server applies the selected answer length while retaining the global policy and other instructions. Disable it for detail as needed; new requests use the saved setting.\n\nTo use a different deployment, create `deployment.json` in the installed plugin directory:\n\n```json\n{\n  \"serverUrl\": \"https://<host>/\",\n  \"pluginToken\": \"\"\n}\n```\n\nBuild and package:\n\n```sh\nbun install\nbun run typecheck\nbun run test\nbun run bundle\n```\n\nOutput: `dwertyfa-prime-ai-<version>-noarch.astraplugin`.\n\n## Releases\n\nSet the version with `astra-plugin version <version>`, commit, and push the matching `v<version>` tag. GitHub Actions calls Astra's pinned release workflow to build, attest, and publish the bundle. Local bundles are for manual installation.\n\n## Image input\n\nThe bridge accepts OpenAI `text` and `image_url` content parts and preserves images throughout conversation history. Vision models are labeled in the model picker.\n\nAstra SDK 0.7.0 exposes only string message content in its protobuf protocol. Native Astra chat attachments cannot reach this plugin until the host and SDK add multimodal messages. Bridge support alone does not enable attachments in Astra.\n\n## Web search\n\nPrimeAI 0.2.1 uses the server's DuckDuckGo MCP search. The `primeai_web_search` tool accepts `query` and an optional `limit` from 1 to 10. Built-in Astra `web_search` calls are redirected when PrimeAI provides the model. Update the plugin to enable this behavior.\n\n## Task instructions\n\n`primeai_search_instructions` searches the server library by `query` and returns up to 12 metadata entries. `primeai_read_instruction` reads a selected `id`, with optional `offset` and `limit` (up to 16000 characters). Follow `nextOffset` for more of the same module.\n\nThe library includes task guidance, Superpowers workflows and UI UX Pro Max references. Bodies load only when read; chat requests receive tool definitions without automatically adding instruction text. Configure the global system prompt to announce reading in Russian, search before substantive work, read relevant IDs and reuse instructions already in context. User/project rules, existing authorization and actual tool availability take precedence.\n",
         "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "dwertyfa-prime-ai-0.2.14-noarch.astraplugin",
+                "sha256": "3dc1f65fdb074275a0c65a47ee8d17a482c5f2131a914ef46e6d0132c8ac4508",
+                "size": 249135,
+                "url": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.14/dwertyfa-prime-ai-0.2.14-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "ai_provider",
+              "tools",
+              "ui_contributions"
+            ],
+            "permissions": {},
+            "protocol": 1,
+            "published_at": "2026-10-29T05:27:48Z",
+            "release": {
+              "commit": "1f7d8a74065de4728864e07088ec818749b84380",
+              "kind": "github_release",
+              "repo": "SpherePrime/PrimeAi",
+              "tag": "v0.2.14"
+            },
+            "review": "unreviewed",
+            "version": "0.2.14"
+          },
           {
             "artifacts": {
               "noarch": {
@@ -1735,8 +1761,8 @@
           "repo": "SpherePrime/PrimeAi"
         },
         "stars": 0,
-        "updated_at": "2026-10-29T04:29:21Z",
-        "version": "0.2.12"
+        "updated_at": "2026-10-29T05:27:48Z",
+        "version": "0.2.14"
       },
       {
         "added_at": "2026-10-25",
@@ -4589,6 +4615,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 115
+    "serial": 116
   }
 }
