@@ -515,6 +515,14 @@ export function id41({ identity, record, lineHash }) {
 
 // ── the approval (BOT-26) ───────────────────────────────────────────────────
 
+/** Is the owner file's newest commit the repository owner's own direct commit (ID-63; MIG-10's self path)? */
+function ownFile(ownerFile, ids) {
+  return Boolean(ownerFile)
+    && typeof ownerFile.commit === "string" && /^[0-9a-f]{40}$/.test(ownerFile.commit)
+    && ownerFile.pull_request === false
+    && isStr(ownerFile.author_id) && ownerFile.author_id === ids?.repository_owner_id;
+}
+
 /** The accounts whose own first binding needs no moderator (contract 6.7.0, MIG-10): what `compareActor` calls them. */
 export const FIRST_BINDING_SELF_BASES = Object.freeze(["owner", "admin", "maintain"]);
 
@@ -544,9 +552,16 @@ export const FIRST_BINDING_SELF_BASES = Object.freeze(["owner", "admin", "mainta
  *
  * @returns {{by: string, alert?: object, windowEndsAt?: string}|null}
  */
-export function firstBindingCleared({ actor, verdict, lineHash, records = [], alerts = null, denied = null, ids, pluginId, oks = null, fingerprint = null }) {
+export function firstBindingCleared({ actor, verdict, lineHash, records = [], alerts = null, denied = null, ids, pluginId, oks = null, fingerprint = null, ownerFile = null }) {
   if (!lineHash || verdict !== "pass") return null;
-  if (actor?.privileged === true && FIRST_BINDING_SELF_BASES.includes(actor.basis)) return { by: actor.basis };
+  // The self path needs the owner FILE to be the owner's too (ID-63): a
+  // stranger's merged pull request can carry a token the stranger minted —
+  // anyone can mint one for any repository id (ID-10, ID-13), so the service
+  // says `pass` — and the owner's own next build would then bind the listing
+  // to the stranger. So the newest commit touching the owner file must be
+  // known, tied to no pull request, and linked to the owner's GitHub account.
+  // Anything unread or otherwise holds for a moderator, as before.
+  if (actor?.privileged === true && FIRST_BINDING_SELF_BASES.includes(actor.basis) && ownFile(ownerFile, ids)) return { by: actor.basis };
   for (const [fp, alert] of alerts ?? []) {
     // The approved release itself is not covered by its own approval: it
     // publishes through that approval, with its moderator on the record.
@@ -1243,7 +1258,7 @@ export function decideSubmission(input) {
     if (binding.outcome === "one") {
       firstCleared = firstBindingCleared({
         actor: verified.actor, verdict, lineHash, records, alerts: git.alerts, denied: git.denied, oks: git.oks,
-        ids: identity, pluginId: verified.plugin_id, fingerprint: verified.fingerprint,
+        ids: identity, pluginId: verified.plugin_id, fingerprint: verified.fingerprint, ownerFile: verified.owner_file,
       });
       if (!firstCleared) heldCodes.push("R_FIRST_BINDING");
     }

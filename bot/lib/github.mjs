@@ -528,10 +528,17 @@ export async function lastCommitTouching(repositoryId, sha, filePath, { fetchImp
   const answer = await read(url, { fetchImpl });
   if (answer.status !== "found") return { status: answer.status, reason: answer.reason, commit: null };
   const list = Array.isArray(answer.parsed) ? answer.parsed : [];
+  // The GitHub account the commit is linked to (the top-level `author`, not
+  // the git author name inside `commit`), for MIG-10's self path (6.7.0).
+  // Null when GitHub links the commit to no account, or the id would not
+  // survive JSON.parse: a reader asks for it and holds when it is absent.
+  const linked = list[0]?.author;
+  const authorId = linked && Number.isSafeInteger(linked.id) && linked.id > 0 ? String(linked.id) : null;
   return {
     status: "found",
     reason: answer.reason,
     commit: typeof list[0]?.sha === "string" ? list[0].sha : null,
+    author_id: authorId,
   };
 }
 

@@ -2734,7 +2734,8 @@ const fbVerified = (over = {}) => {
   const version = over.version ?? P.version;
   const tag = over.tag ?? P.tag;
   const fp = submissionFingerprint({ repo: P.repo, tag, id: P.id, version, commit: P.commit, digests: DIGESTS });
-  return verified({ binding: FB_LINE, owner_file: { commit: "9".repeat(40), pull_request: false }, version, tag, fingerprint: fp, ...over });
+  // The owner file: the owner's own direct commit unless a case says otherwise (ID-63).
+  return verified({ binding: FB_LINE, owner_file: { commit: "9".repeat(40), pull_request: false, author_id: P.oid }, version, tag, fingerprint: fp, ...over });
 };
 const fbRun = ({ actor = null, version, tag, verdict = "pass", records = [baseline()], alerts = new Map(), denied = new Set(), listingState = { state: "grandfathered" } } = {}) => decideWith({
   verified: fbVerified({ actor, ...(version ? { version } : {}), ...(tag ? { tag } : {}) }),
@@ -2780,6 +2781,35 @@ test("6.7.0 (MIG-10): the owner's own first binding, with a live token, publishe
   });
   assert.equal(moved.state, "held");
   assert.deepEqual(heldCodesOf(moved), ["R_IDENTITY_CHANGED"], "the owner's cleared first binding took an identity hold with it");
+});
+
+// Adversarial review of #480 (HIGH): a stranger's large pull request also
+// adds `.well-known/astra-plugin-owner` with a token the STRANGER minted —
+// anyone can mint one for any repository id, so the service answers `pass` —
+// the owner merges it, and the owner's own next build would bind the listing
+// to the stranger. ID-63 is that takeover. The self path now needs the owner
+// file's newest commit to be the owner's own direct commit. Watched red: the
+// self path without the owner-file test publishes the stranger's binding.
+test("6.7.0 (MIG-10, ID-63): the owner's build over a stranger's merged owner file is held; the owner's own direct commit clears", () => {
+  const owner = { triggering_actor_id: P.oid, floor_days: 0, privileged: true, basis: "owner" };
+  const run = (ownerFile) => decideWith({
+    verified: fbVerified({ actor: owner, owner_file: ownerFile }),
+    ask: ask({ verdict: "pass", gates: { stop_status: "no_stop", decisions: [] }, notice: { kind: "first", status: "pending" } }),
+    git: git({ existing: existing(), listingState: { state: "grandfathered" }, records: [baseline()] }),
+  });
+  const stranger = run({ commit: "9".repeat(40), pull_request: true, author_id: "700000555" });
+  assert.ok(heldCodesOf(stranger).includes("R_FIRST_BINDING"), "the owner's build over a stranger's merged owner file bound the listing");
+  for (const [what, file] of [
+    ["a pull request the owner authored", { commit: "9".repeat(40), pull_request: true, author_id: P.oid }],
+    ["a direct commit by another account", { commit: "9".repeat(40), pull_request: false, author_id: "700000555" }],
+    ["a commit GitHub links to no account", { commit: "9".repeat(40), pull_request: false, author_id: null }],
+    ["an owner file nobody read", null],
+    ["no commit", { commit: null, pull_request: false, author_id: P.oid }],
+  ]) {
+    assert.ok(heldCodesOf(run(file)).includes("R_FIRST_BINDING"), `${what} cleared the first binding`);
+  }
+  const own = run({ commit: "9".repeat(40), pull_request: false, author_id: P.oid });
+  assert.equal(own.state, "published", `the owner's own direct commit did not clear: ${JSON.stringify(heldCodesOf(own))}`);
 });
 
 test("6.7.0 (MIG-10): a second tag under a binding a moderator approved is not held again; it waits the first's window, and a deny stops it", () => {
