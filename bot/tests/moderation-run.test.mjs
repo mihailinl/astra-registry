@@ -3611,6 +3611,70 @@ test("R1/R2: hold → confirm → release → a stale list still naming the id: 
   assert.ok(!fs.existsSync(path.join(root, holdEntryPath(SDIS[0]))), "a new hold entry was written for an applied decision");
 });
 
+// b41b72b, 2026-10-29T07:07Z: the stray-hold cleanup for 3f996cae removed
+// one hold entry and ALSO rewrote registry/v1/revocations.json, `serial` 17 →
+// 18 and not one other byte. The formula had moved at ca06321, the merge of a
+// branch that forked before 8bd29d5's advisory (`--full-history` counts a
+// merge whose tree differs from either parent), and the regeneration wrote
+// the new number over an unchanged list. A commit that changes no advisory now
+// leaves the list as it is.
+test("a release or cleanup that changes no advisory does not rewrite the withdrawal list, even when the serial formula moved", async () => {
+  const ID = "3f996cae-45c5-43a2-a24a-fd56ee1fcca0";
+  const root = withDocuments(estate({ id: "game-companion", versions: ["0.1.0", "0.1.1"], at: "2026-10-29T02:00:00Z" }));
+  const origin = withRemote(root);
+  const forkPoint = headOf(origin);
+  const d = decision({
+    service_decision_id: ID, code: "M_REVOKE", category: "malicious", plugin_id: "game-companion", versions: ["0.1.1"],
+    decided_at: "2026-10-29T02:54:07Z", reason: "Using all ai limits, sends request every minute.", severity: "moderate",
+    action: "disable", moderator: "mod-1", declared_interest: false,
+  });
+  assert.deepEqual((await measuredJob(root, [d], { now: new Date("2026-10-29T03:10:00Z") })).results.compiled, [ID]);
+  assert.equal(runApply(root, dated("2026-10-29T03:11:10Z")).status, 0);
+  // ca06321: a branch from before the advisory, merged after it.
+  sh(["checkout", "-q", "-b", "side", forkPoint], root);
+  writeAll(root, { "bot/README.txt": "a bot change on a branch\n" });
+  sh(["add", "-A"], root);
+  sh(["commit", "-q", "-m", "bot: a change"], root, dated("2026-10-29T04:00:00Z"));
+  sh(["checkout", "-q", "main"], root);
+  sh(["merge", "-q", "--no-ff", "-m", "Merge pull request #478", "side"], root, dated("2026-10-29T05:00:00Z"));
+  sh(["push", "-q", "origin", "HEAD:main"], root);
+  const listBefore = sh(["show", `HEAD:${REVOCATIONS_FILE}`], root);
+  const formula = serialsAt({ root, sha: headOf(origin) }).revocations;
+  assert.equal(formula, JSON.parse(listBefore).signed.serial + 1,
+    "the fixture's merge did not move the formula, so it does not reproduce ca06321");
+  // abec3f9's stray hold, and its cleanup.
+  writeAll(root, { [holdEntryPath(ID)]: holdFixture(d, { held_for: "disable_confirmation", held_at: "2026-10-29T05:15:35Z" }) });
+  commitAt(root, "2026-10-29T05:17:00Z", "registry: moderation (1 hold(s))");
+  sh(["push", "-q", "origin", "HEAD:main"], root);
+  const job = await measuredJob(root, [], { now: new Date("2026-10-29T07:07:00Z") });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.stray_holds, [ID]);
+  assert.deepEqual(job.paths, [holdEntryPath(ID)],
+    `a cleanup that changes no advisory rewrote ${job.paths.filter((p) => p !== holdEntryPath(ID)).join(", ")}`);
+  const step = runApply(root, dated("2026-10-29T07:07:18Z"));
+  assert.equal(step.status, 0, step.stderr);
+  assert.equal(sh(["show", `${headOf(origin)}:${REVOCATIONS_FILE}`], root), listBefore, "the landed withdrawal list is not the one main had");
+  const check = spawnSync(process.execPath, [path.join(REPO, "bot", "moderation-run.mjs"), "--job", "documents-at-head", "--registry-dir", root],
+    { cwd: root, encoding: "utf8", env: fixtureEnv(root) });
+  assert.equal(check.status, 0, `the re-check refuses a list this commit did not write: ${check.stderr}`);
+
+  // The control: a commit that DOES change an advisory rewrites the list, at
+  // the serial the signer gives the commit that lands it.
+  const lift = decision({
+    service_decision_id: "0192f3a4-5b6c-7d8e-9f01-2345678930aa", code: "M_UNREVOKE", category: "error", plugin_id: "game-companion",
+    versions: ["0.1.1"], moderator: "mod-1", reverses: ID, decided_at: "2026-10-29T08:00:00Z",
+  });
+  const lifted = await measuredJob(root, [lift], { now: new Date("2026-10-29T08:10:00Z") });
+  assert.equal(lifted.code, 0, lifted.logs.join("\n"));
+  assert.deepEqual(lifted.results.compiled, [lift.service_decision_id], JSON.stringify(lifted.results.refused));
+  {
+    assert.ok(lifted.paths.includes(REVOCATIONS_FILE), `an advisory change left the list alone: ${lifted.paths.join(", ")}`);
+    assert.equal(runApply(root, dated("2026-10-29T08:11:00Z")).status, 0);
+    assert.equal(JSON.parse(sh(["show", `${headOf(origin)}:${REVOCATIONS_FILE}`], root)).signed.serial,
+      serialsAt({ root, sha: headOf(origin) }).revocations);
+  }
+});
+
 test("R1: abec3f9's tree — an applied `disable` and a stray hold for the same id: zero new advisories, the hold removed, `applied`", async () => {
   // 3f996cae…, game-companion 0.1.1, as abec3f9 committed it.
   const ID = "3f996cae-45c5-43a2-a24a-fd56ee1fcca0";

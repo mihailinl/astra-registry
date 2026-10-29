@@ -999,7 +999,8 @@ export const movesListSerial = (paths) =>
 export function regenerateDocuments({ root = REPO_ROOT, paths = [] } = {}) {
   if (!paths.length) return { changed: [], serials: null };
   const index = buildIndex({ root });
-  const list = buildRevocations({ root, serial: listSerialAtHead({ root, pending: false }) + (movesListSerial(paths) ? 1 : 0) });
+  const moves = movesListSerial(paths);
+  const list = buildRevocations({ root, serial: listSerialAtHead({ root, pending: false }) + (moves ? 1 : 0) });
   const changed = [];
   for (const [rel, doc] of [[INDEX_FILE, index], [REVOCATIONS_FILE, list]]) {
     if (!allowedPath(rel)) {
@@ -1008,11 +1009,34 @@ export function regenerateDocuments({ root = REPO_ROOT, paths = [] } = {}) {
     const full = path.join(root, ...rel.split("/"));
     const text = stableStringify(doc);
     if (fs.existsSync(full) && fs.readFileSync(full, "utf8") === text) continue;
+    // A commit that changes no advisory does not rewrite the withdrawal list.
+    // b41b72b (the stray-hold cleanup for 3f996cae) moved its `serial` 17 → 18
+    // and nothing else: the formula had moved at a merge, and the regeneration
+    // wrote the new number over an unchanged list. A list rewritten for a
+    // number alone tells every reader to fetch it again for nothing. So when
+    // this commit's paths do not move the list and the committed list says
+    // what the sources say, it stays as it is; `--check` compares it by
+    // content at its own serial (ROLL-12), and the signer builds the served
+    // list from the sources and never reads this file.
+    if (rel === REVOCATIONS_FILE && !moves && listSaysSame(full, doc)) continue;
     fs.mkdirSync(path.dirname(full), { recursive: true });
     fs.writeFileSync(full, text);
     changed.push(rel);
   }
   return { changed, serials: { index: index.signed.serial, revocations: list.signed.serial } };
+}
+
+/** Does the committed list at `full` carry exactly `doc`'s withdrawals, whatever its serial? */
+function listSaysSame(full, doc) {
+  if (!fs.existsSync(full)) return false;
+  let have;
+  try {
+    have = JSON.parse(fs.readFileSync(full, "utf8"));
+  } catch {
+    return false;
+  }
+  const content = (d) => stableStringify({ schema: d?.signed?.schema, revocations: d?.signed?.revocations ?? [] });
+  return Number.isSafeInteger(have?.signed?.serial) && content(have) === content(doc);
 }
 
 // ── holds: entering one ─────────────────────────────────────────────────────
@@ -1028,10 +1052,17 @@ export function documentsAtHead({ root = REPO_ROOT } = {}) {
     [INDEX_FILE, buildIndex({ root })],
     [REVOCATIONS_FILE, buildRevocations({ root, serial: listSerialAtHead({ root, pending: false }) })],
   ];
+  // The list is held to HEAD's serial only when HEAD wrote it. A commit that
+  // changes no advisory leaves the list `main` had (`regenerateDocuments`),
+  // which is compared by content at its own serial, as `--check` compares it.
+  const touched = execFileSync("git", ["-C", root, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "HEAD"], {
+    encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...cleanEnv(), GIT_PAGER: "cat", GIT_OPTIONAL_LOCKS: "0" },
+  }).split("\n").filter(Boolean);
   for (const [rel, doc] of want) {
     const full = path.join(root, ...rel.split("/"));
     const have = fs.existsSync(full) ? fs.readFileSync(full, "utf8") : null;
     if (have === null) continue;
+    if (rel === REVOCATIONS_FILE && !touched.includes(REVOCATIONS_FILE) && listSaysSame(full, doc)) continue;
     if (have !== stableStringify(doc)) {
       problems.push(`${rel} at HEAD is not what the generator produces there` +
         (rel === REVOCATIONS_FILE ? ` at serial ${doc.signed.serial}` : "") +
