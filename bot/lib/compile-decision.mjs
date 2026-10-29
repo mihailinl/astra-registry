@@ -53,10 +53,10 @@
 // does not know must take.
 //
 // Refusals are checked BEFORE the MOD-9 hold, and that order is load-bearing.
-// A `M_RELIST` under a signed advisory is refused rather than held: holding it
-// would put an entry in `state/holds/` waiting for an operator to confirm
-// something that can never be applied, and M-T3.3's release commit applies a
-// held decision FROM THE ENTRY without re-asking this file.
+// A takedown whose target is gone is refused rather than held: holding it
+// would put an entry in `state/holds/` that waits for TRUST-26's window to
+// release something that can never be applied. A release re-asks every
+// refusal against the tree it writes (`release`), because the hold waited.
 //
 // ── THE TWO YANKS ARE NOT SYMMETRIC, AND THAT IS DELIBERATE ─────────────────
 //
@@ -100,20 +100,16 @@
 //
 // ── WHAT THIS FILE DOES NOT COMPILE, WRITTEN DOWN RATHER THAN DISCOVERED ────
 //
-//   * `M_RELIST` and `M_UNREVOKE` have no compile branch. MOD-9 holds both
-//     unconditionally, and M-T3.3's release commit "applies the held decision
-//     from the hold entry" — so the plan puts the apply there and M-T3.1's own
-//     "Compiles" list names neither. What IS here is their three refusals,
-//     which must run before the hold.
-//   * `M_IDENTITY_RESET` (contract 2.5.0; B-T4.2) is held the same way — MOD-9
-//     names it a reversal — after MOD-10's refusal (`target_changed` for an id
-//     `main` holds no newer `B_REPOSITORY_RECYCLED` record for). Its release is
-//     the one M-T3.3 release this file DOES compose, `compileIdentityReset`,
-//     because the release commit is the whole of what the reset is: DEC-7's
-//     voiding record, the identity record deleted where one exists (ID-40's
-//     one exception), and the log entry `reset`, in one commit carrying
-//     `Service-Decision:`. It re-asks every question the compile asked before
-//     the hold, by calling the compile, against the tree the release writes.
+//   * Nothing here is held for a person any more. Until contract 6.6.0 MOD-9
+//     held `M_RELIST`, `M_UNREVOKE` and `M_IDENTITY_RESET` for 24 hours and an
+//     operator's confirmation, and an `M_REVOKE` with action `disable` for a
+//     confirmation; on 2026-10-29 the owner made the console's step-up the
+//     only confirmation. So the three reversals compile in the run that reads
+//     them (`compileRelist`, `compileUnrevoke`, `composeIdentityReset`), after
+//     their refusals — the relist's three and MOD-10's for a reset, which
+//     still refuses rather than holds — and a `disable` compiles as every
+//     advisory does. The same branches release a hold left on the tree from
+//     before (`release`), so there is one composer per code and not two.
 //   * MOD-33's decision record for an appealed refusal. The log entry is
 //     composed; the record is not, and it CANNOT be today: BOT-35 has four key
 //     domains and none of them is an appeal. `submission:<submission_id>` — the
@@ -343,8 +339,9 @@ export const KNOWN_CODES = Object.freeze({
   M_APPEAL: "appeal",
   M_RELIST: "reversal",
   M_UNREVOKE: "reversal",
-  // MOD-9 names it a reversal (contract 2.5.0), so it is held unconditionally
-  // and its artefacts are composed at release (`compileIdentityReset`).
+  // MOD-9 named it a reversal (contract 2.5.0). Since 6.6.0 no reversal is
+  // held: its artefacts are composed in the run that compiles it
+  // (`composeIdentityReset`), after MOD-10's refusal.
   M_IDENTITY_RESET: "reversal",
   M_BINDING_REVOKE: "nothing",
   // Contract 3.0.0 (MOD-56): the one decision that adds trust. Compiled by
@@ -798,8 +795,11 @@ export function recordInBatch(batch, result) {
 }
 
 /**
- * The hold kinds a MOD-52 confirmation releases (M-T3.3): every kind but
- * `unbound_yank`, which nothing releases.
+ * The hold kinds a release may name (M-T3.3): every kind but `unbound_yank`,
+ * which nothing releases. `bound` on a MOD-52 confirmation or when TRUST-26's
+ * window admits it; `unbound_removal` on a confirmation; and the two kinds the
+ * rule before contract 6.6.0 wrote, `reversal` and `disable_confirmation`,
+ * when a run meets one left on the tree (`bot/lib/holds.mjs`'s header).
  */
 export const RELEASABLE_KINDS = Object.freeze(["unbound_removal", "reversal", "disable_confirmation", "bound"]);
 
@@ -869,8 +869,8 @@ export function compileDecision(entry, { root = REPO_ROOT, overBound = false, ba
     }
     // DEC-7's voiding record names the moderator who reset the id; BOT-80
     // carries the handle for an `M_*` code. One arriving without it is a
-    // decision whose record cannot be written, and it is refused before it is
-    // held rather than failing the release 24 hours later.
+    // decision whose record cannot be written, and it is refused here rather
+    // than failing at the composer with a record the schema refuses.
     if (typeof d.moderator !== "string" || d.moderator === "") {
       return refuse(d, "kind_refused",
         "an M_IDENTITY_RESET carries its `moderator` (BOT-80), which DEC-7's voiding record names, and this one " +
@@ -988,13 +988,14 @@ export function compileDecision(entry, { root = REPO_ROOT, overBound = false, ba
     }
   }
 
-  // ── MOD-10's reset refusal, before the hold ──────────────────────────────
+  // ── MOD-10's reset refusal ───────────────────────────────────────────────
   //
   // "reset the identity of a `plugin_id` for which `main` holds no decision
   // record whose `reasons` carry `B_REPOSITORY_RECYCLED` and that is newer
-  // than the id's newest voiding record" — refused `target_changed`. Before
-  // the hold, for the reason the relist refusals are: a held reset nothing
-  // can apply would wait 24 hours for an operator to confirm a no-op.
+  // than the id's newest voiding record" — refused `target_changed`. MOD-9
+  // since contract 6.6.0: checked when the reset is compiled, and a reset
+  // whose condition fails is refused, never held. The same question is asked
+  // of a leftover reset's release, against the tree the release writes.
   if (code === VOIDING_CODE) {
     const target = resetTarget(root, listing.id);
     if (!target.recycled) {
@@ -1007,13 +1008,15 @@ export function compileDecision(entry, { root = REPO_ROOT, overBound = false, ba
 
   // ── MOD-9's holds, after the refusals and before any artefact ────────────
   //
-  // `release` is the kind an operator's MOD-52 confirmation released (M-T3.3):
-  // the hold it names, and no other, is passed. Every refusal above was asked
-  // again first, because the hold waited and the tree may have moved; and a
-  // decision the tree would now hold for a DIFFERENT, stricter reason — a
-  // listing that lost its identity record under an `A_REMOVAL_REQUEST`
-  // confirmed as a bound takedown — is held for that reason, which the caller
-  // refuses to release rather than applying it on a confirmation for another.
+  // `release` is the kind being released (M-T3.3) — on an operator's MOD-52
+  // confirmation, on TRUST-26's window admitting a `bound` hold, or for a
+  // leftover from before contract 6.6.0: the hold it names, and no other, is
+  // passed. Every refusal above was asked again first, because the hold waited
+  // and the tree may have moved; and a decision the tree would now hold for a
+  // DIFFERENT, stricter reason — a listing that lost its identity record under
+  // an `A_REMOVAL_REQUEST` released as a bound takedown — is held for that
+  // reason, which the caller refuses to release rather than applying it on an
+  // answer to another.
   const kind = holdKindFor(d, { overBound, listingBound: listing.bound });
   if (kind && kind !== release) {
     return held(d, kind, holdWhy(kind, d, listing));
@@ -1026,19 +1029,18 @@ export function compileDecision(entry, { root = REPO_ROOT, overBound = false, ba
     case "advisory": return compileAdvisory(root, d, listing, { decidedAt, date, reason, batch });
     case "review": return compileReview(root, d, listing, { decidedAt, date, reason, batch });
     case "reversal":
-      // Reached only on a release: `holdKindFor` holds every reversal code,
-      // and the line above passes the hold only when `release` names it.
+      // MOD-9 since contract 6.6.0: a reversal applies in the run that
+      // compiles it, like any other decision. The moderator's step-up in the
+      // console is its confirmation.
       if (code === "M_RELIST") return compileRelist(root, d, listing, { decidedAt, date, reason, batch });
       if (code === "M_UNREVOKE") return compileUnrevoke(root, d, listing, { decidedAt, date, reason, batch });
-      throw new Error(`${code} is released by its own composer (compileIdentityReset), not through compileDecision`);
+      return composeIdentityReset(root, d, listing, { decidedAt, date, batch });
     default:
-      // `reversal` with no hold cannot happen: `holdKindFor` returns "reversal"
-      // for both reversal codes unconditionally. Said out loud rather than
-      // fallen through, because a silent fall-through here would compile a
-      // relist that MOD-9 requires an operator for.
+      // Said out loud rather than fallen through: a code in KNOWN_CODES with a
+      // compile kind this switch does not name would otherwise return nothing,
+      // and the run would settle a decision it never compiled.
       throw new Error(
-        `\`${code}\` reached the compile with no hold kind and no release. MOD-9 holds every M_RELIST, M_UNREVOKE and ` +
-        "M_IDENTITY_RESET, so this is `holdKindFor` and this table disagreeing about the reversal codes",
+        `\`${code}\` reached the compile as \`${KNOWN_CODES[code]}\`, which this switch has no branch for`,
       );
   }
 }
@@ -1126,19 +1128,15 @@ export function resetTarget(root, pluginId) {
 }
 
 /**
- * `M_IDENTITY_RESET`'s release (MOD-9; §7.2; ID-40; DEC-7; MOD-47): what the one
- * commit carrying `Service-Decision:` writes when the hold ends.
+ * `M_IDENTITY_RESET` (MOD-9; §7.2; ID-40; DEC-7; MOD-47): what the one commit
+ * carrying `Service-Decision:` writes for a reset.
  *
- * **It re-asks every question by calling `compileDecision`.** The hold waited at
- * least 24 hours, and the tree may have moved: another reset may have voided
- * the id since, or the listing may be gone. A release composed from the hold
- * entry without asking again would void an id nobody is refused under any more.
- * So the entry is compiled again against the tree the release writes to, and
- * only a compile that would HOLD it again as a reversal — every refusal passed —
- * is released. Anything else is returned as it is, and the caller writes
- * nothing for it.
+ * Since contract 6.6.0 that is the run that compiles it: no reversal is held,
+ * so `compileDecision` reaches this after MOD-10's refusal and every other
+ * question it asks. Until then the reset waited 24 hours and a confirmation,
+ * and this was its release.
  *
- * What the release writes, in both of B-T4.2's cases:
+ * What it writes, in both of B-T4.2's cases:
  *
  *   - DEC-7's voiding record, which ends every earlier baseline of the id
  *     (MIG-20; `bot/lib/identity.mjs`'s `effectiveBaseline`), keyed by BOT-35's
@@ -1154,24 +1152,8 @@ export function resetTarget(root, pluginId) {
  * entry or `plugin.json` is touched. The listing reads `frozen` after it
  * (ID-25: a listing that ever had an identity record is never `grandfathered`
  * again), which `bot/lib/listing-state.mjs` reads from `identity.json`'s history.
- *
- * @param {object} entry  the held decision (a hold entry's `decision`).
- * @returns {{outcome: "compiled"|"refused"|"held", ...}} `compiled` with the
- *   artefacts, or the compile's own answer when it is anything but a
- *   `reversal` hold — which the caller releases nothing for.
  */
-export function compileIdentityReset(entry, { root = REPO_ROOT, batch = null } = {}) {
-  if (entry?.code !== VOIDING_CODE) {
-    throw new Error(`compileIdentityReset composes an ${VOIDING_CODE} and was handed ${JSON.stringify(entry?.code)}`);
-  }
-  const again = compileDecision(entry, { root, overBound: false, batch });
-  if (again.outcome !== "held" || again.held_for !== "reversal") return again;
-
-  const d = again.decision;
-  const decidedAt = wholeSeconds(d.decided_at);
-  const date = decidedAt.slice(0, 10);
-  const listing = readListing(root, d.plugin_id);
-
+function composeIdentityReset(root, d, listing, { decidedAt, date, batch = null }) {
   const log = logEntry(root, {
     date,
     action: "reset",
@@ -1201,6 +1183,23 @@ export function compileIdentityReset(entry, { root = REPO_ROOT, batch = null } =
   };
 }
 
+/**
+ * Compile an `M_IDENTITY_RESET`, and nothing else: `compileDecision` with the
+ * code asserted. A leftover `reversal` hold's release (`release`) and a fresh
+ * reset reach the same composer, and every refusal — MOD-10's above all — is
+ * asked against the tree being written, because a leftover waited and another
+ * reset may have voided the id since.
+ *
+ * @param {object} entry  the decision (a hold entry's `decision`, or BOT-80's).
+ * @returns {{outcome: "compiled"|"refused"|"held", ...}}
+ */
+export function compileIdentityReset(entry, { root = REPO_ROOT, batch = null, release = null } = {}) {
+  if (entry?.code !== VOIDING_CODE) {
+    throw new Error(`compileIdentityReset composes an ${VOIDING_CODE} and was handed ${JSON.stringify(entry?.code)}`);
+  }
+  return compileDecision(entry, { root, overBound: false, batch, release });
+}
+
 function holdWhy(kind, d, listing) {
   switch (kind) {
     case "unbound_yank":
@@ -1210,14 +1209,9 @@ function holdWhy(kind, d, listing) {
     case "unbound_removal":
       return `${listing.id} has no bound account, so FLOW-28 sends its removal request to a moderator after ` +
         "TRUST-27's period rather than to the catalogue (MOD-9)";
-    case "reversal":
-      return `${d.code} gives something back, and MOD-9 releases it only on a MOD-52 confirmation after the 24-hour ` +
-        "hold period (OPEN-OWNER-4)";
-    case "disable_confirmation":
-      return "an M_REVOKE with action `disable` stops software already running on somebody's machine, so it waits " +
-        "for a second person whatever the bound says (OPEN-OWNER-14)";
     case "bound":
-      return "TRUST-26's count is at or above the takedown bound, so this takedown waits for an operator's MOD-52 " +
+      return "TRUST-26's count is at or above the takedown bound, so this takedown waits: it applies by itself in the " +
+        "first run whose trailing 24 hours admit it, oldest held first, or at once on an operator's MOD-52 " +
         "confirmation (MOD-9; OPEN-OWNER-45)";
     default:
       return kind;
@@ -1409,16 +1403,15 @@ function compileDelist(root, d, listing, { decidedAt, date, reason, batch = null
 }
 
 /**
- * A released `M_RELIST` (§7.2; MOD-9; MOD-47): `unlisted` removed from the
- * listing and the log entry `relist`, naming the decision it `reverses`.
+ * An `M_RELIST` (§7.2; MOD-9; MOD-47): `unlisted` removed from the listing and
+ * the log entry `relist`, naming the decision it `reverses`.
  *
- * Composed only on a release — MOD-9 holds every relist for 24 hours and an
- * operator's confirmation — and against the tree the release commit writes,
- * so the three relist refusals in `compileDecision` were asked again first.
- * What is left to ask is whether there is anything to give back: a listing
- * already listed on this tree (relisted by a MOD-52 revert while the hold
- * waited, say) is `target_changed`, because writing the edit again would log
- * a relist that changed nothing.
+ * Composed in the run that compiles it since contract 6.6.0, after the three
+ * relist refusals in `compileDecision` (and, for a leftover hold's release,
+ * against the tree that release writes). What is left to ask is whether there
+ * is anything to give back: a listing already listed on this tree (relisted by
+ * a MOD-52 revert first, say) is `target_changed`, because writing the edit
+ * again would log a relist that changed nothing.
  */
 function compileRelist(root, d, listing, { decidedAt, date, reason, batch = null }) {
   if (listing.listed) {
@@ -1454,7 +1447,7 @@ function compileRelist(root, d, listing, { decidedAt, date, reason, batch = null
 }
 
 /**
- * A released `M_UNREVOKE` (§7.2; MOD-9; MOD-47): the advisory the reversed
+ * An `M_UNREVOKE` (§7.2; MOD-9; MOD-47): the advisory the reversed
  * decision published is deleted, and the log entry `unrevoke` names it and the
  * decision it `reverses`.
  *

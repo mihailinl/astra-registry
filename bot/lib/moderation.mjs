@@ -182,8 +182,9 @@ export const APPEAL_RESPONSE_DAYS = 7;
 // ── TRUST-26's takedown bound ───────────────────────────────────────────────
 //
 // How many listed plugin ids the estate may withdraw in any trailing 24 hours
-// before the next takedown — `block_install` included — waits for an
-// operator's MOD-52 confirmation (MOD-9). It caps the blast radius of a
+// before the next takedown — `block_install` and `disable` included — is held
+// until the window makes room for it (MOD-9; since contract 6.6.0 it releases
+// by itself then, and a MOD-52 confirmation is break-glass). It caps the blast radius of a
 // compromised panel or service; `bot/lib/takedown-bound.mjs` is what counts
 // the window, out of git, and `bot/lib/holds.mjs` is what holds above it.
 //

@@ -616,8 +616,8 @@ test("at the bound it applies, at bound + 1 it holds", () => {
       assert.equal(holdKindFor(blockInstall, { overBound: false }), null);
     }
     assert.equal(overBound(bound, { bound }).over, true,
-      `with ${bound} withdrawal(s) already made against a bound of ${bound}, the next must wait for an ` +
-      "operator (TRUST-26, MOD-9)");
+      `with ${bound} withdrawal(s) already made against a bound of ${bound}, the next must wait for the ` +
+      "window (TRUST-26, MOD-9)");
     assert.equal(overBound(bound + 1, { bound }).over, true);
   }
 });
@@ -626,8 +626,11 @@ test("a reversal is never held for the bound, however full it is", () => {
   // Holding a relist behind a full takedown bound would mean the bound made
   // the estate harder to un-break. `bot/lib/holds.mjs` owns the rule; this
   // asserts the pair, because the bound is the input that would break it.
-  for (const code of ["M_RELIST", "M_UNREVOKE"]) {
-    assert.equal(holdKindFor({ code, plugin_id: "text-utils" }, { overBound: true }), "reversal");
+  // Since contract 6.6.0 a reversal is not held at all: it applies in the run
+  // that compiles it, full bound or not.
+  for (const code of ["M_RELIST", "M_UNREVOKE", "M_IDENTITY_RESET"]) {
+    assert.equal(holdKindFor({ code, plugin_id: "text-utils" }, { overBound: true }), null,
+      `${code} was held behind a full takedown bound`);
   }
 });
 

@@ -475,8 +475,7 @@ export const POLICY_CODES = {
     level: "note", stage: "policy", fix: "none",
     title: "A moderator listed this plugin again",
     remedy:
-      "A moderator lifted this plugin's delisting. Like every reversal, it was held and confirmed " +
-      "by the registry's operator before it applied. The plugin is back in the catalogue and gets " +
+      "A moderator lifted this plugin's delisting. The plugin is back in the catalogue and gets " +
       "updates again. Nothing to do.",
   },
   M_DEPRECATE: {
@@ -500,9 +499,8 @@ export const POLICY_CODES = {
     level: "note", stage: "policy", fix: "none",
     title: "A moderator lifted an advisory",
     remedy:
-      "A moderator deleted the advisory that deprecated or revoked these versions. Like every " +
-      "reversal, it was held and confirmed by the registry's operator before it applied. Each " +
-      "user's Astra picks this up the next time it checks for advisories. Nothing to do.",
+      "A moderator deleted the advisory that deprecated or revoked these versions. Each user's " +
+      "Astra picks this up the next time it checks for advisories. Nothing to do.",
   },
   M_BINDING_REVOKE: {
     level: "warn", stage: "policy", fix: "none",
@@ -516,9 +514,8 @@ export const POLICY_CODES = {
     level: "note", stage: "policy", fix: "none",
     title: "A moderator reset this listing's recorded identity",
     remedy:
-      "A moderator voided every repository identity this plugin id had on record. Like every " +
-      "reversal, this was held and confirmed by the registry's operator before it applied. This " +
-      "listing is now frozen: its next release needs a binding line — mint a token at " +
+      "A moderator voided every repository identity this plugin id had on record. This listing " +
+      "is now frozen: its next release needs a binding line — mint a token at " +
       "https://astra.minice.ai/plugins, commit it, and tag — and that release is reviewed as a " +
       "first binding.",
   },

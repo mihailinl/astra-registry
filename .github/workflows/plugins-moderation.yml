@@ -330,19 +330,15 @@ jobs:
   #
   # **It walks every hold even when `list` failed**, which is why it runs on
   # `always() && !cancelled()` and asks the list result by name rather than
-  # inheriting it. A confirmed hold is not work the list answer names: a
+  # inheriting it. A hold is not work the list answer names: a
   # settled `held` result took it off BOT-80's list and its release is driven
-  # by the MOD-52 record in git (BOT-81, M-T3.3). The service being down must
-  # not be able to keep an operator's confirmation from landing.
+  # by git — TRUST-26's window counted from this checkout, or a MOD-52 record
+  # (BOT-81, M-T3.3). The service being down must not be able to keep a held
+  # takedown from releasing.
   commit:
     needs: [list, alert]
     if: always() && !cancelled()
     runs-on: ubuntu-24.04
-    # Also the most a hold's commit can trail its `held_at`: bot/lib/holds.mjs
-    # counts a reversal it cannot date by its commit from `held_at` + 24 h +
-    # HOLD_COMMIT_SLACK_MINUTES, which must stay above this (ops entry 101;
-    # this run's own suite holds the pair, and is not named here by path for
-    # the reason the header gives).
     timeout-minutes: 20
     permissions:
       contents: write

@@ -1,6 +1,6 @@
 {
-  "contract_version": "6.5.0",
-  "source_commit": "3b77765586ae9a8e3f8e891c6abb0746964d543b",
+  "contract_version": "6.6.0",
+  "source_commit": "9d1cb444faf3df34056bcd0177eb3f8355e08bbe",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -1146,7 +1146,7 @@
         "SCOPE-8",
         "FLOW-13"
       ],
-      "artefact": "MOD-9's hold, as a reversal; on release, one commit carrying `Service-Decision:` with DEC-7's voiding record, `plugins/<id>/identity.json` deleted where it exists (ID-40), log `reset`; none"
+      "artefact": "after MOD-10's check, in the run that compiles it (MOD-9), one commit carrying `Service-Decision:` with DEC-7's voiding record, `plugins/<id>/identity.json` deleted where it exists (ID-40), log `reset`; none"
     },
     {
       "id": "code:M_APPROVE",
@@ -6731,7 +6731,7 @@
       "fix": "none",
       "panel_only": false,
       "title": "A moderator reset this listing's recorded identity",
-      "remedy": "A moderator voided every repository identity this plugin id had on record. Like every reversal, this was held and confirmed by the registry's operator before it applied. This listing is now frozen: its next release needs a binding line — mint a token at https://astra.minice.ai/plugins, commit it, and tag — and that release is reviewed as a first binding."
+      "remedy": "A moderator voided every repository identity this plugin id had on record. This listing is now frozen: its next release needs a binding line — mint a token at https://astra.minice.ai/plugins, commit it, and tag — and that release is reviewed as a first binding."
     },
     {
       "code": "M_REJECT",
@@ -6749,7 +6749,7 @@
       "fix": "none",
       "panel_only": false,
       "title": "A moderator listed this plugin again",
-      "remedy": "A moderator lifted this plugin's delisting. Like every reversal, it was held and confirmed by the registry's operator before it applied. The plugin is back in the catalogue and gets updates again. Nothing to do."
+      "remedy": "A moderator lifted this plugin's delisting. The plugin is back in the catalogue and gets updates again. Nothing to do."
     },
     {
       "code": "M_REVIEW",
@@ -6776,7 +6776,7 @@
       "fix": "none",
       "panel_only": false,
       "title": "A moderator lifted an advisory",
-      "remedy": "A moderator deleted the advisory that deprecated or revoked these versions. Like every reversal, it was held and confirmed by the registry's operator before it applied. Each user's Astra picks this up the next time it checks for advisories. Nothing to do."
+      "remedy": "A moderator deleted the advisory that deprecated or revoked these versions. Each user's Astra picks this up the next time it checks for advisories. Nothing to do."
     },
     {
       "code": "M_YANK",

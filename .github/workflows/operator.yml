@@ -20,15 +20,17 @@ name: Operator
 #
 # ── what pins this workflow to `main`, and what does not ───────────────────
 #
-# **Environment `operator` is the whole defence** (attack B-2). MOD-9 makes a
-# confirmation here the only thing that releases a `disable`, a held relist or
-# unrevoke, or a takedown over TRUST-26's bound, and TRUST-33 makes this the
-# writer of a permanent deny. The role check that refuses a write-only
+# **Environment `operator` is the whole defence** (attack B-2). This workflow
+# is MOD-52's break-glass path, the repair the plugins service cannot block,
+# and no normal flow waits on it: since contract 6.6.0 a takedown held over
+# TRUST-26's bound releases by itself once the trailing 24 hours admit it, and
+# a confirmation here releases it AT ONCE, over the bound. TRUST-33 makes this
+# the writer of a permanent deny. The role check that refuses a write-only
 # collaborator lives in the tree AT THE REF THE DISPATCHER CHOSE, the dispatch
 # API takes a `ref`, and plain write access is enough to dispatch. So a
 # write-only account could push a branch whose `bot/lib/operator-role.mjs`
-# returns "admin", dispatch there, and confirm a `disable` that reaches every
-# installed copy. A guard written in this file is no answer, because the same
+# returns "admin", dispatch there, and confirm a held `disable` past the bound
+# that reaches every installed copy. A guard written in this file is no answer, because the same
 # push edits it. What refuses the job BEFORE IT STARTS is a setting outside the
 # tree: `operator`'s deployment-branch policy admits `main` and nothing else
 # (RC-R0-3a). `bot/tests/workflows.test.mjs` holds every job that writes an

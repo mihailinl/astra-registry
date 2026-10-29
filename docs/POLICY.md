@@ -742,10 +742,10 @@ above (FLOW-13).
 | `A_REMOVAL_REQUEST` | The listing's author asked for it to be removed. From the bound account it is delisted at once; for a listing with no bound account, a moderator decides. Installed copies are not removed. | Nothing. Only a moderator lists it again, and the author asks for that with a report from the panel's report page. |
 | `M_YANK` | A moderator yanked versions. They leave the catalogue and installed copies keep running. No decision brings them back. | Nothing. |
 | `M_DELIST` | A moderator delisted the plugin. It leaves the catalogue and gets no updates, and installed copies keep running. A new release does not list it again. | A moderator's relist, which the author can ask for by appealing. |
-| `M_RELIST` | A moderator lifted a delisting, after its hold and an operator's confirmation. The plugin is back in the catalogue. | Nothing needs clearing. |
+| `M_RELIST` | A moderator lifted a delisting. The plugin is back in the catalogue. | Nothing needs clearing. |
 | `M_DEPRECATE` | A moderator published an advisory with action `warn`. The versions stay listed and installable; Astra badges them and tells the user. | A moderator lifting the advisory, which the author can ask for by appealing. |
 | `M_REVOKE` | A moderator published an advisory with action `block_install` or `disable` (§9). | A moderator lifting the advisory, which the author can ask for by appealing. |
-| `M_UNREVOKE` | A moderator deleted an advisory, after its hold and an operator's confirmation. Its effect lifts at the withdrawal list's next higher serial. | Nothing needs clearing. |
+| `M_UNREVOKE` | A moderator deleted an advisory. Its effect lifts at the withdrawal list's next higher serial. | Nothing needs clearing. |
 | `M_BINDING_REVOKE` | A moderator revoked the repository's binding token. Listed versions are not touched, and the next release is refused `B_BINDING_UNUSABLE`. | Nothing on this code. `B_BINDING_UNUSABLE` says what clears that refusal. |
 | `M_IDENTITY_RESET` | A moderator reset the listing's recorded identity (§9, **Reset**). It clears `B_REPOSITORY_RECYCLED` for the identities it voided. | Nothing. |
 | `M_REVIEW` | A moderator marked these versions reviewed (§2.1): a moderator read each of them. It is one person's reading, not a safety guarantee, and a later advisory, yank or delist overrides it. The next version starts not reviewed. | Nothing needs clearing. |
@@ -915,7 +915,7 @@ who finds the delist and not the relist reads a listed plugin as withdrawn.
 |---|---|---|
 | **Relist** | a delist. `unlisted` is removed. | the entry, naming the decision it reverses |
 | **Unrevoke** | a deprecate or a revoke. The advisory is deleted and the effect lifts at the next higher serial. | the entry, naming the advisory and the decision it reverses |
-| **Reset** | a permanent `B_REPOSITORY_RECYCLED`. A moderator's identity reset (`M_IDENTITY_RESET`), held 24 hours and confirmed by an operator like any reversal, voids every recorded identity of the plugin id and deletes its identity record if it has one. | the entry, category `identity_reset`, and a decision record saying the id's earlier identities no longer count |
+| **Reset** | a permanent `B_REPOSITORY_RECYCLED`. A moderator's identity reset (`M_IDENTITY_RESET`), applied in the run that reads it and refused if no `B_REPOSITORY_RECYCLED` refusal is left for it to lift, voids every recorded identity of the plugin id and deletes its identity record if it has one. | the entry, category `identity_reset`, and a decision record saying the id's earlier identities no longer count |
 | **Appeal** | nothing by itself. It records that an appeal was decided, and how. | the outcome — `stands` or `reversed` — and the public reason, **never the appeal's text** |
 
 None of the four costs a user anything, which is why they are not in the

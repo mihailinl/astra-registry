@@ -224,6 +224,38 @@ const decision = (over) => ({
   ...over,
 });
 
+/**
+ * A decision MOD-9 still holds whatever the bound says (contract 6.6.0): an
+ * unbound listing's removal request (`unbound_removal`), which nothing ends by
+ * itself. Use it with `estate({ bound: false })`.
+ */
+const removalOf = (id = SDI, over = {}) => decision({ service_decision_id: id, code: "A_REMOVAL_REQUEST", reason: FIXED_REMOVAL, ...over });
+
+/** A hold entry for `removalOf`, as the commit job writes one, for a tree that should hold a hold that stays. */
+const removalEntry = (sdi, held_at = "2026-09-18T12:00:00Z") => holdEntry(
+  { service_decision_id: sdi, code: "A_REMOVAL_REQUEST", plugin_id: "widgets", decided_at: "2026-09-18T11:00:00Z", reason: FIXED_REMOVAL },
+  { held_for: "unbound_removal", held_at },
+);
+
+/**
+ * A hold entry of any kind. The kinds MOD-9 writes go through `holdEntry`; the
+ * two the rule before contract 6.6.0 wrote — `reversal` and
+ * `disable_confirmation` — are built by hand, member for member as the old
+ * `holdEntry` wrote them (`release_after` on a reversal), because the bot now
+ * refuses to write one and a run must still end one it meets on the tree.
+ */
+function holdFixture(decisionDoc, { held_for, held_at }) {
+  if (held_for !== "reversal" && held_for !== "disable_confirmation") return holdEntry(decisionDoc, { held_for, held_at });
+  const named = Object.keys(JSON.parse(read("schema/hold-v1.json")).properties.decision.properties);
+  const copied = Object.fromEntries(Object.entries(decisionDoc).filter(([k, v]) => named.includes(k) && v !== undefined));
+  const plus24 = new Date(Date.parse(held_at) + 24 * 3600_000).toISOString().replace(/\.\d{3}Z$/, "Z");
+  return {
+    schema: "astra.registry.hold/1", held_for, service_decision_id: decisionDoc.service_decision_id, held_at,
+    ...(held_for === "reversal" ? { release_after: plus24 } : {}),
+    decision: copied,
+  };
+}
+
 const answer = (over) => ({
   schema: WORK_SCHEMA,
   shadow: true,
@@ -928,14 +960,14 @@ test("a held decision carries only BOT-80's members, so an ignored one cannot ri
   // defence.
   const root = estate();
   const held = compileAll(
-    [decision({ code: "M_RELIST", category: "error", moderator: "amoderator", reverses: SDI2, x: "leaked" })],
-    { root, overBound: false },
+    [decision({ code: "M_DELIST", category: "broken", moderator: "amoderator", x: "leaked" })],
+    { root, overBound: true },
   ).held;
-  assert.equal(held.length, 1, "MOD-9 holds every M_RELIST unconditionally");
-  assert.equal(held[0].held_for, "reversal");
+  assert.equal(held.length, 1, "MOD-9 holds every takedown over the bound");
+  assert.equal(held[0].held_for, "bound");
   assert.ok(!JSON.stringify(held[0].decision).includes("leaked"),
     "a member the schema ignored on read reached the held decision, and a hold entry is committed to git");
-  assert.ok(Object.hasOwn(held[0].decision, "reverses"), "and a member BOT-80 DOES name was kept");
+  assert.ok(Object.hasOwn(held[0].decision, "moderator"), "and a member BOT-80 DOES name was kept");
 });
 
 test("an `A_*` entry carrying a moderator or a declared_interest is `kind_refused`, by name", () => {
@@ -1217,7 +1249,7 @@ test("a stop's terminal record carries no moderator, whatever the entry carried"
 // (the release commit) and a cancel record (the cancel commit). Watched failing
 // by handing the walk's `releasable` to nothing, and by writing a log entry in
 // the cancel commit — which `classifyHoldCommit` then reads as an `applied`.
-test("with `list` down, a confirmed reversal is released in one commit, and the next live run posts what that commit did", async () => {
+test("with `list` down, a reversal held before contract 6.6.0 is released in one commit, and the next live run posts what that commit did", async () => {
   const held = {
     schema: "astra.registry.hold/1",
     held_for: "reversal",
@@ -1238,8 +1270,9 @@ test("with `list` down, a confirmed reversal is released in one commit, and the 
   const delisted = { [`plugins/widgets/plugin.json`]: plugin("widgets", { unlisted: true }) };
 
   for (const [end, record, outcome] of [["release", confirm, "applied"], ["cancel", cancel, "cancelled"]]) {
-    // Committed at `held_at`: a reversal's 24 hours run from the commit that
-    // added its entry (MOD-9, ops entry 101).
+    // A leftover from before contract 6.6.0, when MOD-9 held every relist:
+    // nothing will confirm it now, so a run ends it — released at once, or
+    // cancelled by the cancel record beside it.
     const root = withDocuments(estate({
       extra: { ...delisted, [`state/holds/${SDI}.json`]: held, [`state/holds/${SDI}.${record.act}.json`]: record },
       at: held.held_at,
@@ -1346,12 +1379,12 @@ async function commitJob(root, {
 // next test's, which asserts the opposite.
 test("a batch with one held decision leaves a tree in which every `paths.txt` entry exists", async () => {
   for (const shadow of [false]) {
-    const root = estate();
-    const relist = decision({ code: "M_RELIST", category: "error", moderator: "amoderator", reverses: SDI2, x: "leaked" });
+    const root = estate({ bound: false });
+    const removal = removalOf(SDI, { x: "leaked" });
     const delist = decision({ service_decision_id: SDI2, code: "M_DELIST", category: "broken", moderator: "amoderator" });
-    const { code, logs, paths, results } = await commitJob(root, { entries: [relist, delist], shadow });
+    const { code, logs, paths, results } = await commitJob(root, { entries: [removal, delist], shadow });
     assert.equal(code, 0, logs.join("\n"));
-    assert.equal(results.held.length, 1, "MOD-9 holds every M_RELIST, so this batch holds one or it proves nothing");
+    assert.equal(results.held.length, 1, "MOD-9 holds an unbound listing's removal request, so this batch holds one or it proves nothing");
     assert.ok(paths.includes(holdEntryPath(SDI)), `paths.txt does not list the hold entry: ${paths.join(", ")}`);
 
     for (const p of paths) {
@@ -1370,17 +1403,17 @@ test("a batch with one held decision leaves a tree in which every `paths.txt` en
     const holds = readHolds(root);
     assert.equal(holds.length, 1);
     assert.deepEqual(holds[0].problems, [], holds[0].problems.join("; "));
-    assert.equal(holds[0].entry.held_for, "reversal");
+    assert.equal(holds[0].entry.held_for, "unbound_removal");
     assert.equal(holds[0].entry.held_at, "2026-09-20T12:30:00Z");
-    assert.equal(holds[0].entry.release_after, "2026-09-21T12:30:00Z");
+    assert.equal(holds[0].entry.release_after, undefined, "a hold entered since contract 6.6.0 waits on no clock");
     assert.ok(!fs.readFileSync(path.join(root, holdEntryPath(SDI)), "utf8").includes("leaked"),
       "a member the schema ignored on read reached the committed hold entry");
 
     // Listed again because the `held` result never landed: the entry stays
-    // byte for byte, so `held_at` does not move and the 24 hours do not restart,
-    // and it is not listed for a commit that would then carry no change.
+    // byte for byte, so `held_at` — the hold's place in the queue — does not
+    // move, and it is not listed for a commit that would then carry no change.
     const before = fs.readFileSync(path.join(root, holdEntryPath(SDI)));
-    const again = await commitJob(root, { entries: [relist], shadow, now: new Date("2026-09-20T12:40:00Z") });
+    const again = await commitJob(root, { entries: [removal], shadow, now: new Date("2026-09-20T12:40:00Z") });
     assert.equal(again.code, 0, again.logs.join("\n"));
     assert.ok(before.equals(fs.readFileSync(path.join(root, holdEntryPath(SDI)))), "a re-listed hold rewrote its entry");
     assert.ok(!again.paths.includes(holdEntryPath(SDI)), "an unchanged hold entry was listed for the commit");
@@ -1407,8 +1440,8 @@ test("a shadow run commits nothing a live run would", async () => {
     entries: [
       // compiled: the listing edit and the log entry
       decision({ service_decision_id: SDI2, code: "M_DELIST", category: "broken", moderator: "amoderator" }),
-      // held (MOD-9 holds every M_RELIST): the hold entry
-      decision({ code: "M_RELIST", category: "error", moderator: "amoderator", reverses: SDI2 }),
+      // held (MOD-9 holds an unbound listing's removal request): the hold entry
+      removalOf(SDI),
     ],
     // a stop: BOT-30's terminal decision record
     submissions: [{
@@ -1419,7 +1452,7 @@ test("a shadow run commits nothing a live run would", async () => {
   const dirty = (root) => sh(["status", "--porcelain", "--untracked-files=all"], root)
     .split("\n").filter(Boolean).filter((l) => !/^\?\? moderation\//.test(l));
 
-  const liveRoot = estate();
+  const liveRoot = estate({ bound: false });
   const live = await commitJob(liveRoot, { ...batch, shadow: false });
   assert.equal(live.code, 0, live.logs.join("\n"));
   // The floor: every writer reached, or "nothing" below is a smaller claim.
@@ -1433,7 +1466,7 @@ test("a shadow run commits nothing a live run would", async () => {
   }
   assert.ok(dirty(liveRoot).length >= 4, "the live run wrote nothing to its tree");
 
-  const shadowRoot = estate();
+  const shadowRoot = estate({ bound: false });
   const shadow = await commitJob(shadowRoot, { ...batch, shadow: true });
   assert.equal(shadow.code, 0, shadow.logs.join("\n"));
   const leaked = shadow.paths.filter((p) => live.paths.includes(p));
@@ -1473,10 +1506,7 @@ test("a shadow run commits nothing a live run would", async () => {
 test("a deleted hold is classified and reported, against the commit that deleted it", async () => {
   const id = (n) => `0192f3a4-5b6c-7d8e-9f01-23456789100${n}`;
   const [HAND, UNCLEAR, CANCEL, RELEASE, OTHER, BACK] = [1, 2, 3, 4, 5, 6].map(id);
-  const entryFor = (sdi) => holdEntry({
-    service_decision_id: sdi, code: "M_RELIST", category: "error", plugin_id: "widgets",
-    decided_at: "2026-09-18T11:00:00Z", reason: MODERATOR_REASON, moderator: "amoderator", reverses: SDI2,
-  }, { held_for: "reversal", held_at: "2026-09-18T12:00:00Z" });
+  const entryFor = (sdi) => removalEntry(sdi);
   const extra = {};
   for (const sdi of [HAND, UNCLEAR, CANCEL, RELEASE, OTHER, BACK]) extra[holdEntryPath(sdi)] = entryFor(sdi);
   const root = estate({ extra });
@@ -1571,7 +1601,7 @@ test("under a shadow answer nothing at all is posted for the work the answer nam
 // watched by "posting a `held` result under a shadow lease". So `held` is
 // withheld with the rest, and still SAID: it is in `withheld`, not dropped.
 test("under a shadow answer a `held` result is withheld too, and still reported as withheld", () => {
-  const held = [{ service_decision_id: SDI, held_for: "reversal" }];
+  const held = [{ service_decision_id: SDI, held_for: "bound" }];
   const shadow = resultsFor({ held, shadow: true });
   assert.deepEqual(shadow.post, [], "a `held` result was posted under a shadow answer (BOT-92; BOT-81)");
   assert.deepEqual(shadow.withheld.map((r) => `${r.service_decision_id} ${r.outcome}`), [`${SDI} held`],
@@ -1906,11 +1936,11 @@ test("a moderation commit carries the documents it regenerates, at the serials t
 // commit at all, and names the one that entered its entry, which is also the
 // BOT-82 key of the post that was lost.
 test("a live `held` result names the commit that entered the hold, and a re-listed one names the same commit", async () => {
-  const root = withDocuments(estate());
+  const root = withDocuments(estate({ bound: false }));
   const origin = withRemote(root);
-  const first = await commitJob(root, { entries: [relistOf(SDI)] });
+  const first = await commitJob(root, { entries: [removalOf(SDI)] });
   assert.equal(first.code, 0, first.logs.join("\n"));
-  assert.ok(first.paths.includes(holdEntryPath(SDI)), "MOD-9 holds every M_RELIST, so this run enters one or proves nothing");
+  assert.ok(first.paths.includes(holdEntryPath(SDI)), "MOD-9 holds an unbound listing's removal request, so this run enters one or proves nothing");
   const step = runApply(root);
   assert.equal(step.status, 0, step.stderr);
   const landed = headOf(origin);
@@ -1922,7 +1952,7 @@ test("a live `held` result names the commit that entered the hold, and a re-list
     `BOT-81: the \`held\` result must name the hold entry's commit, ${landed}; it named ` +
     `${JSON.stringify(live.post.filter((r) => r.outcome === "held").map((r) => r.commit))}`);
 
-  const again = await commitJob(root, { entries: [relistOf(SDI)], now: new Date("2026-09-20T12:40:00Z") });
+  const again = await commitJob(root, { entries: [removalOf(SDI)], now: new Date("2026-09-20T12:40:00Z") });
   assert.equal(again.code, 0, again.logs.join("\n"));
   assert.deepEqual(again.paths, [], "a re-listed hold whose entry is on the tree commits nothing");
   const relisted = resultsFor({ ...stateArgs(again.results), commit: null, shadow: false });
@@ -1933,7 +1963,7 @@ test("a live `held` result names the commit that entered the hold, and a re-list
   // And the guard under both: a live `held`, `applied` or `cancelled` that
   // names no commit is refused here, not posted and not composed.
   for (const [what, args] of [
-    ["held", { held: [{ service_decision_id: SDI, held_for: "reversal" }] }],
+    ["held", { held: [{ service_decision_id: SDI, held_for: "unbound_removal" }] }],
     ["applied", { compiled: [{ service_decision_id: SDI }] }],
     ["cancelled", { holds: { pending: [{ service_decision_id: SDI, outcome: "cancelled", commit: null }] } }],
   ]) {
@@ -1942,19 +1972,12 @@ test("a live `held` result names the commit that entered the hold, and a re-list
   }
 });
 
-// ── ops entry 101: the 24 hours run from the commit that landed the entry ──
+// ── the commit that landed a hold entry ─────────────────────────────────────
 //
-// MOD-9: "A reversal is released only on a MOD-52 confirmation after a 24 h
-// hold period (OPEN-OWNER-4) has run from that commit" — the commit that adds
-// `state/holds/<service_decision_id>.json`. The commit job hands its own `now`
-// to the entry as `held_at`, and the commit that lands the entry is made after
-// the gates, in the `apply` step; the job's `timeout-minutes` is all that
-// bounds the gap. Until entry 101 closed, the period ran from `held_at`, so a
-// hold compiled at T and landed at T + 15 min was due at T + 24 h — fifteen
-// minutes before MOD-9 lets it be. Nothing caught it because the fixtures
-// committed every entry at the wall clock and asked about a `now` two days
-// earlier, and no test ever landed a hold through the workflow's own step at a
-// time of its own.
+// BOT-81's `held` names the commit that added `state/holds/<id>.json`
+// (`entryCommit`). Until contract 6.6.0 a reversal's 24 hours also ran from it
+// (ops entry 101), and these tests walked that clock; nothing is held for a
+// period now, so what is left to prove is the commit itself.
 
 /** Commit everything in `root` at `iso`, and return the commit. */
 const commitAt = (root, iso, message) => {
@@ -1974,57 +1997,10 @@ const dueIds = (walked) => [
 ];
 const waitingFor = (walked, id) => walked.waiting.find((w) => w.service_decision_id === id)?.reason ?? "";
 
-test("a reversal compiled at T and landed at T + 15 min is not due at T + 24 h + 1 min, and is at T + 15 min + 24 h", async () => {
-  const T = "2026-09-20T12:30:00Z";
-  const root = withDocuments(estate({ at: "2026-09-20T12:00:00Z" }));
-  const origin = withRemote(root);
-  const job = await commitJob(root, { entries: [relistOf(SDI)], now: new Date(T) });
-  assert.equal(job.code, 0, job.logs.join("\n"));
-  assert.ok(job.paths.includes(holdEntryPath(SDI)), "MOD-9 holds every M_RELIST, so this run enters one or proves nothing");
-
-  // The workflow's own commit step, landing the entry fifteen minutes after
-  // the compile: the gates, the self-test, the push.
-  const step = runApply(root, dated("2026-09-20T12:45:00Z"));
-  assert.equal(step.status, 0, step.stderr);
-  const landed = headOf(origin);
-  assert.equal(sh(["log", "-1", "--format=%cI", landed], root).trim(), "2026-09-20T12:45:00Z",
-    "the fixture's landing commit is not dated where this test needs it, so what follows asks the wrong question");
-  const [entry] = readHolds(root).map((h) => h.entry);
-  assert.equal(entry.held_at, T, "held_at is the compile's clock, and this test is about the gap between it and the commit");
-
-  // An operator confirms an hour later, and somebody annotates the entry an
-  // hour after that: neither is the commit that added it.
-  writeAll(root, { [`state/holds/${SDI}.confirm.json`]: confirmOf(SDI, "2026-09-20T13:45:00Z") });
-  commitAt(root, "2026-09-20T13:45:00Z", "operator: confirm");
-  writeAll(root, { [holdEntryPath(SDI)]: { $comment: "the appeal was checked by hand", ...entry } });
-  commitAt(root, "2026-09-20T14:45:00Z", "annotate the hold");
-
-  const early = walkHolds({ root, now: new Date("2026-09-21T12:31:00Z"), shadow: false });
-  assert.deepEqual(dueIds(early), [],
-    "a confirmed reversal was due 24 h and 1 min after it was compiled and 14 minutes before 24 hours had run from " +
-    `${landed}, the commit that added its entry — MOD-9 violated in the early direction: ${JSON.stringify(early)}`);
-  assert.match(waitingFor(early, SDI), /2026-09-21T12:45:00Z/, "the wait does not name the end of the period counted from the commit");
-  assert.ok(waitingFor(early, SDI).includes(landed), `the wait does not name the commit it counts from: ${waitingFor(early, SDI)}`);
-
-  const due = walkHolds({ root, now: new Date("2026-09-21T12:45:00Z"), shadow: false });
-  assert.deepEqual(dueIds(due), [`${SDI} release`],
-    "24 hours after the commit that added the entry, confirmed, the reversal was not due — counted from a later " +
-    `commit that touched the entry or its directory: ${JSON.stringify(due)}`);
-
-  // The entry this run wrote was in no commit when the run walked the holds:
-  // its period had not started, and the walk says so rather than dating it.
-  assert.match(waitingFor(job.results.holds, SDI), /not started/,
-    `a hold entry in no commit yet was given a period: ${waitingFor(job.results.holds, SDI)}`);
-});
-
-test("a hold merged from a branch runs its 24 hours from the merge that brought it onto main", async () => {
+test("a hold merged from a branch is named by the merge that brought it onto main", async () => {
   const root = estate({ at: "2026-09-10T00:00:00Z" });
-  const entry = holdEntry({
-    service_decision_id: SDI, code: "M_RELIST", category: "error", plugin_id: "widgets",
-    decided_at: "2026-09-17T08:00:00Z", reason: MODERATOR_REASON, moderator: "amoderator", reverses: SDI2,
-  }, { held_for: "reversal", held_at: "2026-09-17T09:00:00Z" });
   sh(["checkout", "-q", "-b", "hand-hold"], root);
-  writeAll(root, { [holdEntryPath(SDI)]: entry });
+  writeAll(root, { [holdEntryPath(SDI)]: removalEntry(SDI, "2026-09-17T09:00:00Z") });
   const branch = commitAt(root, "2026-09-17T09:00:00Z", "a hold written on a branch");
   sh(["checkout", "-q", "main"], root);
   writeAll(root, { "README.md": "main moves on\n" });
@@ -2034,27 +2010,15 @@ test("a hold merged from a branch runs its 24 hours from the merge that brought 
   writeAll(root, { [`state/holds/${SDI}.confirm.json`]: confirmOf(SDI, "2026-09-20T12:10:00Z") });
   commitAt(root, "2026-09-20T12:10:00Z", "operator: confirm");
 
-  // BOT-81's `held` names the commit the 24 hours run from, and it is main's.
+  // BOT-81's `held` names main's commit, not the branch's and not the confirm's.
   assert.equal(entryCommit(root, holdEntryPath(SDI)), merge,
     `the hold's commit was read as ${entryCommit(root, holdEntryPath(SDI))}; ${branch} is the branch commit, which ` +
     `main never held on its own, and ${merge} is the merge that brought the entry onto main`);
-
-  const mid = walkHolds({ root, now: new Date("2026-09-20T13:00:00Z"), shadow: false });
-  assert.deepEqual(dueIds(mid), [],
-    "an hour after the merge that brought it onto main, a confirmed reversal was due — dated at its branch commit " +
-    `or its held_at, three days before main held it: ${JSON.stringify(mid)}`);
-  assert.match(waitingFor(mid, SDI), /2026-09-21T12:00:00Z/);
-  const due = walkHolds({ root, now: new Date("2026-09-21T12:00:00Z"), shadow: false });
-  assert.deepEqual(dueIds(due), [`${SDI} release`], `24 hours after the merge the reversal was not due: ${JSON.stringify(due)}`);
 });
 
-test("a checkout that cannot see the commit names none, and counts from held_at + 24 h + the commit job's timeout", async () => {
+test("a checkout that cannot see the commit names none, and the walk refuses it", async () => {
   const root = estate({ at: "2026-09-20T12:00:00Z" });
-  const entry = holdEntry({
-    service_decision_id: SDI, code: "M_RELIST", category: "error", plugin_id: "widgets",
-    decided_at: "2026-09-20T12:00:00Z", reason: MODERATOR_REASON, moderator: "amoderator", reverses: SDI2,
-  }, { held_for: "reversal", held_at: "2026-09-20T12:30:00Z" });
-  writeAll(root, { [holdEntryPath(SDI)]: entry });
+  writeAll(root, { [holdEntryPath(SDI)]: removalEntry(SDI, "2026-09-20T12:30:00Z") });
   commitAt(root, "2026-09-20T12:45:00Z", "registry: moderation (1 decision(s))");
   writeAll(root, { [`state/holds/${SDI}.confirm.json`]: confirmOf(SDI, "2026-09-20T13:45:00Z") });
   const head = commitAt(root, "2026-09-20T13:45:00Z", "operator: confirm");
@@ -2071,38 +2035,8 @@ test("a checkout that cannot see the commit names none, and counts from held_at 
   const landed = moderationRun.entryLanding(shallow, holdEntryPath(SDI));
   assert.match(landed.why ?? "", /shallow/, `the reader does not say why it named no commit: ${JSON.stringify(landed)}`);
 
-  const [hold] = readHolds(shallow);
-  const slack = holdsModule.HOLD_COMMIT_SLACK_MINUTES;
-  const at = (iso) => resolveHold(hold, { now: new Date(iso), shadow: false, landed }).act;
-  assert.equal(at("2026-09-21T12:31:00Z"), "wait",
-    "counted from held_at alone, as before entry 101, the reversal was due while its commit's 24 hours had 14 minutes to run");
-  assert.equal(at("2026-09-21T12:45:00Z"), "wait", "the fallback is not later than the commit could have landed");
-  const end = new Date(Date.parse("2026-09-21T12:30:00Z") + slack * 60_000).toISOString();
-  assert.equal(at(new Date(Date.parse(end) - 1000).toISOString()), "wait", `released a second before held_at + 24 h + ${slack} min`);
-  assert.equal(at(end), "release", "the fallback never ends");
-
   // And the job itself never reaches it there: the walk refuses a shallow clone.
-  assert.throws(() => walkHolds({ root: shallow, now: new Date(end), shadow: false }), /shallow clone/);
-});
-
-// The fallback is sound only while its slack outlasts the commit job: `held_at`
-// is taken in that job's compile step and the commit is made in its `apply`
-// step, and GitHub cancels the job at `timeout-minutes` with nothing pushed.
-test("the fallback's slack outlasts the commit job's timeout, so a hold counted without its commit is never due early", () => {
-  const lines = read(".github/workflows/plugins-moderation.yml").split("\n");
-  const jobs = lines.flatMap((l, i) => (/^ {2}commit:\s*$/.test(l) ? [i] : []));
-  assert.equal(jobs.length, 1, `plugins-moderation.yml has ${jobs.length} \`commit:\` jobs; this reads exactly one`);
-  const timeouts = [];
-  for (let j = jobs[0] + 1; j < lines.length && !/^ {2}\S/.test(lines[j]); j++) {
-    const m = /^ {4}timeout-minutes:\s*(\d+)\s*$/.exec(lines[j]);
-    if (m) timeouts.push(Number(m[1]));
-  }
-  assert.equal(timeouts.length, 1, `the commit job states ${timeouts.length} timeout-minutes; this reads exactly one`);
-  const slack = holdsModule.HOLD_COMMIT_SLACK_MINUTES;
-  assert.ok(Number.isInteger(slack) && slack > timeouts[0],
-    `bot/lib/holds.mjs counts a hold whose commit cannot be read from held_at + 24 h + ${slack} min, and the commit ` +
-    `job can land that commit up to ${timeouts[0]} min after held_at (plus the second both stamps are truncated to): ` +
-    "raise HOLD_COMMIT_SLACK_MINUTES above the job's timeout-minutes");
+  assert.throws(() => walkHolds({ root: shallow, now: new Date("2026-09-21T13:00:00Z"), shadow: false }), /shallow clone/);
 });
 
 /** A token shaped like the runner's, with the two claims `mintToken` pins. */
@@ -2155,9 +2089,9 @@ async function settledJob(env) {
 // run that did its work; and `report` read `moderation/results.json`, a file
 // that exists only in the commit job's workspace.
 test("the commit step hands `report` and `settled` the commit it pushed and the results it recorded", async () => {
-  const root = withDocuments(estate());
+  const root = withDocuments(estate({ bound: false }));
   const origin = withRemote(root);
-  const job = await commitJob(root, { entries: [delistOf(SDI2), relistOf(SDI)] });
+  const job = await commitJob(root, { entries: [delistOf(SDI2), removalOf(SDI)] });
   assert.equal(job.code, 0, job.logs.join("\n"));
   const step = runApply(root);
   assert.equal(step.status, 0, step.stderr);
@@ -2204,9 +2138,9 @@ test("the commit step hands `report` and `settled` the commit it pushed and the 
 
   // Shadow: the listed work is withheld, which TRUST-45 pages for and `settled`
   // must not — a run that did exactly what BOT-92 asks is not a lost decision.
-  const shadowRoot = withDocuments(estate());
+  const shadowRoot = withDocuments(estate({ bound: false }));
   withRemote(shadowRoot);
-  const shadow = await commitJob(shadowRoot, { entries: [delistOf(SDI2), relistOf(SDI)], shadow: true });
+  const shadow = await commitJob(shadowRoot, { entries: [delistOf(SDI2), removalOf(SDI)], shadow: true });
   assert.equal(shadow.code, 0, shadow.logs.join("\n"));
   const shadowStep = runApply(shadowRoot);
   assert.equal(shadowStep.status, 0, shadowStep.stderr);
@@ -2655,13 +2589,16 @@ test("MOD-8's alarms are derivable from the list entry, before any compile", () 
     { code: "M_DELIST", plugin_id: "widgets" },
   ]);
   assert.ok(alarms.some((a) => a.code === "MOD_8_ADVISORY_DISABLE"));
-  assert.ok(alarms.some((a) => a.code === "MOD_9_DISABLE_CONFIRMATION"));
-  assert.ok(alarms.some((a) => a.code === "MOD_9_REVERSAL_HOLD"));
-  // Three, not four: an `M_DELIST` enters no advisory and no hold, so MOD-8
-  // owes no alarm for it. The count is here so that widening `alarmsFor` is a
-  // deliberate edit — an alarm per decision would page an operator ten times
-  // an hour and end as an alarm nobody reads.
-  assert.equal(alarms.length, 3);
+  // Contract 6.6.0: a `disable` and a relist are held for nobody's
+  // confirmation, so MOD-9 owes no alarm for either; the two codes that
+  // announced one are gone, and the advisory's own MOD-8 alarm stays.
+  assert.ok(!alarms.some((a) => a.code === "MOD_9_DISABLE_CONFIRMATION" || a.code === "MOD_9_REVERSAL_HOLD"),
+    `an alarm still announces a hold MOD-9 no longer makes: ${alarms.map((a) => a.code).join(", ")}`);
+  // One, not three: an `M_DELIST` enters no advisory and no hold, and neither
+  // does a relist now, so MOD-8 owes no alarm for them. The count is here so
+  // that widening `alarmsFor` is a deliberate edit — an alarm per decision
+  // would page an operator ten times an hour and end as an alarm nobody reads.
+  assert.equal(alarms.length, 1);
   // The composer refuses here what the channel would refuse at send time.
   const verdict = composeVerdict({ check: "moderation-run", status: "red", codes: alarms.map((a) => a.code), ids: ["widgets"] });
   assert.equal(verdict.status, "red");
@@ -2727,10 +2664,7 @@ const hid = (n) => `0192f3a4-5b6c-7d8e-9f01-2345678920${String(n).padStart(2, "0
 
 /** A tree with one hold entry per id, each then deleted BY HAND in its own commit (BOT-70): a `cancelled` each. */
 function handCancelled(ids, { documents = false, remote = false } = {}) {
-  const entryFor = (sdi) => holdEntry({
-    service_decision_id: sdi, code: "M_RELIST", category: "error", plugin_id: "widgets",
-    decided_at: "2026-09-18T11:00:00Z", reason: MODERATOR_REASON, moderator: "amoderator", reverses: SDI2,
-  }, { held_for: "reversal", held_at: "2026-09-18T12:00:00Z" });
+  const entryFor = (sdi) => removalEntry(sdi);
   const extra = {};
   for (const id of ids) extra[holdEntryPath(id)] = entryFor(id);
   const root = estate({ extra });
@@ -3205,6 +3139,203 @@ test("M-T3.4: the staging listing costs the batch nothing, as it costs the windo
   assert.deepEqual(results.held, [], "the staging listing's path test spent the bound and held a real takedown");
   assert.deepEqual(results.compiled, [SDIS[4], SDIS[0], SDIS[1], SDIS[2]]);
 });
+// ── MOD-9 since contract 6.6.0: one confirmation, and a bound that ends by itself
+//
+// The owner, 2026-10-29: he revoked a plugin with `disable`, confirmed it with
+// the console's step-up, and the registry then held it for a second
+// confirmation that only a dispatch of `operator.yml` on GitHub could give —
+// and the site said nothing. So nothing is held for a person now. A reversal
+// and a `disable` apply in the run that compiles them; TRUST-26's bound stays,
+// and a takedown it holds releases BY ITSELF in the first run whose trailing
+// 24 hours admit it, oldest held first, never more in one run than the bound
+// admits. MOD-52's confirmation still releases one at once: break-glass.
+
+const SPROCKETS = "sprockets";
+/** `crowd()` plus a fifth listing, for two holds beside three withdrawals. */
+function crowd5({ at = "2026-09-20T09:00:00Z" } = {}) {
+  const root = crowd({ at });
+  writeAll(root, {
+    [`plugins/${SPROCKETS}/plugin.json`]: plugin(SPROCKETS),
+    [`plugins/${SPROCKETS}/versions/1.0.0.json`]: version(SPROCKETS, "1.0.0"),
+    [`plugins/${SPROCKETS}/identity.json`]: identity(SPROCKETS),
+  });
+  commitAt(root, at, "a fifth listing");
+  return root;
+}
+/** A takedown held by the bound, as the commit job writes one, committed at `held_at`. */
+function boundHold(root, id, sdi, held_at) {
+  writeAll(root, { [holdEntryPath(sdi)]: holdEntry(takedownOf(id, SDIS.indexOf(sdi)), { held_for: "bound", held_at }) });
+  return commitAt(root, held_at, `registry: moderation (1 hold(s)) for ${id}`);
+}
+const unlistedOn = (root, id) => JSON.parse(fs.readFileSync(path.join(root, "plugins", id, "plugin.json"), "utf8")).unlisted === true;
+
+test("6.6.0: a `disable` applies in its first run — advisory and log entry, no state/holds file — and a relist and an unrevoke apply at once too", async () => {
+  const root = withDocuments(crowd());
+  const origin = withRemote(root);
+  const disable = decision({
+    service_decision_id: SDIS[0], code: "M_REVOKE", category: "malicious", severity: "high", action: "disable",
+    moderator: "amoderator", versions: ["1.0.0"],
+  });
+  const job = await measuredJob(root, [disable]);
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual([job.results.compiled, job.results.held], [[SDIS[0]], []],
+    "a `disable` was held. The moderator's step-up in the console is its one confirmation (MOD-9 since 6.6.0); a " +
+    "second one on GitHub is what sat invisible on 2026-10-29");
+  assert.ok(!job.paths.some((p) => p.startsWith("state/holds/")), `a disable entered a hold: ${job.paths.join(" ")}`);
+  assert.ok(job.paths.some((p) => /^tools\/revocations\/ASTRA-.*\.json$/.test(p)), `no advisory: ${job.paths.join(" ")}`);
+  assert.ok(job.paths.some((p) => /^bot\/moderation\/.*-widgets-revoke\.json$/.test(p)), `no log entry: ${job.paths.join(" ")}`);
+  assert.equal(runApply(root).status, 0);
+  const landed = headOf(origin);
+  const advisory = JSON.parse(sh(["show", `${landed}:${job.paths.find((p) => p.startsWith("tools/revocations/ASTRA-"))}`], root));
+  assert.equal(advisory.action, "disable");
+  assert.match(sh(["log", "-1", "--format=%B", landed], root), new RegExp(`^Service-Decision: ${SDIS[0]}$`, "m"));
+
+  // A relist: applied in the run, `unlisted` lifted, no hold.
+  const delisted = withDocuments(estate({ extra: { "plugins/widgets/plugin.json": plugin("widgets", { unlisted: true }) } }));
+  const relisted = await commitJob(delisted, { entries: [relistOf(SDI)] });
+  assert.equal(relisted.code, 0, relisted.logs.join("\n"));
+  assert.deepEqual([relisted.results.compiled, relisted.results.held], [[SDI], []], "a relist was held (MOD-9 since 6.6.0 holds none)");
+  assert.ok(!unlistedOn(delisted, "widgets"), "the relist compiled and did not lift `unlisted`");
+  // The unrevoke's own walk is "M_UNREVOKE applies in the run that compiles it" above.
+});
+
+test("6.6.0: a fourth takedown in 24 h is held `bound`; it stays while the window is full and releases by itself, with no confirm record, once it admits it", async () => {
+  const root = withDocuments(crowd());
+  const origin = withRemote(root);
+  withdrawnInGit(root, ["gadgets", "gizmos", "doohickeys"], "2026-09-20T11:30:00Z");
+  sh(["push", "-q", "origin", "HEAD:main"], root);
+  const first = await measuredJob(root, [takedownOf("widgets", 0)], { now: new Date("2026-09-20T12:30:00Z") });
+  assert.equal(first.code, 0, first.logs.join("\n"));
+  assert.deepEqual(first.results.held.map((h) => [h.service_decision_id, h.held_for]), [[SDIS[0], "bound"]],
+    "the fourth takedown in 24 hours was not held: TRUST-26's bound is the guard 6.6.0 keeps");
+  assert.equal(runApply(root, dated("2026-09-20T12:35:00Z")).status, 0);
+
+  // A minute before the window frees: still held, and nothing is committed.
+  const full = await measuredJob(root, [], { now: new Date("2026-09-21T11:29:00Z") });
+  assert.equal(full.code, 0, full.logs.join("\n"));
+  assert.deepEqual([full.paths, full.results.released_holds], [[], []], "a bound hold released while the window was still full");
+  assert.match(waitingFor(full.results.holds, SDIS[0]), /releases by itself/);
+
+  // The first run with room: released, no confirm record anywhere.
+  assert.ok(!fs.existsSync(path.join(root, `state/holds/${SDIS[0]}.confirm.json`)));
+  const room = await measuredJob(root, [], { now: new Date("2026-09-21T11:31:00Z") });
+  assert.equal(room.code, 0, room.logs.join("\n"));
+  assert.deepEqual(room.results.released_holds, [SDIS[0]],
+    `the bound hold did not release by itself once the trailing 24 hours admitted it: ${room.logs.join(" | ")}`);
+  const step = runApply(root, dated("2026-09-21T11:35:00Z"));
+  assert.equal(step.status, 0, step.stderr);
+  const landed = headOf(origin);
+  assert.ok(unlistedOn(root, "widgets"), "the released takedown did not delist");
+  assert.ok(!fs.existsSync(path.join(root, holdEntryPath(SDIS[0]))), "the release left the hold entry");
+  assert.match(sh(["log", "-1", "--format=%B", landed], root), new RegExp(`^Service-Decision: ${SDIS[0]}$`, "m"));
+  // And the next live run reads that commit as `applied`.
+  const next = await historyJob(root, { now: new Date("2026-09-21T11:50:00Z") });
+  assert.deepEqual(next.bodies.map((b) => [b.service_decision_id, b.outcome, b.commit]), [[SDIS[0], "applied", landed]]);
+});
+
+test("6.6.0: two bound holds and room for one — only the oldest goes, and the other the next time there is room", async () => {
+  const root = withDocuments(crowd5());
+  withRemote(root);
+  withdrawnInGit(root, ["gadgets"], "2026-09-20T09:30:00Z");
+  withdrawnInGit(root, ["gizmos", "doohickeys"], "2026-09-20T11:30:00Z");
+  // The OLDER hold has the LATER id, so an order by file name would pick wrong.
+  boundHold(root, "widgets", SDIS[1], "2026-09-20T12:00:00Z");
+  boundHold(root, SPROCKETS, SDIS[0], "2026-09-20T12:30:00Z");
+  sh(["push", "-q", "origin", "HEAD:main"], root);
+
+  // 2026-09-21T10:00: gadgets has left the window, so there is room for one.
+  const one = await measuredJob(root, [], { now: new Date("2026-09-21T10:00:00Z") });
+  assert.equal(one.code, 0, one.logs.join("\n"));
+  assert.deepEqual(one.results.released_holds, [SDIS[1]],
+    `with room for one, the run released ${JSON.stringify(one.results.released_holds)}; the oldest held (widgets, ` +
+    `${SDIS[1]}) goes, and never more than the bound admits`);
+  assert.ok(waitingFor(one.results.holds, SDIS[0]), "the newer hold is not reported as waiting");
+  assert.equal(runApply(root, dated("2026-09-21T10:05:00Z")).status, 0);
+  assert.deepEqual([unlistedOn(root, "widgets"), unlistedOn(root, SPROCKETS)], [true, false]);
+
+  // 11:45: gizmos and doohickeys have left too; widgets' release is inside it. Room again.
+  const two = await measuredJob(root, [], { now: new Date("2026-09-21T11:45:00Z") });
+  assert.deepEqual(two.results.released_holds, [SDIS[0]], `the second hold did not go when there was room: ${two.logs.join(" | ")}`);
+});
+
+test("6.6.0: a takedown that arrives while a bound hold waits queues behind it", async () => {
+  const root = withDocuments(crowd5());
+  withRemote(root);
+  withdrawnInGit(root, ["gadgets"], "2026-09-20T09:30:00Z");
+  withdrawnInGit(root, ["gizmos", "doohickeys"], "2026-09-20T11:30:00Z");
+  boundHold(root, "widgets", SDIS[1], "2026-09-20T12:00:00Z");
+  sh(["push", "-q", "origin", "HEAD:main"], root);
+  // Room for one, and a fresh takedown of sprockets in the same run.
+  const run = await measuredJob(root, [takedownOf(SPROCKETS, 0)], { now: new Date("2026-09-21T10:00:00Z") });
+  assert.equal(run.code, 0, run.logs.join("\n"));
+  assert.deepEqual(run.results.released_holds, [SDIS[1]], "the waiting hold lost its room to a takedown that arrived after it");
+  assert.deepEqual(run.results.held.map((h) => [h.service_decision_id, h.held_for]), [[SDIS[0], "bound"]],
+    "the fresh takedown took room the bound did not have: two withdrawals with room for one");
+  assert.deepEqual(run.results.compiled, []);
+});
+
+test("6.6.0: MOD-52's confirmation still releases a bound hold at once, over a full window (break-glass)", async () => {
+  const root = withDocuments(crowd());
+  withRemote(root);
+  withdrawnInGit(root, ["gadgets", "gizmos", "doohickeys"], "2026-09-20T11:30:00Z");
+  boundHold(root, "widgets", SDIS[0], "2026-09-20T12:00:00Z");
+  writeAll(root, { [`state/holds/${SDIS[0]}.confirm.json`]: confirmOf(SDIS[0], "2026-09-20T12:10:00Z") });
+  commitAt(root, "2026-09-20T12:10:00Z", "operator: confirm");
+  sh(["push", "-q", "origin", "HEAD:main"], root);
+  const job = await measuredJob(root, [], { now: new Date("2026-09-20T12:30:00Z") });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.released_holds, [SDIS[0]],
+    `an operator's confirmation did not release a bound hold at once with the window full: ${job.logs.join(" | ")}`);
+  assert.ok(job.paths.includes(`state/holds/${SDIS[0]}.confirm.json`), "the release does not delete the confirm record");
+});
+
+test("6.6.0: a confirmed takedown spends the window before the bound holds do, so one run never takes away more than it admits", async () => {
+  const root = withDocuments(crowd5());
+  withRemote(root);
+  withdrawnInGit(root, ["gadgets"], "2026-09-20T09:30:00Z");
+  withdrawnInGit(root, ["gizmos", "doohickeys"], "2026-09-20T11:30:00Z");
+  // The older hold waits on the window; the newer one an operator confirmed.
+  boundHold(root, "widgets", SDIS[1], "2026-09-20T12:00:00Z");
+  boundHold(root, SPROCKETS, SDIS[0], "2026-09-20T12:30:00Z");
+  writeAll(root, { [`state/holds/${SDIS[0]}.confirm.json`]: confirmOf(SDIS[0], "2026-09-21T09:00:00Z") });
+  commitAt(root, "2026-09-21T09:00:00Z", "operator: confirm");
+  sh(["push", "-q", "origin", "HEAD:main"], root);
+  // Room for one at 10:00. The confirmed one goes whatever the bound says, and
+  // its withdrawal is in the window the next run counts — so it takes the room.
+  const job = await measuredJob(root, [], { now: new Date("2026-09-21T10:00:00Z") });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.released_holds, [SDIS[0]],
+    `room for one, a confirmed hold and a waiting one: the run released ${JSON.stringify(job.results.released_holds)} — ` +
+    "both would be four withdrawals in 24 hours under a bound of three");
+});
+
+test("6.6.0: a `disable_confirmation` left from before is released as a bound hold — by the window, never past it", async () => {
+  const leftover = (root) => {
+    const d = decision({
+      service_decision_id: SDIS[0], code: "M_REVOKE", category: "malicious", severity: "high", action: "disable",
+      moderator: "amoderator", versions: ["1.0.0"], decided_at: "2026-09-20T11:50:00Z",
+    });
+    writeAll(root, { [holdEntryPath(SDIS[0])]: holdFixture(d, { held_for: "disable_confirmation", held_at: "2026-09-20T12:00:00Z" }) });
+    commitAt(root, "2026-09-20T12:00:00Z", "registry: moderation (1 hold(s))");
+  };
+  // With the window full it stays: the old rule recorded a disable over the
+  // bound under this kind, so it may be a fourth withdrawal.
+  const full = withDocuments(crowd());
+  withdrawnInGit(full, ["gadgets", "gizmos", "doohickeys"], "2026-09-20T11:30:00Z");
+  leftover(full);
+  const held = await measuredJob(full, [], { now: new Date("2026-09-20T12:30:00Z") });
+  assert.equal(held.code, 0, held.logs.join("\n"));
+  assert.deepEqual([held.paths, held.results.released_holds], [[], []], "a leftover disable was released past a full bound");
+  // With room, it is released with no confirm record, and its advisory published.
+  const room = withDocuments(crowd());
+  leftover(room);
+  const released = await measuredJob(room, [], { now: new Date("2026-09-20T12:30:00Z") });
+  assert.equal(released.code, 0, released.logs.join("\n"));
+  assert.deepEqual(released.results.released_holds, [SDIS[0]],
+    `a leftover disable_confirmation with room in the window stayed stuck: nothing will confirm it now: ${released.logs.join(" | ")}`);
+  assert.ok(released.paths.some((p) => /^tools\/revocations\/ASTRA-.*\.json$/.test(p)), released.paths.join(" "));
+});
+
 
 // ── M-T3.5: the operator's five acts (MOD-52, TRUST-33, BOT-70; TRUST-32's `ok`) ─
 //
@@ -3531,15 +3662,16 @@ test("a compiled result's decision records are listed for the commit, at the pat
 // ── B-T4.2: M_IDENTITY_RESET, walked to the end ─────────────────────────────
 //
 // The plan's canary, both cases, through `--job commit` and the workflow's own
-// `apply` step: a listing refused `B_REPOSITORY_RECYCLED` is reset; the reset
-// is held (MOD-9, a reversal), lands, waits out 24 hours from that commit AND
-// an operator's confirmation, and is released in ONE commit carrying
-// `Service-Decision:` — DEC-7's voiding record, the log entry `reset`, the hold
-// entry and its confirm record deleted, and in case (ii) the identity record
-// deleted too (ID-40). The next live run reads that commit as `applied`;
-// detector A9 is silent on it; the listing reads `frozen` (ID-25); and the new
-// owner's certificate is held `R_IDENTITY_CHANGED` against a voided baseline,
-// never refused `B_REPOSITORY_RECYCLED` again.
+// `apply` step: a listing refused `B_REPOSITORY_RECYCLED` is reset, and since
+// contract 6.6.0 the reset applies in the run that compiles it (MOD-9 held it
+// as a reversal for 24 hours and a confirmation until then), in ONE commit
+// carrying `Service-Decision:` — DEC-7's voiding record, the log entry
+// `reset`, and in case (ii) the identity record deleted too (ID-40). `report`
+// posts it `applied`; detector A9 is silent on it; the listing reads `frozen`
+// (ID-25); and the new owner's certificate is held `R_IDENTITY_CHANGED`
+// against a voided baseline, never refused `B_REPOSITORY_RECYCLED` again. A
+// reset held under the old rule and still on a tree is released by the next
+// run, and refused by name when MOD-10 no longer holds.
 
 const RESET_REASON = "The repository name was re-registered by its new owner after the old one deleted it.";
 const resetOf = (id = SDI) => decision({
@@ -3595,59 +3727,32 @@ function recycledEstate({ bound }) {
   return withDocuments(root);
 }
 
-/** The reset entered and landed at 2026-09-20T12:45Z, as the workflow lands it. */
-async function heldReset({ bound }) {
-  const root = recycledEstate({ bound });
+const landedFiles = (root) => sh(["show", "--name-status", "--format=", "HEAD"], root).trim().split("\n").sort();
+const voidingKey = `service-decision:${SDI}:widgets::identity_reset`;
+const voidingPath = recordPath({ decision_id: decisionId(voidingKey), decided_at: "2026-09-20T12:00:00Z" });
+
+test("B-T4.2 (ii): a bound listing's reset applies in the run that compiles it, in one commit, and is never refused again", async () => {
+  const root = recycledEstate({ bound: true });
   const origin = withRemote(root);
   const job = await commitJob(root, { entries: [resetOf()], now: new Date("2026-09-20T12:30:00Z") });
   assert.equal(job.code, 0, job.logs.join("\n"));
-  assert.deepEqual(job.results.held.map((h) => h.held_for), ["reversal"], "MOD-9 holds an M_IDENTITY_RESET as a reversal");
-  assert.deepEqual(job.paths, [holdEntryPath(SDI)], `entering the hold wrote more than the hold: ${job.paths.join(" ")}`);
+  assert.deepEqual(job.results.held, [],
+    "the reset was held. MOD-9 holds no reversal since contract 6.6.0: the moderator's step-up in the console is " +
+    "its one confirmation, and a hold here waited on GitHub where nobody saw it");
+  assert.deepEqual(job.results.compiled, [SDI]);
+  assert.ok(!job.paths.includes(holdEntryPath(SDI)), `the reset entered a hold: ${job.paths.join(" ")}`);
+  for (const rel of ["plugins/widgets/identity.json", "bot/moderation/2026-09-20-widgets-reset.json", voidingPath]) {
+    assert.ok(job.paths.includes(rel), `the reset commit does not list ${rel}: ${job.paths.join(" ")}`);
+  }
   const step = runApply(root, dated("2026-09-20T12:45:00Z"));
   assert.equal(step.status, 0, step.stderr);
-  return { root, origin };
-}
-
-const landedFiles = (root) => sh(["show", "--name-status", "--format=", "HEAD"], root).trim().split("\n").sort();
-
-test("B-T4.2 (ii): a bound listing's reset is held, released once in one commit, and never refused again", async () => {
-  const { root, origin } = await heldReset({ bound: true });
-
-  // Without a confirmation, however long it waits: nothing.
-  const unconfirmed = await commitJob(root, { entries: [], now: new Date("2026-09-22T12:00:00Z") });
-  assert.equal(unconfirmed.code, 0, unconfirmed.logs.join("\n"));
-  assert.deepEqual(unconfirmed.paths, [], "an unconfirmed reset wrote something");
-  assert.ok(fs.existsSync(path.join(root, "plugins/widgets/identity.json")));
-
-  // Confirmed at 13:00, and asked at 12:44 the next day — a minute inside the
-  // 24 hours that run from the commit that landed the entry: nothing.
-  writeAll(root, { [`state/holds/${SDI}.confirm.json`]: confirmOf(SDI, "2026-09-20T13:00:00Z") });
-  commitAt(root, "2026-09-20T13:00:00Z", "operator: confirm");
-  const early = await commitJob(root, { entries: [], now: new Date("2026-09-21T12:44:00Z") });
-  assert.deepEqual(early.paths, [], `a reset released before its 24 hours: ${early.paths.join(" ")}`);
-
-  // Due: the release, and nothing else.
-  const job = await commitJob(root, { entries: [], now: new Date("2026-09-21T12:46:00Z") });
-  assert.equal(job.code, 0, job.logs.join("\n"));
-  assert.deepEqual(job.results.released_holds, [SDI]);
-  assert.ok(!job.logs.some((l) => l.includes("hold_end_not_built")), "the reset's release is built, and was refused as not built");
-  const voidingKey = `service-decision:${SDI}:widgets::identity_reset`;
-  const voidingPath = recordPath({ decision_id: decisionId(voidingKey), decided_at: "2026-09-20T12:00:00Z" });
-  for (const rel of [
-    "plugins/widgets/identity.json", "bot/moderation/2026-09-20-widgets-reset.json", voidingPath,
-    holdEntryPath(SDI), `state/holds/${SDI}.confirm.json`,
-  ]) {
-    assert.ok(job.paths.includes(rel), `the release commit does not list ${rel}: ${job.paths.join(" ")}`);
-  }
-  const step = runApply(root, dated("2026-09-21T12:50:00Z"));
-  assert.equal(step.status, 0, step.stderr);
-  const released = headOf(origin);
+  const landed = headOf(origin);
   const files = landedFiles(root);
   for (const want of [
     "D\tplugins/widgets/identity.json", "A\tbot/moderation/2026-09-20-widgets-reset.json", `A\t${voidingPath}`,
-    `D\t${holdEntryPath(SDI)}`, `D\tstate/holds/${SDI}.confirm.json`,
-  ]) assert.ok(files.includes(want), `the landed release commit lacks ${want}: ${files.join(" | ")}`);
-  assert.match(sh(["log", "-1", "--format=%B", released], root), new RegExp(`^Service-Decision: ${SDI}$`, "m"));
+  ]) assert.ok(files.includes(want), `the landed reset commit lacks ${want}: ${files.join(" | ")}`);
+  assert.ok(!files.some((f) => f.includes("state/holds/")), `the reset commit touched state/holds/: ${files.join(" | ")}`);
+  assert.match(sh(["log", "-1", "--format=%B", landed], root), new RegExp(`^Service-Decision: ${SDI}$`, "m"));
 
   // DEC-7's voiding record and MOD-47's entry, as `main` now holds them.
   const record = JSON.parse(fs.readFileSync(path.join(root, voidingPath), "utf8"));
@@ -3656,22 +3761,25 @@ test("B-T4.2 (ii): a bound listing's reset is held, released once in one commit,
     ["moderator", "moderation", "identity_reset", "identity_reset", ["M_IDENTITY_RESET"], "widgets"],
   );
   const entry = JSON.parse(fs.readFileSync(path.join(root, "bot/moderation/2026-09-20-widgets-reset.json"), "utf8"));
-  assert.deepEqual(checkEntry(entry), [], "the log refuses the entry the release wrote");
+  assert.deepEqual(checkEntry(entry), [], "the log refuses the entry the reset wrote");
 
-  // BOT-81 through history: the next live run reads the commit as `applied`.
-  const after = walkHolds({ root, now: new Date("2026-09-21T13:00:00Z"), shadow: false });
-  assert.deepEqual(after.pending, [{ service_decision_id: SDI, outcome: "applied", commit: released }]);
-  assert.deepEqual(after.released.map((r) => r.hand), [false], "the release commit read as a hand deletion");
-  const again = await commitJob(root, { entries: [], now: new Date("2026-09-22T13:00:00Z") });
-  assert.deepEqual(again.paths, [], "a released reset was released a second time");
+  // BOT-81: `report` posts it `applied`, naming the commit that landed it.
+  const posted = await reportJob({ ASTRA_RESULTS: step.outputs.results, ASTRA_MAIN_COMMIT: step.outputs.main_commit });
+  assert.equal(posted.code, 0, posted.logs.join("\n"));
+  assert.deepEqual(posted.bodies.map((b) => [b.service_decision_id, b.outcome, b.commit]), [[SDI, "applied", landed]]);
+  // Listed again (its result lost): MOD-10 now refuses it, so nothing applies twice.
+  const again = await commitJob(root, { entries: [resetOf()], now: new Date("2026-09-20T13:00:00Z") });
+  assert.equal(again.code, 0, again.logs.join("\n"));
+  assert.deepEqual(again.paths, [], "a reset was applied a second time");
+  assert.deepEqual(again.results.refused.map((r) => [r.service_decision_id, r.refusal]), [[SDI, "target_changed"]]);
 
   // Detector A9 excuses the deletion because the voiding record is beside it.
   const detected = detect({ root });
   assert.ok(detected.ran.includes("A9") && detected.scanned.identity_commits >= 1,
-    `A9 did not read the release commit (ran ${detected.ran.join(", ")}; skipped ` +
+    `A9 did not read the reset commit (ran ${detected.ran.join(", ")}; skipped ` +
     `${JSON.stringify(detected.skipped)}), so its silence below would say nothing`);
   assert.deepEqual(detected.findings.filter((f) => f.detector === "A9"), [],
-    "A9 alarmed on the reset's own release commit");
+    "A9 alarmed on the reset's own commit");
 
   // ID-25: a listing that ever had an identity record is `frozen`, never
   // `grandfathered` again, so a release with no binding line is `B_UNBOUND`.
@@ -3694,30 +3802,54 @@ test("B-T4.2 (ii): a bound listing's reset is held, released once in one commit,
 });
 
 test("B-T4.2 (i): an unbound listing's reset writes the voiding record and the entry, and deletes no identity record", async () => {
-  const { root, origin } = await heldReset({ bound: false });
-  writeAll(root, { [`state/holds/${SDI}.confirm.json`]: confirmOf(SDI, "2026-09-20T13:00:00Z") });
-  commitAt(root, "2026-09-20T13:00:00Z", "operator: confirm");
-  // Under a SHADOW answer: a hold is not work the answer names, and its release
-  // is driven by the MOD-52 record in git, so it is committed in shadow too —
-  // and nothing is posted for it (BOT-92). `report` reads `compiled` and `held`.
-  const job = await commitJob(root, { entries: [], shadow: true, now: new Date("2026-09-21T12:46:00Z") });
+  const root = recycledEstate({ bound: false });
+  withRemote(root);
+  const job = await commitJob(root, { entries: [resetOf()], now: new Date("2026-09-20T12:30:00Z") });
   assert.equal(job.code, 0, job.logs.join("\n"));
-  assert.deepEqual(job.results.released_holds, [SDI]);
-  assert.deepEqual([job.results.compiled, job.results.held], [[], []], "a shadow run handed report a result to post");
-  assert.ok(!job.paths.some((p) => p.endsWith("identity.json")), "a release with no identity record touched one");
-  assert.equal(runApply(root, dated("2026-09-21T12:50:00Z")).status, 0);
+  assert.deepEqual([job.results.compiled, job.results.held], [[SDI], []]);
+  assert.ok(!job.paths.some((p) => p.endsWith("identity.json")), "a reset with no identity record touched one");
+  assert.equal(runApply(root, dated("2026-09-20T12:45:00Z")).status, 0);
   const records = loadRecords(root).decisions.map((r) => r.doc);
   assert.equal(records.filter((r) => r.category === "identity_reset").length, 1,
     "no voiding record: deleting nothing and writing nothing would leave the refusal where it was");
   const { baseline } = baselineFor({ records, pluginId: "widgets" });
   assert.equal(compareWithBaseline({ identity: identityFromCertificate({ ...CERT, ...NEW_IDS }), baseline }).code, "R_IDENTITY_CHANGED");
-  assert.equal(walkHolds({ root, now: new Date("2026-09-21T13:00:00Z"), shadow: false }).pending[0]?.commit, headOf(origin));
+
+  // Under a SHADOW answer the reset is work the answer names, so nothing is
+  // written for it and nothing posted (BOT-92) — it applies on the live run.
+  const shadowRoot = recycledEstate({ bound: false });
+  const shadow = await commitJob(shadowRoot, { entries: [resetOf()], shadow: true, now: new Date("2026-09-20T12:30:00Z") });
+  assert.equal(shadow.code, 0, shadow.logs.join("\n"));
+  assert.deepEqual([shadow.paths, shadow.results.compiled, shadow.results.shadow_withheld.compiled], [[], [], [SDI]]);
 });
 
-test("B-T4.2: a due reset the tree moved under writes nothing and alerts by name, every run", async () => {
-  const { root } = await heldReset({ bound: true });
-  writeAll(root, { [`state/holds/${SDI}.confirm.json`]: confirmOf(SDI, "2026-09-20T13:00:00Z") });
-  commitAt(root, "2026-09-20T13:00:00Z", "operator: confirm");
+/** A reset held as a reversal under the rule before contract 6.6.0, landed on the tree at 2026-09-20T12:45Z. */
+function leftoverReset({ bound }) {
+  const root = recycledEstate({ bound });
+  writeAll(root, { [holdEntryPath(SDI)]: holdFixture(resetOf(), { held_for: "reversal", held_at: "2026-09-20T12:30:00Z" }) });
+  commitAt(root, "2026-09-20T12:45:00Z", "registry: moderation (1 hold(s))");
+  return root;
+}
+
+test("B-T4.2: a reset held before contract 6.6.0 is released by the next run, with no confirmation, in one commit", async () => {
+  const root = leftoverReset({ bound: true });
+  const origin = withRemote(root);
+  const job = await commitJob(root, { entries: [], now: new Date("2026-09-20T13:00:00Z") });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.released_holds, [SDI],
+    `a leftover reset with no confirm record was not released; nothing will ever confirm it now: ${job.logs.join(" | ")}`);
+  assert.equal(runApply(root, dated("2026-09-20T13:05:00Z")).status, 0);
+  const files = landedFiles(root);
+  for (const want of ["D\tplugins/widgets/identity.json", `A\t${voidingPath}`, `D\t${holdEntryPath(SDI)}`]) {
+    assert.ok(files.includes(want), `the landed release commit lacks ${want}: ${files.join(" | ")}`);
+  }
+  const after = walkHolds({ root, now: new Date("2026-09-20T13:10:00Z"), shadow: false });
+  assert.deepEqual(after.pending, [{ service_decision_id: SDI, outcome: "applied", commit: headOf(origin) }],
+    "the next live run does not read the release commit as `applied`");
+});
+
+test("B-T4.2: a leftover reset the tree moved under writes nothing and alerts by name, every run", async () => {
+  const root = leftoverReset({ bound: true });
   // Another reset of the same refusal voided the id while this one waited.
   writeAll(root, {
     "log/decisions/2026/09/cccccccccccccccccccccccccccccccc.json": {
@@ -3727,11 +3859,13 @@ test("B-T4.2: a due reset the tree moved under writes nothing and alerts by name
     },
   });
   commitAt(root, "2026-09-21T09:00:00Z", "moderation: an earlier reset of widgets");
-  const job = await commitJob(root, { entries: [], now: new Date("2026-09-21T12:46:00Z") });
-  assert.equal(job.code, 0, job.logs.join("\n"));
-  assert.deepEqual(job.paths, [], `a reset MOD-10 now refuses was released: ${job.paths.join(" ")}`);
-  assert.ok(job.logs.some((l) => l.startsWith(`::error::hold_release_refused ${SDI}:`) && l.includes("target_changed")),
-    job.logs.join(" | "));
+  for (const now of ["2026-09-21T12:46:00Z", "2026-09-21T13:46:00Z"]) {
+    const job = await commitJob(root, { entries: [], now: new Date(now) });
+    assert.equal(job.code, 0, job.logs.join("\n"));
+    assert.deepEqual(job.paths, [], `a reset MOD-10 now refuses was released: ${job.paths.join(" ")}`);
+    assert.ok(job.logs.some((l) => l.startsWith(`::error::hold_release_refused ${SDI}:`) && l.includes("target_changed")),
+      job.logs.join(" | "));
+  }
   assert.ok(fs.existsSync(path.join(root, "plugins/widgets/identity.json")));
   assert.ok(fs.existsSync(path.join(root, holdEntryPath(SDI))), "the entry left the tree without a commit that names it");
 });
@@ -3907,14 +4041,15 @@ const recordOf = (id, act, at = "2026-09-19T13:00:00Z") => ({
 
 /**
  * A tree with one hold on it and the record answering it (none for `act:
- * null`), committed at `held_at` — a reversal's 24 hours run from that commit —
- * with the generated documents and a bare `origin`.
+ * null`), committed at `held_at`, with the generated documents and a bare
+ * `origin`. A leftover kind (`reversal`, `disable_confirmation`) is written as
+ * the rule before contract 6.6.0 wrote it (`holdFixture`).
  */
 function oneHold(decisionDoc, { held_for, held_at = "2026-09-18T12:00:00Z", act = "confirm", extra = {}, root = null } = {}) {
   const id = decisionDoc.service_decision_id;
   const files = {
     ...extra,
-    [holdEntryPath(id)]: holdEntry(decisionDoc, { held_for, held_at }),
+    [holdEntryPath(id)]: holdFixture(decisionDoc, { held_for, held_at }),
     ...(act ? { [`state/holds/${id}.${act}.json`]: recordOf(id, act) } : {}),
   };
   let tree = root;
@@ -3943,7 +4078,7 @@ async function holdsRun(root, { now = new Date("2026-09-20T00:00:00Z"), shadow =
   return { job, landed, show, names, logs };
 }
 
-test("M-T3.3: a confirmed `disable`, a confirmed takedown over the bound and a confirmed unbound removal are each applied at once", async () => {
+test("M-T3.3: a confirmed leftover `disable`, a confirmed takedown over the bound and a confirmed unbound removal are each applied at once", async () => {
   const cases = [
     {
       held_for: "disable_confirmation",
@@ -3979,7 +4114,7 @@ test("M-T3.3: a confirmed `disable`, a confirmed takedown over the bound and a c
     const root = withDocuments(estate({
       bound: c.bound ?? true,
       extra: {
-        [holdEntryPath(SDI)]: holdEntry(c.decision, { held_for: c.held_for, held_at: "2026-09-18T12:00:00Z" }),
+        [holdEntryPath(SDI)]: holdFixture(c.decision, { held_for: c.held_for, held_at: "2026-09-18T12:00:00Z" }),
         [`state/holds/${SDI}.confirm.json`]: recordOf(SDI, "confirm"),
       },
       at: "2026-09-18T12:00:00Z",
@@ -3998,7 +4133,7 @@ test("M-T3.3: a confirmed `disable`, a confirmed takedown over the bound and a c
   }
 });
 
-test("M-T3.3: a released unrevoke deletes the advisory the reversed decision published, and logs `unrevoke` naming both", async () => {
+test("M_UNREVOKE applies in the run that compiles it: the advisory the reversed decision published is deleted, and `unrevoke` names both (6.6.0)", async () => {
   // Leg one: an `M_REVOKE` (block_install, so not held) applied and pushed.
   const root = withDocuments(estate({ at: "2026-09-17T09:00:00Z" }));
   const origin = withRemote(root);
@@ -4012,24 +4147,36 @@ test("M-T3.3: a released unrevoke deletes the advisory the reversed decision pub
   const advisory = first.results.written.find((p) => p.startsWith("tools/revocations/ASTRA-"));
   assert.ok(advisory, `the revoke published no advisory: ${first.results.written.join(", ")}`);
 
-  // Leg two: the moderator's `M_UNREVOKE`, held as a reversal and confirmed.
+  // Leg two: the moderator's `M_UNREVOKE`, compiled and applied in its own
+  // run — no hold entry, no 24 hours, no confirmation (MOD-9 since 6.6.0).
   const unrevoke = decision({
     code: "M_UNREVOKE", category: "error", moderator: "amoderator", reverses: SDI2, decided_at: "2026-09-18T11:00:00Z",
     reason: "The advisory named a bundle that was never shipped; the withdrawal is lifted and the listing stands.",
   });
-  oneHold(unrevoke, { held_for: "reversal", root });
-  sh(["push", "-q", "origin", "HEAD:main"], root);
-  const run = await holdsRun(root);
-  assert.deepEqual(run.job.results.released_holds, [SDI], run.job.logs.join(" | "));
-  assert.equal(run.landed, headOf(origin));
+  const lifted = await commitJob(root, { entries: [unrevoke], now: new Date("2026-09-18T11:30:00Z") });
+  assert.equal(lifted.code, 0, lifted.logs.join("\n"));
+  assert.deepEqual([lifted.results.compiled, lifted.results.held], [[SDI], []],
+    `the unrevoke was not applied in the run that compiled it: ${lifted.logs.join(" | ")}`);
+  assert.ok(!lifted.paths.some((p) => p.startsWith("state/holds/")), `the unrevoke entered a hold: ${lifted.paths.join(" ")}`);
+  const step = runApply(root, dated("2026-09-18T11:45:00Z"));
+  assert.equal(step.status, 0, step.stderr);
+  const landedAt = headOf(origin);
+  const show = (rel) => { try { return sh(["show", `${landedAt}:${rel}`], root); } catch { return null; } };
+  const names = sh(["show", "--name-status", "--format=", landedAt], root).split("\n").filter(Boolean);
+  const run = {
+    names,
+    show,
+    logs: names.filter((l) => /^A\s+bot\/moderation\//.test(l)).map((l) => JSON.parse(show(l.split(/\s+/)[1]))),
+  };
   assert.ok(run.names.some((l) => l === `D\t${advisory}`), `the release did not delete ${advisory}: ${run.names.join(" | ")}`);
   const id = path.basename(advisory, ".json");
   assert.deepEqual(run.logs.map((e) => [e.action, e.advisory, e.reverses, e.service_decision_id]), [["unrevoke", id, SDI2, SDI]]);
   assert.ok(!run.show(REVOCATIONS_FILE).includes(id), "the withdrawal list that landed still carries the lifted advisory");
 
-  // And the same decision released a second time — the entry restored by hand —
-  // finds nothing left to lift, and writes nothing.
-  const again = oneHold({ ...unrevoke, service_decision_id: SDI3 }, { held_for: "reversal", root });
+  // And an unrevoke of the same advisory left on the tree as a hold from
+  // before 6.6.0 — released at once, with no confirmation — finds nothing
+  // left to lift, and writes nothing.
+  const again = oneHold({ ...unrevoke, service_decision_id: SDI3 }, { held_for: "reversal", act: null, root });
   const twice = await commitJob(again.root, { entries: [], now: new Date("2026-09-20T00:00:00Z") });
   assert.equal(twice.code, 0, twice.logs.join("\n"));
   assert.deepEqual(twice.results.released_holds, []);
@@ -4044,15 +4191,14 @@ test("M-T3.3: a released unrevoke deletes the advisory the reversed decision pub
   const otherRevoke = await commitJob(other, { entries: [revoke], now: new Date("2026-09-17T10:30:00Z") });
   assert.equal(otherRevoke.code, 0, otherRevoke.logs.join("\n"));
   assert.equal(runApply(other, dated("2026-09-17T10:45:00Z")).status, 0);
-  oneHold({ ...unrevoke, plugin_id: "gadgets" }, { held_for: "reversal", root: other });
-  const wrong = await commitJob(other, { entries: [], now: new Date("2026-09-20T00:00:00Z") });
+  const wrong = await commitJob(other, { entries: [{ ...unrevoke, plugin_id: "gadgets" }], now: new Date("2026-09-20T00:00:00Z") });
   assert.equal(wrong.code, 0, wrong.logs.join("\n"));
   assert.deepEqual(wrong.paths, [], "an unrevoke of gadgets lifted the advisory widgets' revoke published");
-  assert.deepEqual(wrong.results.release_refused.map((r) => [r.service_decision_id, r.refusal]), [[SDI, "target_changed"]]);
+  assert.deepEqual(wrong.results.refused.map((r) => [r.service_decision_id, r.refusal]), [[SDI, "target_changed"]]);
 });
 
 test("M-T3.3: a release the tree has moved under writes nothing, keeps the entry, and alerts by name every run", async () => {
-  // A relist confirmed for a listing a MOD-52 revert has already relisted.
+  // A relist held before 6.6.0 for a listing a MOD-52 revert has already relisted.
   const { root } = oneHold(relistOf(SDI), { held_for: "reversal" });
   const job = await commitJob(root, { entries: [], now: new Date("2026-09-20T00:00:00Z") });
   assert.equal(job.code, 0, job.logs.join("\n"));
@@ -4126,25 +4272,36 @@ test("M-T3.3 and MOD-52: a takedown released over the bound is reverted by the o
 // released a relist or an unrevoke, so a canary that blocks only those blocked
 // nothing, and the commit job never asked it. Watched failing by not handing
 // the walk `coverageRed`, and by asking the canary when no reversal is due.
-test("MOD-46: a red coverage canary holds a confirmed reversal back and no takedown, and is asked only when a reversal is due", async () => {
+test("MOD-46: a red coverage canary holds back only a leftover reversal hold — no takedown, no fresh relist — and is asked only when one is on the tree", async () => {
   const red = () => ({ status: "red", codes: ["MOD_UNLISTED_UNLOGGED"] });
-  const relist = oneHold(relistOf(SDI), { held_for: "reversal", extra: { "plugins/widgets/plugin.json": plugin("widgets", { unlisted: true }) } });
+  const unlisted = { "plugins/widgets/plugin.json": plugin("widgets", { unlisted: true }) };
+  // A relist held before contract 6.6.0, with no confirm record: nothing will
+  // ever confirm it, so only the canary may hold it back, and only a run.
+  const relist = oneHold(relistOf(SDI), { held_for: "reversal", act: null, extra: unlisted });
   const blocked = await commitJob(relist.root, { entries: [], now: new Date("2026-09-20T00:00:00Z"), coverage: red });
   assert.equal(blocked.code, 0, blocked.logs.join("\n"));
-  assert.deepEqual(blocked.paths, [], "a confirmed relist was released under a red coverage canary");
+  assert.deepEqual(blocked.paths, [], "a leftover relist was released under a red coverage canary");
   assert.match(waitingFor(blocked.results.holds, SDI), /MOD-46/);
   assert.ok(blocked.logs.some((l) => l.includes("MOD-46: the coverage canary is red (MOD_UNLISTED_UNLOGGED)")), blocked.logs.join(" | "));
   const broken = await commitJob(relist.root, { entries: [], now: new Date("2026-09-20T00:00:00Z"), coverage: () => { throw new Error("shallow"); } });
-  assert.deepEqual(broken.paths, [], "a canary that could not run released a reversal");
+  assert.deepEqual(broken.paths, [], "a canary that could not run released a leftover reversal");
   const green = await commitJob(relist.root, { entries: [], now: new Date("2026-09-20T00:00:00Z") });
-  assert.deepEqual(green.results.released_holds, [SDI], "and green, it is released: the block above is the canary's");
+  assert.deepEqual(green.results.released_holds, [SDI], "and green, it is released with no confirmation: the block above is the canary's");
 
-  const takedown = oneHold(delistOf(SDI2), { held_for: "bound" });
+  // Nothing else waits on it. A takedown released over the bound, a fresh
+  // relist the moderator just decided — neither is held, and with no leftover
+  // reversal on the tree the canary is not even run.
   let asked = 0;
   const counting = () => { asked += 1; return red(); };
+  const takedown = oneHold(delistOf(SDI2), { held_for: "bound" });
   const applied = await commitJob(takedown.root, { entries: [], now: new Date("2026-09-20T00:00:00Z"), coverage: counting });
-  assert.deepEqual(applied.results.released_holds, [SDI2], "a red coverage canary held back a takedown (MOD-46 blocks reversals only)");
-  assert.equal(asked, 0, "the canary was run with no confirmed reversal on the tree");
+  assert.deepEqual(applied.results.released_holds, [SDI2], "a red coverage canary held back a takedown (MOD-46 blocks no takedown)");
+  const fresh = withDocuments(estate({ extra: unlisted }));
+  const relisted = await commitJob(fresh, { entries: [relistOf(SDI3)], now: new Date("2026-09-20T00:00:00Z"), coverage: counting });
+  assert.equal(relisted.code, 0, relisted.logs.join("\n"));
+  assert.deepEqual(relisted.results.compiled, [SDI3],
+    "a red coverage canary stopped a fresh relist; since contract 6.6.0 a relist is no hold, and MOD-46 blocks only a held one");
+  assert.equal(asked, 0, "the canary was run with no leftover reversal on the tree");
 });
 
 // ── MOD-47's round trip, in CI (MOD-1) ──────────────────────────────────────
@@ -4160,9 +4317,10 @@ test("MOD-46: a red coverage canary holds a confirmed reversal back and no taked
 // executes: the commit job compiles the revoke and the workflow's `apply`
 // step pushes it; the withdrawal list is rebuilt and signed with a TEST index
 // key and verified as a client verifies it; the moderation log is built
-// against that signed list; the `M_UNREVOKE` is listed, held as a reversal,
-// confirmed by the operator's act, released 24 hours later by the commit job
-// and pushed; and the list is rebuilt, re-signed at a higher serial, verified,
+// against that signed list; the `M_UNREVOKE` is listed, compiled and pushed in
+// that same run (MOD-9 holds no reversal since contract 6.6.0 — until then it
+// was held, confirmed by the operator's act and released 24 hours later); and
+// the list is rebuilt, re-signed at a higher serial, verified,
 // and the log built against it shows the revoke settled by the unrevoke. Never
 // a production act: a fixture repository, a bare `origin`, a committed key
 // that says TEST-ONLY in its id.
@@ -4199,27 +4357,16 @@ test("MOD-47's round trip: revoke → unrevoke → moderation log build → sign
   const revokeEntry = (log) => log.entries.find((e) => e.action === "revoke" && e.advisory === advisory);
   assert.equal(revokeEntry(log1)?.backed, true, "the revoke is not backed by the signed advisory it names");
 
-  // ── unrevoke: listed, held, confirmed, released ──
+  // ── unrevoke: listed, compiled, applied in the same run ──
   const unrevoke = decision({
     code: "M_UNREVOKE", category: "error", moderator: "amoderator", reverses: SDI2, decided_at: "2026-09-18T09:00:00Z",
     reason: "The advisory named a bundle that was never shipped; the withdrawal is lifted and the listing stands.",
   });
   const second = await commitJob(root, { entries: [unrevoke], now: new Date("2026-09-18T09:30:00Z") });
   assert.equal(second.code, 0, second.logs.join("\n"));
-  assert.deepEqual(second.results.held.map((h) => h.service_decision_id), [SDI], "MOD-9 holds every M_UNREVOKE");
-  assert.equal(runApply(root, dated("2026-09-18T09:45:00Z")).status, 0);
-
-  const act = operatorAct({ root, act: "confirm", serviceDecisionId: SDI, now: new Date("2026-09-18T10:00:00Z"), runId: "7" });
-  sh(["add", "--", ...act.paths], root);
-  sh(["commit", "-q", "-m", act.message], root, dated("2026-09-18T10:00:00Z"));
-  sh(["push", "-q", "origin", "HEAD:main"], root);
-
-  const early = await commitJob(root, { entries: [], now: new Date("2026-09-19T09:30:00Z") });
-  assert.deepEqual(early.results.released_holds, [], "the unrevoke was released before 24 hours had run from its hold's commit");
-  const third = await commitJob(root, { entries: [], now: new Date("2026-09-19T10:00:00Z") });
-  assert.equal(third.code, 0, third.logs.join("\n"));
-  assert.deepEqual(third.results.released_holds, [SDI], third.logs.join(" | "));
-  const step = runApply(root, dated("2026-09-19T10:15:00Z"));
+  assert.deepEqual([second.results.compiled, second.results.held], [[SDI], []],
+    "the unrevoke was not applied in the run that compiled it (MOD-9 holds no reversal since 6.6.0)");
+  const step = runApply(root, dated("2026-09-18T09:45:00Z"));
   assert.equal(step.status, 0, step.stderr);
   const lifted = headOf(origin);
   assert.equal(step.outputs.main_commit, lifted);

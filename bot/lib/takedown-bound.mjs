@@ -5,9 +5,11 @@
 // `bot/moderation-run.mjs`'s `commit` job (M-T3.4) is its caller: it counts the
 // window with `countWindow`, spends it entry by entry through `boundLedger` and
 // `withdrawnBy` below, and hands each takedown's `overBound` to `holdKindFor`
-// in `bot/lib/holds.mjs`, which is what turns a full bound into a `bound` hold
-// waiting for an operator's MOD-52 confirmation. That job is dark until the
-// R3-open commit uncomments its schedule.
+// in `bot/lib/holds.mjs`, which is what turns a full bound into a `bound` hold.
+// Since contract 6.6.0 the same ledger, counted at a later run, is what
+// releases it: `admitHeldTakedowns` spends it on the held takedowns, oldest
+// first, before anything new (a MOD-52 confirmation releases one at once, as
+// break-glass).
 //
 // ── THE COUNT IS OF THE TREE, NOT OF A TRAILER ──────────────────────────────
 //
@@ -542,7 +544,7 @@ export function countWindow(repo = REPO_ROOT, { now = new Date(), windowHours = 
  *
  * At the bound it applies and at bound + 1 it holds: with the bound at 3 and
  * two withdrawals already made today, the third is the third and goes through;
- * with three already made, the fourth waits for an operator. So the test is
+ * with three already made, the fourth waits for the window. So the test is
  * `count >= bound`, which is also how `holdKindFor` in `bot/lib/holds.mjs`
  * words its `overBound` argument.
  *
@@ -570,7 +572,7 @@ export function overBound(counted, { bound = TAKEDOWN_BOUND } = {}) {
       over: true,
       reason:
         `${result.count} listed plugin id(s) were withdrawn in the trailing ${WINDOW_HOURS} h and the bound ` +
-        `is ${bound}, so a takedown now waits for an operator's confirmation (TRUST-26, MOD-9)`,
+        `is ${bound}, so a takedown now waits until the window makes room for it (TRUST-26, MOD-9)`,
     };
   }
   return {

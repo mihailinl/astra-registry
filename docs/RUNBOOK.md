@@ -53,11 +53,14 @@ first binding's 7 or 14 days — before it publishes; none of them is yours to
 shorten (MOD-10). It still publishes marked not reviewed: an approval is not a
 review.
 
-**What only an operator can do, and where.** A confirmation, a cancellation or a
-revert of a held moderation decision is not a panel action: it is a
-`workflow_dispatch` of the operator workflow, by an admin or maintainer, naming
-the `service_decision_id` (MOD-52; §7.7). A takedown above the bound waits for
-exactly that.
+**What only an operator can do, and where.** Nothing in the normal course.
+The moderator's step-up in the panel is the one confirmation a decision needs
+(contract 6.6.0), and a takedown above the bound releases by itself once the
+trailing 24 hours make room (§7.8, §7.10). The break-glass acts — releasing a
+held takedown at once, cancelling a hold, reverting a decision applied in
+error — are not panel actions: each is a `workflow_dispatch` of the operator
+workflow, by an admin or maintainer, naming the `service_decision_id` (MOD-52;
+§7.7), the repair path the plugins service cannot block.
 
 **When the bot says nothing.** Silence is a bug, as it always was. Look at the
 `Plugins ingest` run for the submission, and at the coverage canary; an alarm in
@@ -672,6 +675,17 @@ installed copy does, and that is only observable on one.
 
 ### 7.7 Confirming, cancelling or reverting a service decision
 
+**This is break-glass, not a step in any normal flow.** Since contract 6.6.0
+(the owner, 2026-10-29) the moderator's step-up in the moderation console is
+the only confirmation a decision needs: the bot applies it in the run that
+compiles it, and nothing waits for anyone to open GitHub. A takedown held by the
+bound (§7.10) releases by itself once the trailing 24 hours make room; an
+author's removal request for an unbound listing ends with the moderator's
+`author_request` delist in the console (§7.8). `operator.yml` stays as the
+repair path the plugins service cannot block (MOD-52): to release a held
+takedown at once over the bound, to cancel one, or to revert a decision that
+was applied in error.
+
 `.github/workflows/operator.yml` (`Operator`), which runs `tools/operator.mjs`.
 Dispatch it from the Actions tab, **on `main`** — any other ref is refused before
 the job starts:
@@ -683,7 +697,7 @@ whole interface:
 
 | `act` | What it writes |
 |---|---|
-| `confirm` | `state/holds/<id>.confirm.json`. Releases a held decision — see §7.8 |
+| `confirm` | `state/holds/<id>.confirm.json`. Releases a held decision at once, over the bound — see §7.8 |
 | `cancel` | `state/holds/<id>.cancel.json`. Ends the hold without applying the decision |
 | `revert` | Finds the log entry by `service_decision_id`; refuses unless it is a `delist`, `deprecate` or `revoke`; removes the `unlisted` flag or deletes the advisory; and writes a `relist` or `unrevoke` entry naming what it reverses |
 | `deny` | `state/deny/<fingerprint>.json` — §7.9. This one takes a `fingerprint` instead of a `service_decision_id` |
@@ -718,35 +732,46 @@ A hold is a decision that has been made and **not applied**. It is a file under
 `state/holds/`, and it ends in exactly one of three ways: a release, a cancel,
 or a hand deletion that a later commit names.
 
+**Nothing is held for a person's confirmation** (contract 6.6.0, the owner,
+2026-10-29). He revoked a plugin with `disable`, confirmed it with the
+console's two-factor step, and the registry then held it for a second
+confirmation that only a dispatch of `operator.yml` could give — while the site
+showed nothing. So an `M_REVOKE` with `disable`, an `M_RELIST`, an
+`M_UNREVOKE` and an `M_IDENTITY_RESET` all apply in the run that compiles them.
+A reset still checks MOD-10's condition then, and is refused if it fails.
+
 What is held:
 
 | Held | Kind | Ends |
 |---|---|---|
-| `M_RELIST`, `M_UNREVOKE` | `reversal` | **24 hours** after the commit that added its entry reached `main`, *and* a confirm record. Both |
-| `M_REVOKE` with action `disable` | `disable_confirmation` | A confirm record, at once. No period |
-| Any takedown over the bound (§7.10) | `bound` | A confirm record, at once |
-| `A_REMOVAL_REQUEST` for a listing with no identity record | `unbound_removal` | An applied `author_request` delist, or a cancel |
+| Any takedown over the bound (§7.10), `disable` and `block_install` included | `bound` | **By itself**, in the first moderation run whose trailing 24 hours, re-counted from the tree, admit it. Oldest held first, never more in one run than the bound admits. A confirm record releases it at once (break-glass) |
+| `A_REMOVAL_REQUEST` for a listing with no identity record | `unbound_removal` | The moderator's `M_DELIST` (`author_request`) for that plugin, from the console — the normal end. Or a cancel record, or a confirm record |
 | `A_YANK` for a listing with no identity record | `unbound_yank` | **Never applied.** A cancel record, or the entry's deletion |
 
-The 24-hour period on a reversal is a reversal period, not a review queue: it
-is there so that a relist issued in error can be caught before it reaches
-installed copies. It runs from the commit that brought the entry onto
-`main` — for a hold merged from a branch, the merge — and not from the
-entry's `held_at`, which is when the bot compiled it, some minutes before
-that commit landed. `release_after` in the entry is therefore the earliest
-the period can end, not the moment it does.
-
-A `disable` is held for a **confirmation** and not for a period, because a
-disable is the irreversible direction and the owner chose a person over a
-clock. An `M_REVOKE` with `block_install` is held only if it is over the bound.
+**How a `bound` hold ends now.** Every run counts the window from the tree
+first and spends it on what is already held, before anything new is compiled:
+a takedown an operator confirmed (it goes whatever the bound says, and its
+withdrawal counts), then the `bound` holds in the order they were held, each
+only while the count is under the bound. So a hold is never overtaken by a
+takedown that arrived after it, and one run never takes away more than the
+bound allows. A count that cannot be made is over the bound, so a run that
+cannot count releases nothing by itself. There is nothing to do: a fourth
+withdrawal on a busy day waits for the 24 hours, and goes.
 
 `unbound_yank` is the one that surprises people: it is never applied, not on a
 confirm, not after any period, not by an applied delist of the same plugin. An
 author yank can only come from the bound account, so an unbound one means the
 service got something wrong, and no confirmation makes it right.
 
+**Entries left from before 6.6.0.** Two kinds the old rule wrote can still be
+met on a tree: `reversal` (a relist, unrevoke or reset that waited 24 hours and
+a confirmation) and `disable_confirmation`. The bot never writes either again.
+A run that meets one ends it: a `reversal` is released at once, with no
+confirmation; a `disable_confirmation` is released as a `bound` hold, because
+the old rule filed a `disable` that was also over the bound under this kind.
+
 **How a release reaches git.** One commit: it applies the held decision from the
-entry, writes the log entry, deletes the hold entry **and** its confirm record,
+entry, writes the log entry, deletes the hold entry **and** any confirm record,
 and carries `Service-Decision:`. A cancel is one commit that deletes the entry
 with a trailer. An entry that disappears with neither is a hand cancellation,
 and the commit that removed it is what records that.
@@ -762,8 +787,9 @@ service may never have received, and the decision then sits `held` at the
 service with nothing on this side to notice. A file that is not valid is read
 as empty, and every run says so until one rewrites it.
 
-**A red coverage canary blocks a `reversal` and nothing else** (§7.11). It never
-blocks a takedown: a withdrawal that waits for a transparency check is a
+**A red coverage canary holds back a leftover `reversal` entry and nothing
+else** (§7.11). It never blocks a takedown, a `bound` hold's release, or a fresh
+relist or unrevoke: a withdrawal that waits for a transparency check is a
 withdrawal a transparency check can stop.
 
 ### 7.9 Operator deny
@@ -806,8 +832,10 @@ minutes later (the wait's `earliest_retry_at` is a retry hint; its
 ### 7.10 The takedown bound
 
 **Three in any trailing 24 hours, estate-wide.** Above it, a moderator's
-takedown — `block_install` included — is held (`bound`) until an operator
-confirms it.
+takedown — `block_install` and `disable` included — is held (`bound`), and
+released by itself in the first moderation run whose trailing 24 hours admit
+it, oldest first (§7.8). An operator's confirm (§7.7) releases it at once; it is
+break-glass, and nothing waits for it.
 
 What counts toward it: every listed plugin id that moved to `yanked` or
 `unlisted`; every listed id newly matched by an entry added under
@@ -819,10 +847,11 @@ the staging listing, excluded by its reserved id.
 
 The consequence to keep in mind on a bad day: **three hand advisories fill the
 bound**, and the fourth withdrawal that day — a moderator's `disable`, say —
-will be held for a confirmation you then have to give. That is the bound
-working, not a fault. It caps the blast radius of a compromised panel or
-service at three withdrawals a day, and the price is that the one day the
-registry is withdrawing by hand is a day it has to confirm the fourth.
+waits until the oldest of the three is 24 hours old, then goes by itself. That
+is the bound working, not a fault, and it is the registry's one guard against a
+compromised panel or service withdrawing the catalogue: it caps the blast
+radius at three withdrawals a day. If the fourth cannot wait, confirm it
+(§7.7) and it goes at once.
 
 Author actions count. The service caps each account at one listed plugin id in
 any trailing 24 hours, so filling the bound by author actions takes three
@@ -833,7 +862,9 @@ distinct accounts; the registry cannot see accounts and does not try to.
 `Moderation coverage` runs every fifteen minutes and asks one question: did
 whoever took a moderation action leave a record a reader can find? It has no
 opinion about whether the action was right, and it **gates nothing** — the one
-thing it holds back is the release of a held reversal (§7.8).
+thing it holds back is the release of a `reversal` entry left from before
+contract 6.6.0 (§7.8). A fresh relist or unrevoke is no hold, so it never waits
+for it.
 
 Three ways to clear a red one, in order of preference:
 

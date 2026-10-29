@@ -104,21 +104,27 @@
 //
 // **Every hold MOD-9 makes ends in a commit** (M-T3.3: "a release commit
 // applies the held decision from the hold entry, writes the log entry,
-// deletes the entry and its confirm record"). `walkHolds` hands a due,
-// confirmed hold to `releaseHolds`, which compiles the held decision again
-// against this tree with the confirmed kind released (`compileDecision`'s
-// `release`; `compileIdentityReset` for a reset, B-T4.2) and deletes the entry
-// and its confirm record in the same commit, under `Service-Decision:`; a
-// relist lifts `unlisted`, an unrevoke deletes the advisory the reversed
-// decision published, and a `disable`, a takedown over the bound or an unbound
-// removal request is applied as it would have been unheld. A hold due to
-// cancel goes to `cancelHolds`: the entry and its records deleted under the
-// trailer, no log entry. Neither result is posted by this run: the next live
-// run reads the commit through `holdDeletions`, as it reads any hold that left
-// the tree. A release the tree has moved under writes nothing and alerts
-// `hold_release_refused` every run, the entry left for an operator's cancel.
-// Until 2026-10-14 only the reset was built, and every other due hold was
-// refused by name (`hold_end_not_built`) and sat at `held` (ops entry 99).
+// deletes the entry and its confirm record"). Since contract 6.6.0 nothing
+// waits for a person: a reversal and a `disable` apply in the run that
+// compiles them, and a takedown held by TRUST-26's bound releases BY ITSELF.
+// Before anything new is compiled, `admitHeldTakedowns` spends this run's
+// ledger on the takedowns already held — the ones an operator confirmed
+// (MOD-52, break-glass, released over the bound) and then the `bound` holds,
+// oldest first, while the trailing 24 hours counted from this tree admit one
+// more — so a hold is never overtaken by a takedown that arrived after it.
+// `walkHolds` hands each due hold to `releaseHolds`, which compiles the held
+// decision again against this tree with its kind released (`compileDecision`'s
+// `release`) and deletes the entry and any confirm record in the same commit,
+// under `Service-Decision:`. An entry left from before 6.6.0 — a `reversal`, a
+// `disable_confirmation` — is ended the same way (`bot/lib/holds.mjs`'s
+// header). A hold due to cancel goes to `cancelHolds`: the entry and its
+// records deleted under the trailer, no log entry. Neither result is posted by
+// this run: the next live run reads the commit through `holdDeletions`, as it
+// reads any hold that left the tree. A release the tree has moved under writes
+// nothing and alerts `hold_release_refused` every run, the entry left for an
+// operator's cancel. Until 2026-10-14 only the reset was built, and every
+// other due hold was refused by name (`hold_end_not_built`) and sat at `held`
+// (ops entry 99).
 //
 // **`M_REVIEW` (contract 3.0.0; MOD-56) needs nothing of its own here.** It
 // is listed, checked and compiled like any service decision, and its compiled
@@ -167,7 +173,6 @@ import {
   RELEASABLE_KINDS,
   allowlistedSubmission,
   compileDecision,
-  compileIdentityReset,
   newBatch,
   recordInBatch,
 } from "./lib/compile-decision.mjs";
@@ -183,6 +188,7 @@ import {
   writeDecisionRecord,
 } from "./lib/decisions.mjs";
 import {
+  BOUND_GATED_KINDS,
   HOLDS_DIR,
   classifyHoldCommit,
   holdEntry,
@@ -642,7 +648,7 @@ export function compileAll(entries, { root = REPO_ROOT, overBound = null, ledger
     throw new Error(
       "this batch holds a takedown and TRUST-26's bound was not measured for this run. `overBound` is not " +
       "defaulted to false, because false is the direction that APPLIES a takedown MOD-9 should have held: over " +
-      "the bound every takedown waits for an operator's MOD-52 confirmation, and a run that guessed would take " +
+      "the bound every takedown is held until the window makes room, and a run that guessed would take " +
       "software off machines that the bound exists to protect. The commit job measures it with " +
       "`bot/lib/takedown-bound.mjs` and passes a `ledger`",
     );
@@ -1043,9 +1049,9 @@ export const holdEntryPath = (id) => `${HOLDS_PREFIX}/${id}.json`;
  * **An entry already on the tree is left as it is**, byte for byte, and is not
  * listed for the commit. That is the decision being listed again because an
  * earlier run's `held` result never reached the service; rewriting it would
- * move `held_at` and `release_after`, which a reversal waits for as well as
- * for 24 hours from its commit, and so restart the period every time; and
- * listing an unchanged file would compose a commit with nothing in it.
+ * move `held_at`, which orders `bound` holds for TRUST-26's window (oldest
+ * first), and so send it to the back of the queue every time; and listing an
+ * unchanged file would compose a commit with nothing in it.
  *
  * **And its `held` result names the commit that entered it** (`results`'s
  * `commit`), read here because this is where the entry is found to be there
@@ -1084,11 +1090,10 @@ export function writeHoldEntries(held, { root = REPO_ROOT, schemaRoot = REPO_ROO
 }
 
 /**
- * Where a hold entry landed on `main`: the commit that added it, and when. The
- * one reader of that commit — BOT-81's `held` result names it
- * (`entryCommit`), and MOD-9's 24 hours run from it (`reversalDue` in
- * `bot/lib/holds.mjs`, ops entry 101) — so the two can never name different
- * commits.
+ * Where a hold entry landed on `main`: the commit that added it, and when.
+ * BOT-81's `held` result names it (`entryCommit`). Until contract 6.6.0 a
+ * reversal's 24 hours also ran from it (ops entry 101); nothing is held for a
+ * period now, so the commit is the one thing read.
  *
  * **The commit on HEAD's first-parent line that brought the file, read against
  * its first parent, at its committer time** — how TRUST-26's window dates a
@@ -1100,12 +1105,12 @@ export function writeHoldEntries(held, { root = REPO_ROOT, schemaRoot = REPO_ROO
  * moment `main` held the entry — the early direction. The commit that ADDED
  * it, not the last that touched it: an edit to the entry is not a new hold.
  *
- * Three shapes, and `reversalDue` reads each:
+ * Three shapes:
  *
  *   - `{sha, at}` — landed;
  *   - `{sha: null, at: null, uncommitted: true, why}` — the file is in no
- *     commit on HEAD: the entry this run has just written. Its period has not
- *     started. Asked of HEAD's tree and not of the log, because a path that
+ *     commit on HEAD: the entry this run has just written. Asked of HEAD's
+ *     tree and not of the log, because a path that
  *     was added, deleted and written again would otherwise be dated at its
  *     first life;
  *   - `{sha: null, at: null, why}` — the history cannot be read. **A shallow
@@ -1240,30 +1245,93 @@ export function holdDeletions(root = REPO_ROOT, { present = new Set() } = {}) {
 /**
  * MOD-46: is the moderation coverage canary red, for the one purpose it gates?
  *
- * A red canary blocks the release of a held reversal and NOTHING ELSE
- * (`resolveHold`): giving something back while the registry cannot account
- * for every withdrawal it has published is publishing a claim it cannot back,
- * and blocking a takedown on it would be the opposite mistake. So it is asked
- * only when a confirmed reversal is on the tree, and a canary that cannot be
- * run reads as red — a reversal waits a run, which costs time and nothing
+ * MOD-46 lets a red canary block the release of a HELD `M_RELIST` or
+ * `M_UNREVOKE` and nothing else. Since contract 6.6.0 MOD-9 holds neither, so
+ * the only hold it can still reach is a `reversal` entry left on the tree from
+ * before (`resolveHold`), and it holds that a run: giving something back from
+ * a hold while the registry cannot account for every withdrawal it has
+ * published is publishing a claim it cannot back. It blocks NO takedown, no
+ * fresh relist or unrevoke (those apply in the run that compiles them, and the
+ * compile never asks the canary), and no `bound` hold's release. So it is
+ * asked only when such a leftover is on the tree, and a canary that cannot be
+ * run reads as red — the leftover waits a run, which costs time and nothing
  * else. `coverage` is `tools/moderation-coverage.mjs`'s `run`, already in this
  * file's closure for `stagingListingId`; a test hands in its own, as it hands
  * in `fetchImpl`.
  */
 export function reversalCoverageRed(root, { coverage = coverageRun, log = console } = {}) {
-  const asked = readHolds(root).some((h) => h.entry?.held_for === "reversal" && h.confirm && !h.cancel);
+  const asked = readHolds(root).some((h) => h.entry?.held_for === "reversal" && !h.cancel);
   if (!asked) return false;
   let verdict;
   try {
     verdict = coverage(root);
   } catch (e) {
-    log.error(`::warning::MOD-46: the coverage canary could not be run (${e.message}), so no reversal is released this run`);
+    log.error(`::warning::MOD-46: the coverage canary could not be run (${e.message}), so no leftover reversal hold is released this run`);
     return true;
   }
   if (verdict?.status === "green") return false;
   log.error(`::warning::MOD-46: the coverage canary is ${verdict?.status ?? "unreadable"} ` +
-    `(${(verdict?.codes ?? []).join(", ") || "no codes"}), so no reversal is released this run; takedowns are not held by it`);
+    `(${(verdict?.codes ?? []).join(", ") || "no codes"}), so no leftover reversal hold is released this run; ` +
+    "takedowns, fresh reversals and bound holds are not held by it");
   return true;
+}
+
+/**
+ * MOD-9 since contract 6.6.0: which held takedowns TRUST-26's window releases
+ * this run, spent out of the run's `ledger` BEFORE anything new is compiled.
+ *
+ * A `bound` hold (and a leftover `disable_confirmation`, which the old rule
+ * may have recorded over the bound) releases by itself in the first run whose
+ * trailing 24 hours, counted from the tree at that run, admit it. Admitting is
+ * spending: each admitted hold is compiled against this tree as its release
+ * will be, and what it withdraws (`withdrawnBy`) is spent from the same ledger
+ * `compileAll` then spends for the run's new takedowns. Three rules, in order:
+ *
+ *   1. a takedown an operator CONFIRMED is released this run whatever the
+ *      bound says (MOD-52, break-glass), so it is spent first — its withdrawal
+ *      is in the window the next run counts, and an automatic release beside
+ *      it must see it, or one run could put the estate past the bound;
+ *   2. then the unconfirmed `bound` holds, OLDEST HELD FIRST (`readHolds`'s
+ *      order), each admitted only while the ledger is not over, and spent as it
+ *      is admitted — so one run never releases more than the bound admits;
+ *   3. only then `compileAll`, with what is left: a takedown that arrived after
+ *      a hold queues behind it rather than taking the room it was waiting for.
+ *
+ * An unknown count stays over (`boundLedger`), so a run that cannot count
+ * releases nothing by itself. A hold whose release would now be refused
+ * (`target_changed`, say) is admitted and spends nothing: `releaseHolds`
+ * refuses it by name and alerts, as it would a confirmed one. A cancelled
+ * hold, an unsound entry and an `unbound_yank` are never spent.
+ *
+ * @returns {{admitted: Set<string>, confirmed: string[], waiting: string[]}}
+ *   `admitted` is what `walkHolds` hands `resolveHold` as `boundAdmits`.
+ */
+export function admitHeldTakedowns(root = REPO_ROOT, { ledger = null, head = null } = {}) {
+  const out = { admitted: new Set(), confirmed: [], waiting: [] };
+  const holds = readHolds(root).filter((h) => h.entry && !h.problems?.length && !h.cancel);
+  if (!holds.length) return out;
+  const listing = head ?? headListing(root);
+  const id = (h) => h.entry.service_decision_id;
+  const confirmed = (h) => h.confirm?.service_decision_id === id(h);
+  const spend = (h) => {
+    const result = compileDecision(h.entry.decision, { root, overBound: false, release: h.entry.held_for });
+    if (ledger && result.outcome === "compiled") ledger.spend(withdrawnBy(result, listing));
+  };
+  for (const h of holds) {
+    if (!confirmed(h) || h.entry.held_for === "unbound_yank" || !isTakedown(h.entry.decision)) continue;
+    spend(h);
+    out.confirmed.push(id(h));
+  }
+  for (const h of holds) {
+    if (!BOUND_GATED_KINDS.includes(h.entry.held_for) || confirmed(h)) continue;
+    if (!ledger || ledger.over()) {
+      out.waiting.push(id(h));
+      continue;
+    }
+    spend(h);
+    out.admitted.add(id(h));
+  }
+  return out;
 }
 
 /**
@@ -1282,10 +1350,9 @@ export function reversalCoverageRed(root, { coverage = coverageRun, log = consol
  * alerted and posts nothing; a hand cancellation posts `cancelled` and alerts
  * as well, since nobody announced it.
  *
- * **Each entry on the tree is dated by the commit that brought it onto
- * `main`** (`entryLanding`), and a reversal's 24 hours run from that commit,
- * as MOD-9 says, and not from its `held_at` (ops entry 101). An entry this
- * run has just written is in no commit yet, so its period has not started.
+ * **No hold waits on a clock any more** (contract 6.6.0). A `bound` hold is
+ * due when `boundAdmitted` — `admitHeldTakedowns`'s answer for this run —
+ * names it, or on a confirm record; a leftover `reversal` is due at once.
  *
  * **A hold still on the tree whose release or cancel is DUE is handed on,
  * and gets no result in this run.** A release goes to `releasable`, which
@@ -1316,6 +1383,7 @@ export function walkHolds({
   shadow = true,
   delistedPlugins = null,
   coverageRed = false,
+  boundAdmitted = new Set(),
   settled = new Set(),
 } = {}) {
   const out = {
@@ -1324,15 +1392,14 @@ export function walkHolds({
   };
   const onTree = readHolds(root);
   for (const hold of onTree) {
-    // Where the entry landed: a reversal's 24 hours run from that commit, not
-    // from `held_at` (MOD-9; ops entry 101).
-    const landed = entryLanding(root, holdEntryPath(hold.id));
     // MOD-9's other end of a removal request: a bot-applied `author_request`
     // delist of the listing, dated on or after the hold. Read off the log on
     // this tree — which carries this run's own delists, written before the
     // walk — unless the caller says which listings.
     const delisted = delistedPlugins ?? authorRequestDelists(root, { since: hold.entry?.held_at ?? null });
-    const verdict = resolveHold(hold, { now, shadow, delistedPlugins: delisted, coverageRed, landed });
+    const verdict = resolveHold(hold, {
+      shadow, delistedPlugins: delisted, coverageRed, boundAdmits: boundAdmitted.has(hold.id),
+    });
     const id = hold.entry?.service_decision_id ?? null;
     if (verdict.act === "wait" || !id) {
       out.waiting.push({ service_decision_id: id, reason: verdict.reason });
@@ -1345,7 +1412,7 @@ export function walkHolds({
     // nothing, and the commit job composes the release (`releaseHolds`) or the
     // cancel (`cancelHolds`) against the tree it writes.
     if (verdict.act === "release" && RELEASE_BUILT.includes(hold.entry?.decision?.code)) {
-      out.releasable.push({ service_decision_id: id, hold, reason: verdict.reason });
+      out.releasable.push({ service_decision_id: id, hold, reason: verdict.reason, ...(verdict.gate ? { gate: verdict.gate } : {}) });
       continue;
     }
     if (verdict.act === "cancel") {
@@ -1391,12 +1458,13 @@ export function walkHolds({
 }
 
 /**
- * The held codes whose release commit this job builds (M-T3.3): every code
- * MOD-9 holds. `M_IDENTITY_RESET` since B-T4.2; the rest since 2026-10-14 —
- * the reversals `M_RELIST` and `M_UNREVOKE`, an `M_REVOKE` held for its
- * `disable` confirmation, and every takedown held by TRUST-26's bound or as
- * an unbound removal request. An unbound `A_YANK` is in the list and is never
- * released: `resolveHold` never answers `release` for an `unbound_yank`.
+ * The held codes whose release commit this job builds (M-T3.3): every code a
+ * hold entry can carry. Every takedown held by TRUST-26's bound or as an
+ * unbound removal request; and, for an entry left from before contract 6.6.0,
+ * the reversals `M_RELIST`, `M_UNREVOKE` and `M_IDENTITY_RESET` and an
+ * `M_REVOKE` held for its `disable` confirmation. An unbound `A_YANK` is in
+ * the list and is never released: `resolveHold` never answers `release` for an
+ * `unbound_yank`.
  */
 export const RELEASE_BUILT = Object.freeze([
   VOIDING_CODE, "M_RELIST", "M_UNREVOKE", "M_REVOKE", "M_DEPRECATE", "M_DELIST", "M_YANK",
@@ -1419,19 +1487,19 @@ export function authorRequestDelists(root = REPO_ROOT, { since = null } = {}) {
 }
 
 /**
- * Compose the release of each due, confirmed hold `walkHolds` handed on, as
- * the one commit M-T3.3 describes: the held decision applied from the entry,
- * its log entry, and the hold entry and its confirm record deleted — all under
- * the decision's `Service-Decision:`, which `composeCommit` writes for every
+ * Compose the release of each due hold `walkHolds` handed on, as the one
+ * commit M-T3.3 describes: the held decision applied from the entry, its log
+ * entry, and the hold entry and any confirm record deleted — all under the
+ * decision's `Service-Decision:`, which `composeCommit` writes for every
  * compiled result.
  *
  * The held decision is compiled again (`compileDecision` with `release` set to
- * the kind the confirmation released; `compileIdentityReset` for a reset), so
- * every refusal is asked against the tree the release commit writes — the hold
- * waited, and another decision or a MOD-52 revert may have moved the listing.
- * The confirmation releases the hold it answers and no other: over the bound
- * it overrides TRUST-26 (MOD-9, "a takedown held only by the bound, on a
- * confirmation at once"), and a decision the tree would now hold for a
+ * the kind being released), so every refusal is asked against the tree the
+ * release commit writes — the hold waited, and another decision or a MOD-52
+ * revert may have moved the listing. The release ends the hold it answers and
+ * no other: a confirmed one overrides TRUST-26 (MOD-9, break-glass), one the
+ * window admitted was already spent from the run's ledger by
+ * `admitHeldTakedowns`, and a decision the tree would now hold for a
  * different reason stays held.
  *
  * **A release the compile would now refuse writes nothing.** One it refuses,
@@ -1441,10 +1509,10 @@ export function authorRequestDelists(root = REPO_ROOT, { since = null } = {}) {
  * (MOD-52) rather than settled here.
  *
  * Committed in shadow too: the hold is not work a list answer names, and what
- * releases it is the MOD-52 record in git. Its `applied` result is posted by
- * the next live run, from the commit, through `holdDeletions` — never by this
- * one. `batch` is the run's (`compileAll`'s), so a release cannot take an
- * advisory id or a log name a decision compiled earlier in the run took.
+ * releases it is in git. Its `applied` result is posted by the next live run,
+ * from the commit, through `holdDeletions` — never by this one. `batch` is the
+ * run's (`compileAll`'s), so a release cannot take an advisory id or a log
+ * name a decision compiled earlier in the run took.
  *
  * @returns {{compiled: object[], refused: object[], alerts: object[]}}
  */
@@ -1459,9 +1527,7 @@ export function releaseHolds(releasable, { root = REPO_ROOT, batch = newBatch() 
         `${RELEASE_BUILT.join(", ")} held as ${RELEASABLE_KINDS.join(", ")} alone`,
       );
     }
-    const result = decision.code === VOIDING_CODE
-      ? compileIdentityReset(decision, { root, batch })
-      : compileDecision(decision, { root, overBound: false, batch, release: kind });
+    const result = compileDecision(decision, { root, overBound: false, batch, release: kind });
     if (result.outcome !== "compiled") {
       const why = result.outcome === "refused"
         ? `\`${result.refusal}\`: ${result.why}`
@@ -1471,7 +1537,7 @@ export function releaseHolds(releasable, { root = REPO_ROOT, batch = newBatch() 
         kind: "hold_release_refused",
         service_decision_id: id,
         commit: null,
-        why: `the hold is due and confirmed, and its release is refused on this tree (${why}). Nothing is written ` +
+        why: `the hold is due, and its release is refused on this tree (${why}). Nothing is written ` +
           "and no result is posted; the entry stays for an operator to cancel (MOD-52)",
       });
       continue;
@@ -1809,10 +1875,12 @@ export function answeredBy(state, { commit = null } = {}) {
  * `needs: [list]`, and `commit` needs it; the same shape `plugins-ingest.yml`
  * uses for exactly this reason.
  *
- * It is derivable: MOD-8 alerts on every advisory entered and every hold
- * entered, and both are decided by the entry's `code`, `action` and `severity`
- * plus the tree — never by the advisory's own text. An alarm that named the
- * advisory id would have to wait for the compile, which is after the push.
+ * It is derivable for advisories: MOD-8 alerts on every advisory entered, and
+ * that is decided by the entry's `code`, `action` and `severity` — never by the
+ * advisory's own text. An alarm that named the advisory id would have to wait
+ * for the compile, which is after the push. Until contract 6.6.0 it also
+ * derived the two holds the entry alone decided (a `disable`, a reversal);
+ * MOD-9 holds neither now.
  */
 export function alarmsFor(entries) {
   const out = [];
@@ -1820,12 +1888,13 @@ export function alarmsFor(entries) {
     if (e.code === "M_DEPRECATE" || e.code === "M_REVOKE") {
       out.push({ code: `MOD_8_ADVISORY_${String(e.action ?? "warn").toUpperCase()}`, id: e.plugin_id });
     }
-    if (e.code === "M_REVOKE" && e.action === "disable") {
-      out.push({ code: "MOD_9_DISABLE_CONFIRMATION", id: e.plugin_id });
-    }
-    if (e.code === "M_RELIST" || e.code === "M_UNREVOKE") {
-      out.push({ code: "MOD_9_REVERSAL_HOLD", id: e.plugin_id });
-    }
+    // No MOD-9 alarm is derived here since contract 6.6.0: the two it had —
+    // `MOD_9_DISABLE_CONFIRMATION` and `MOD_9_REVERSAL_HOLD` — announced a
+    // hold for a person's confirmation, and nothing is held for one now. A
+    // `bound` hold depends on TRUST-26's window and an unbound one on the
+    // tree, not on the entry alone, so neither was ever derivable here: the
+    // compile records MOD-8's `hold` alert on the held result
+    // (`compile-decision.mjs`'s `held`), and BOT-81's `held` tells the service.
   }
   return out;
 }
@@ -2047,6 +2116,19 @@ export async function main(argv = [], {
     const counted = countWindow(root, { now });
     const ledger = boundLedger(counted, { staging: stagingListingId(root) });
     log.log(`bound  ${ledger.reason()}`);
+    // MOD-9 since contract 6.6.0: the takedowns already held are spent first —
+    // confirmed ones, then `bound` holds oldest first while the window admits
+    // them — so a hold releases by itself in the first run with room, and a
+    // takedown that arrived after it queues behind it. In shadow too: a hold's
+    // release is not work the list answer names.
+    const admission = admitHeldTakedowns(root, { ledger });
+    if (admission.admitted.size || admission.confirmed.length) {
+      log.log(`bound  held takedowns released this run: ${[...admission.confirmed, ...admission.admitted].join(", ")}; ` +
+        ledger.reason());
+    }
+    if (admission.waiting.length) {
+      log.log(`bound  held takedowns still waiting for room in the trailing 24 h: ${admission.waiting.join(", ")}`);
+    }
 
     // Re-checked, never trusted: `list` is a different job and its outputs
     // travel through the run's metadata. Re-reading them through the same
@@ -2114,7 +2196,7 @@ export async function main(argv = [], {
     const record = readSettled(root);
     for (const p of record.problems) log.error(`::warning::settled_record_unreadable: ${p}`);
     const coverageRed = reversalCoverageRed(root, { coverage, log });
-    const holds = walkHolds({ root, now, shadow, settled: record.keys, coverageRed });
+    const holds = walkHolds({ root, now, shadow, settled: record.keys, coverageRed, boundAdmitted: admission.admitted });
     // M-T3.3's release and cancel commits, written in shadow or out of it (a
     // hold is not work the list answer names), after this run's own artefacts
     // so their log names, advisory ids and the documents see them. The run's
