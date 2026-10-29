@@ -3718,6 +3718,11 @@ test("6.7.0: game-companion's revoke is corrected to `harmful_behaviour` by an a
   assert.deepEqual(await refusal({ category: "malicious" }), ["target_changed"], "a correction to the category it already has");
   assert.deepEqual(await refusal({ category: "broken" }), ["kind_refused"], "a category §7.2 does not allow with a revoke");
   assert.deepEqual(await refusal({ plugin_id: "widgets" }), ["target_changed"], "a correction naming another plugin's entry");
+  // Review of #480: never to `author_request` (the log would say the author
+  // asked) nor to an account-level category.
+  for (const category of ["author_request", "account_compromise", "account_sanction"]) {
+    assert.deepEqual(await refusal({ category }), ["kind_refused"], `a correction to ${category} was not refused`);
+  }
 
   const job = await measuredJob(root, [correct()], { now: new Date("2026-10-30T09:10:00Z") });
   assert.equal(job.code, 0, job.logs.join("\n"));
@@ -3750,6 +3755,27 @@ test("6.7.0: game-companion's revoke is corrected to `harmful_behaviour` by an a
   const again = await measuredJob(root, [correct()], { now: new Date("2026-10-30T09:20:00Z") });
   assert.deepEqual([again.paths, again.results.compiled], [[], []]);
   assert.deepEqual(again.results.already_applied.map((a) => a.service_decision_id), [FIX]);
+});
+
+// Review of #480 (LOW): a moderator's delist moved to `author_request` would
+// publish that the author asked. Watched red: without the refusal, the
+// delist's correction to `author_request` compiles.
+test("6.7.0: a moderator's delist is never corrected to `author_request`; a correction to another category it allows compiles", async () => {
+  const root = withDocuments(estate());
+  withRemote(root);
+  const DELIST = "0192f3a4-5b6c-7d8e-9f01-2345678930d1";
+  assert.equal((await commitJob(root, { entries: [delistOf(DELIST)] })).code, 0);
+  assert.equal(runApply(root).status, 0);
+  const fix = (category) => decision({
+    service_decision_id: "0192f3a4-5b6c-7d8e-9f01-2345678930d2", code: "M_CORRECT_CATEGORY", category, corrects: DELIST,
+    moderator: "amoderator", declared_interest: false, decided_at: "2026-09-21T12:00:00Z",
+  });
+  const asked = await commitJob(root, { entries: [fix("author_request")], now: new Date("2026-09-21T12:10:00Z") });
+  assert.deepEqual(asked.results.refused.map((r) => r.refusal), ["kind_refused"], "a delist was corrected to author_request");
+  fs.rmSync(path.join(root, "moderation"), { recursive: true, force: true });
+  sh(["checkout", "-q", "--", "."], root);
+  const fine = await commitJob(root, { entries: [fix("malicious")], now: new Date("2026-09-21T12:10:00Z") });
+  assert.deepEqual(fine.results.compiled, ["0192f3a4-5b6c-7d8e-9f01-2345678930d2"], JSON.stringify(fine.results.refused));
 });
 
 test("R1: abec3f9's tree — an applied `disable` and a stray hold for the same id: zero new advisories, the hold removed, `applied`", async () => {

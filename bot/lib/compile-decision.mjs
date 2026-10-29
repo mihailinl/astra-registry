@@ -1647,6 +1647,16 @@ function compileCorrection(root, d, { decidedAt, date, reason, batch = null }) {
   if (target.plugin !== d.plugin_id) {
     return refuse(d, "target_changed", `${d.corrects} is an entry for ${target.plugin}, not ${d.plugin_id}`);
   }
+  // A correction moves WHY a moderator acted, never WHO asked: `author_request`
+  // would make the public log say the author asked for a takedown a moderator
+  // decided, and an account-level category says something about a person's
+  // account that a listing's correction has no business adding (review of
+  // #480). Both are refused as a correction's target.
+  if (d.category === "author_request" || ACCOUNT_LEVEL_CATEGORIES.includes(d.category)) {
+    return refuse(d, "kind_refused",
+      `a correction may not move an entry to ${d.category}: it would publish that the author asked, or a statement ` +
+      "about an account, for a decision a moderator made about a listing (MOD-57)");
+  }
   const allowed = CATEGORIES[target.action] ?? [];
   if (!allowed.includes(d.category)) {
     return refuse(d, "kind_refused",
