@@ -3003,7 +3003,7 @@ const SVC_SID = "0192f1c2-3b4a-7c5d-8e6f-1a2b3c4d5e6f";
 const svcLease = { submission_id: SVC_SID, repo: REPO, tag: TAG, trigger: "poll", claimed_from: "received" };
 
 /** One `verify` run against a world assembled from the arguments. */
-async function verifyRun({ assets, certRepo = null, repoIds = null, ghFail = null, ownerFile = null, spy = null, fail = {} } = {}) {
+async function verifyRun({ assets, certRepo = null, repoIds = null, ghFail = null, ownerFile = null, spy = null, fail = {}, actorId = FIXTURE_OWNER_ID } = {}) {
   const github = fakeGitHub({ repo: REPO, tag: TAG, assets });
   const assetsDir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-assets-"));
   scratch.push(assetsDir);
@@ -3036,7 +3036,7 @@ async function verifyRun({ assets, certRepo = null, repoIds = null, ghFail = nul
     },
     lastCommitTouching: async () => ({ status: "found", reason: "HTTP 200", commit: "9".repeat(40) }),
     pullsForCommit: async () => ({ status: "found", reason: "HTTP 200", pulls: [4] }),
-    workflowRun: async () => ({ status: "found", reason: "HTTP 200", triggering_actor_id: FIXTURE_OWNER_ID }),
+    workflowRun: async () => ({ status: "found", reason: "HTTP 200", triggering_actor_id: actorId }),
   });
   return { v, assetsDir };
 }
@@ -3145,6 +3145,45 @@ await test("verify: a binding line at the attested commit, with ID-63's and MIG-
   assertEqual(v.owner_file.commit, "9".repeat(40), "ID-63's owner-file commit");
   assertEqual(v.owner_file.pull_request, true, "and whether a pull request carried it");
   assertEqual(v.actor.triggering_actor_id, FIXTURE_OWNER_ID, "MIG-31's actor");
+});
+
+// `compareActor` (bot/lib/identity.mjs) builds a `reason` that NAMES the
+// account for its "floor" outcome ("the build was started by account …").
+// `verify` is its one caller, and reads `cmp.reason` only on `cmp.outcome ===
+// "wait"` — the floor outcome falls through, and only `triggering_actor_id`
+// and `floor_days` survive into `v.actor`. This drives that call with a
+// mismatched account end to end and walks the WHOLE verify result for the
+// id, so a future edit that starts handing `cmp.reason` on instead of
+// `cmp.floor_days` is a red test rather than a quiet leak into a facts file
+// or, through `decideSubmission`'s `verified.actor`, into a record.
+await test("MIG-31: a mismatched triggering actor's id reaches only `v.actor.triggering_actor_id`, never a reason or a finding", async () => {
+  const LEAK_ACTOR = "424242424242";
+  const identity = await import("../lib/identity.mjs");
+  const { v } = await verifyRun({ assets: [conformingAsset()], ownerFile: "astra-binding: Abcdefghijklmnopqrstuv0123\n", actorId: LEAK_ACTOR });
+  assertEqual(v.outcome, "ok", JSON.stringify(v.findings ?? v));
+  assertEqual(v.actor.triggering_actor_id, LEAK_ACTOR, "the mismatched id still reaches the typed field");
+  assertEqual(v.actor.floor_days, identity.ACTOR_MISMATCH_FLOOR_DAYS, "the floor itself (a number) is not the account id");
+  const leaks = [];
+  const walk = (value, keyPath) => {
+    if (value == null) return;
+    if (typeof value === "string") { if (value.includes(LEAK_ACTOR)) leaks.push(keyPath); return; }
+    if (Array.isArray(value)) { value.forEach((x, i) => walk(x, `${keyPath}[${i}]`)); return; }
+    if (typeof value === "object") {
+      for (const [k, x] of Object.entries(value)) {
+        if (k === "triggering_actor_id") continue; // the one typed field allowed to carry it
+        walk(x, `${keyPath}.${k}`);
+      }
+    }
+  };
+  walk(v, "v");
+  assertEqual(leaks.join(", "), "", `the account id leaked outside its typed field: ${leaks.join(", ")}`);
+
+  // `compareActor` itself, directly: its own "floor" reason does name the
+  // account (it is internal to `verify`, read by nobody outbound) — the
+  // guard is at the one call site, not in this function.
+  const cmp = identity.compareActor({ identity: { repository_owner_id: FIXTURE_OWNER_ID }, actor: { status: "found", triggering_actor_id: LEAK_ACTOR } });
+  assertEqual(cmp.outcome, "floor");
+  assert(cmp.reason.includes(LEAK_ACTOR), "compareActor's own reason names the account; bot/ingest.mjs reads cmp.floor_days for this outcome and never cmp.reason");
 });
 
 await test("check: the facts file carries codes and levels and nothing that names anything; the card is derived under `.12`", async () => {

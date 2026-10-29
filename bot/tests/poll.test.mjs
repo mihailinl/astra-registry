@@ -1389,8 +1389,8 @@ test("MIG-23: the tag memory seeds from state/releases-seen.json, tags only", ()
 // alarm a day later for something the poll had in its hands.
 
 /** A listing in the shape `pollableListings` returns. */
-const monoListing = (id, prefix, recorded = [], { terminal = [] } = {}) => ({
-  id, repo: "someone/mono", repository_id: null, state: "grandfathered", prefix,
+const monoListing = (id, prefix, recorded = [], { terminal = [], repository_id = null } = {}) => ({
+  id, repo: "someone/mono", repository_id, state: "grandfathered", prefix,
   prefix_from: prefix === null ? { version: "0.1.0", tag: "release-0.1" } : { version: "0.1.0", tag: `${prefix}0.1.0` },
   recorded_tags: recorded, terminal_tags: terminal, named_tags: [...recorded, ...terminal],
 });
@@ -1425,6 +1425,47 @@ test("a monorepo's feed is read once and judged by every listing it hosts, none 
     "whichever listing's prefix would have let it through");
   const why = Object.fromEntries(out2.repos[MONO].skipped.map((s) => [s.tag, s.why]));
   assert.match(why["alpha-v0.1.0"], /recorded/);
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+//
+// `pollOutputs` used to hand `claim` only `{repo, tag}`: every poll-registered
+// submission reached the service with `repository_id: null` (measured against
+// the plugins service, 2026-10-26: all 66 of them), and the console's approve
+// and reject then failed `act_target_mismatch` because the row named no
+// plugin. The identity each listing carries (`pollableListings`) never left
+// this module.
+
+test("a poll-registered tag carries its listing's repository_id; a grandfathered listing travels with null, and a monorepo's listings must agree on one or the tag gets none", () => {
+  const MONO = "someone/mono";
+  const candidates = ["alpha-v0.2.0", "beta-v0.1.0"];
+  const outFor = (cands) => ({ at: T0, repos: { [MONO]: { ok: true, candidates: cands, deferred: {}, etag: null } } });
+
+  // one listing, bound to an identity record.
+  const bound = [monoListing("alpha", "alpha-v", ["alpha-v0.1.0"], { repository_id: "123456789" })];
+  assert.deepEqual(run.pollOutputs(outFor(["alpha-v0.2.0"]), bound).tags,
+    [{ repo: MONO, tag: "alpha-v0.2.0", repository_id: "123456789" }]);
+
+  // the same listing, grandfathered: no identity record, so no id.
+  const grandfathered = [monoListing("alpha", "alpha-v", ["alpha-v0.1.0"])];
+  assert.deepEqual(run.pollOutputs(outFor(["alpha-v0.2.0"]), grandfathered).tags,
+    [{ repo: MONO, tag: "alpha-v0.2.0", repository_id: null }]);
+
+  // two listings of one monorepo, the same repository_id: it travels with every tag.
+  const agree = [
+    monoListing("alpha", "alpha-v", ["alpha-v0.1.0"], { repository_id: "123456789" }),
+    monoListing("beta", "beta-v", ["beta-v0.1.0"], { repository_id: "123456789" }),
+  ];
+  assert.deepEqual(run.pollOutputs(outFor(candidates), agree).tags,
+    candidates.map((tag) => ({ repo: MONO, tag, repository_id: "123456789" })));
+
+  // two listings of one monorepo, DIFFERENT repository_id: never guessed, so null travels.
+  const disagree = [
+    monoListing("alpha", "alpha-v", ["alpha-v0.1.0"], { repository_id: "123456789" }),
+    monoListing("beta", "beta-v", ["beta-v0.1.0"], { repository_id: "987654321" }),
+  ];
+  assert.deepEqual(run.pollOutputs(outFor(candidates), disagree).tags,
+    candidates.map((tag) => ({ repo: MONO, tag, repository_id: null })));
 });
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1670,7 +1711,7 @@ function runCmd(cmd, cwd, env) {
 }
 
 test("claim's register half, in shadow, prints what it would register, calls nothing, and refuses a mode it does not know", async () => {
-  const tags = [{ repo: REPO, tag: "v0.3.0" }, { repo: "Some/Mono", tag: "alpha-v0.2.0" }];
+  const tags = [{ repo: REPO, tag: "v0.3.0", repository_id: "123456789" }, { repo: "Some/Mono", tag: "alpha-v0.2.0", repository_id: null }];
   assert.deepEqual([...POLL_MODES], ["shadow", "live"]);
   assert.equal(run.MODES, POLL_MODES, "poll-run and the claim job read one list of modes, not two");
 
@@ -1683,11 +1724,14 @@ test("claim's register half, in shadow, prints what it would register, calls not
   assert.deepEqual(shadowClient.calls.map((c) => c.op), ["claim"], "shadow made a register call; only the claim half calls");
 
   // live — B-T5.1's value — registers each tag, and reports it in the form
-  // remember reads back.
+  // remember reads back. The identity-bound tag's `repository_id` reaches
+  // `register`'s body; the grandfathered one's reaches it as `null`.
   const liveClient = stubClient();
   const live = await claimJob({ client: liveClient, polled: tags, mode: "live", log: quietLog().log });
   assert.deepEqual(liveClient.calls.filter((c) => c.op === "register").map((c) => `${c.body.repo}@${c.body.tag}`),
     [`${REPO}@v0.3.0`, "Some/Mono@alpha-v0.2.0"]);
+  assert.deepEqual(liveClient.calls.filter((c) => c.op === "register").map((c) => c.body.repository_id),
+    ["123456789", null], "the tag's own repository_id reaches register, not always null");
   assert.deepEqual(run.readRegistered(JSON.stringify(live.registered)),
     [{ repo: REPO, tag: "v0.3.0" }, { repo: "Some/Mono", tag: "alpha-v0.2.0" }]);
 
@@ -1716,6 +1760,16 @@ test("claim's register half, in shadow, prints what it would register, calls not
   // A tag that is not grammar-valid is refused by the job holding the token.
   await assert.rejects(claimJob({ client: stubClient(), polled: [{ repo: REPO, tag: "../x" }], mode: "shadow", log: quietLog().log }),
     /outside the grammar/);
+  // A `repository_id` outside BASE10_RE is refused the same way, whatever
+  // handed it on: `pollOutputs` is trusted no further than the tag is.
+  for (const bad of ["12x", "-1", "", "01 2", 123456789]) {
+    await assert.rejects(claimJob({ client: stubClient(), polled: [{ repo: REPO, tag: "v0.3.0", repository_id: bad }], mode: "shadow", log: quietLog().log }),
+      /outside the grammar/, `repository_id ${JSON.stringify(bad)} must be refused`);
+  }
+  // Absent and null both pass: a grandfathered listing's tag carries no id.
+  const idless = stubClient();
+  await claimJob({ client: idless, polled: [{ repo: REPO, tag: "v0.3.0" }, { repo: REPO, tag: "v0.4.0", repository_id: null }], mode: "shadow", log: quietLog().log });
+  assert.deepEqual(idless.calls.map((c) => c.op), ["claim"]);
 });
 
 const pathToUrl = (p) => new URL(`file://${path.resolve(p)}`).href;

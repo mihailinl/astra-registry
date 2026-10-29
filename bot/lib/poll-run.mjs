@@ -398,14 +398,40 @@ export function readSwept(text, listings) {
 
 // ── what each job computes ─────────────────────────────────────────────────
 
-/** `poll`'s two outputs, from `runPoll`'s answer. */
+/**
+ * `poll`'s two outputs, from `runPoll`'s answer.
+ *
+ * Each tag carries the `repository_id` its listing names (`pollableListings`,
+ * BOT-74): a monorepo hosts several listings of one repository key, and when
+ * every one of them that has an id agrees (or none does — every grandfathered
+ * listing is `null`), that id travels with the key's tags. Two listings that
+ * NAME DIFFERENT ids hand on `null` rather than picking one — a guessed id is
+ * the thing BOT-1 exists to refuse, and `claim` (`claimJob`,
+ * bot/lib/service-jobs.mjs) re-validates whatever arrives before it reaches
+ * `register`. Before this, only `{repo, tag}` crossed the job boundary, so
+ * every poll-registered submission reached the service with `repository_id:
+ * null` (all 66 of them, measured 2026-10-26) and the console's approve and
+ * reject failed `act_target_mismatch` on a row that named no plugin.
+ */
 export function pollOutputs(out, listings) {
   const repoOf = new Map(listings.map((l) => [repoKey(l.repo), l.repo]));
+  const idOf = new Map();
+  for (const l of listings) {
+    const key = repoKey(l.repo);
+    const entry = idOf.get(key) ?? { id: null, conflict: false };
+    if (typeof l.repository_id === "string") {
+      if (entry.id === null) entry.id = l.repository_id;
+      else if (entry.id !== l.repository_id) entry.conflict = true;
+    }
+    idOf.set(key, entry);
+  }
   const polled = { at: out.at, repos: {} };
   const tags = [];
   for (const [key, res] of Object.entries(out.repos)) {
     polled.repos[key] = { ok: res.ok, candidates: res.candidates, deferred: res.deferred ?? {}, etag: res.etag ?? null };
-    for (const tag of res.candidates) tags.push({ repo: repoOf.get(key), tag });
+    const entry = idOf.get(key);
+    const repository_id = entry && !entry.conflict ? entry.id : null;
+    for (const tag of res.candidates) tags.push({ repo: repoOf.get(key), tag, repository_id });
   }
   return { polled, tags };
 }
