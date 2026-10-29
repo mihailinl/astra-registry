@@ -175,6 +175,89 @@ async function sendMessage({ token, chatId, text, apiBase, fetchImpl }) {
   return body.result;
 }
 
+// ── R4: one page per state, not one per run (2026-10-29) ────────────────────
+//
+// Until 2026-10-29 every red run paged: about twenty an hour across the
+// estate, and Deadline watch sent the same message daily for nine days. An
+// alarm that repeats on the correct state is one nobody reads by the time it
+// fires on a new one. So a check's alarm is keyed by (check, code, id):
+//
+//   * a check turning red pages at once;
+//   * a code or id it has not paged for since it turned red pages at once;
+//   * the same state pages again at most once a day (`REPEAT_HOURS`);
+//   * a check turning green after a page sends "resolved", once.
+//
+// The state is a small file (`--state`). A missing or unreadable file is
+// "never paged", so every fault is a page sent, never one withheld. Without
+// `--state` every red pages, as before — and that is what every caller does
+// TODAY: the composite action does not pass it yet, because the only store
+// within reach, the Actions cache, is one bot/tests/workflows.test.mjs
+// forbids in an `alerts` job on purpose (a cache restore extracts bytes into
+// the job that holds the alarm credential). Where the state may live is the
+// open half of R4. The two alert jobs whose `delivered_at` gates publication
+// (MOD-8, TRUST-14, TRUST-32: ingest's and moderation's `alert`) must never
+// pass it: their pages are events, not states.
+
+/** How long the same red state goes without a repeat page. */
+export const REPEAT_HOURS = 24;
+
+const pairsOf = (verdict) => {
+  const codes = verdict.codes?.length ? verdict.codes : [""];
+  const ids = [...(verdict.ids ?? []), ...(verdict.hexes ?? [])];
+  return codes.flatMap((c) => (ids.length ? ids : [""]).map((i) => `${c}|${i}`)).sort();
+};
+
+/** The state file: `{schema, checks: {<check>: {pairs, first_red, last_sent}}}`, or an empty one. */
+export function readAlertState(file) {
+  try {
+    const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (doc?.schema === "astra.registry.alert-state/1" && doc.checks && typeof doc.checks === "object") return doc;
+  } catch { /* absent or unreadable: nothing was paged, so the next red pages */ }
+  return { schema: "astra.registry.alert-state/1", checks: {} };
+}
+
+/**
+ * What to do with this verdict, given the state: `page` (with why), `resolve`,
+ * or `quiet`, and the state to save after it is done.
+ */
+export function alertDecision(verdict, state, { now = new Date() } = {}) {
+  const prior = state.checks?.[verdict.check] ?? null;
+  const next = { ...state, checks: { ...(state.checks ?? {}) } };
+  if (verdict.status !== "red") {
+    if (!prior) return { act: "quiet", why: "green, and nothing was paged", state: next, changed: false };
+    delete next.checks[verdict.check];
+    return { act: "resolve", why: `green again after ${prior.pairs.length} paged state(s)`, prior, state: next, changed: true };
+  }
+  const pairs = pairsOf(verdict);
+  const at = `${now.toISOString().slice(0, 19)}Z`;
+  const page = (why) => {
+    next.checks[verdict.check] = { pairs, first_red: prior?.first_red ?? at, last_sent: at };
+    return { act: "page", why, state: next, changed: true };
+  };
+  if (!prior) return page("the check turned red");
+  const fresh = pairs.filter((p) => !prior.pairs.includes(p));
+  if (fresh.length) return page(`a code or id not paged since it turned red: ${fresh.join(", ")}`);
+  const since = now.getTime() - Date.parse(prior.last_sent);
+  if (!(since < REPEAT_HOURS * 3600_000)) return page(`still red, and the last page was ${REPEAT_HOURS} hours or more ago`);
+  return {
+    act: "quiet",
+    why: `the same red state was paged at ${prior.last_sent}; it repeats at most once in ${REPEAT_HOURS} hours`,
+    state: next,
+    changed: false,
+  };
+}
+
+/** The "resolved" message: plain, and naming what had been paged. */
+export function renderResolved(verdict, prior) {
+  return [
+    "ASTRA REGISTRY — resolved",
+    `check: ${verdict.check}`,
+    "status: green",
+    `was: ${prior.pairs.map((p) => p.replace(/\|$/, "")).join(" ")}`,
+    ...(verdict.run ? [`run: ${verdict.run}`] : []),
+  ].join("\n");
+}
+
 /**
  * `copy_delivered` is `true` when a separate copy chat got the page, `false`
  * when it was sent one and did not, and `null` when no copy was sent at all —
@@ -191,6 +274,8 @@ export async function runAlert({
   fetchImpl = fetch,
   apiBase = TELEGRAM_API,
   log = console,
+  stateFile = null,
+  now = new Date(),
 } = {}) {
   const fail = (problems) => {
     for (const p of problems) log.error(`FAIL  ${p}`);
@@ -213,9 +298,33 @@ export async function runAlert({
   // the green runs are the ones there are hundreds of. Finding it on the run
   // that had nothing to say is the difference between a red CI job and an
   // alarm that could not be rendered on the night it mattered.
+  // R4: with a state file, the same state pages once (`alertDecision`).
+  const decided = stateFile ? alertDecision(verdict, readAlertState(stateFile), { now }) : null;
+  const save = () => {
+    if (!decided?.changed) return;
+    fs.mkdirSync(path.dirname(path.resolve(stateFile)), { recursive: true });
+    fs.writeFileSync(stateFile, `${JSON.stringify(decided.state, null, 2)}\n`);
+  };
+  if (decided?.act === "resolve") {
+    try {
+      await sendMessage({ token: env.ASTRA_ALERT_TELEGRAM_TOKEN, chatId: env.ASTRA_ALERT_CHAT_ID, text: renderResolved(verdict, decided.prior), apiBase, fetchImpl });
+    } catch (e) {
+      // Kept as unresolved: the next green run tries again, and a red one in
+      // between pages as the state it is.
+      log.error(`::warning::the "resolved" message for ${verdict.check} did not send: ${e.message}`);
+      return { code: 0, delivered_at: null, copy_delivered: null, alerted: false, resolved: false, state_changed: false, problems: [] };
+    }
+    save();
+    log.log(`ok    ${verdict.check} is green again; "resolved" sent once`);
+    return { code: 0, delivered_at: null, copy_delivered: null, alerted: false, resolved: true, state_changed: true, problems: [] };
+  }
   if (ifRed && verdict.status !== "red") {
     log.log(`ok    verdict for ${verdict.check} is green; its grammar is sound and there is nothing to send`);
     return { code: 0, delivered_at: null, copy_delivered: null, alerted: false, problems: [] };
+  }
+  if (decided?.act === "quiet") {
+    log.log(`quiet ${verdict.check}: ${decided.why}`);
+    return { code: 0, delivered_at: null, copy_delivered: null, alerted: false, state_changed: false, problems: [] };
   }
 
   // The acknowledgement link comes from the receiver's own secret, never from
@@ -272,19 +381,22 @@ export async function runAlert({
     }
   }
 
-  log.log(`ok    alarm delivered to the alarm chat at ${deliveredAt}; ${copySentence(env)}`);
+  save();
+  log.log(`ok    alarm delivered to the alarm chat at ${deliveredAt}; ${copySentence(env)}` +
+    (decided ? ` (${decided.why})` : ""));
   if (copyDelivered === false) log.log("warn  the separate copy did not send; delivered_at stands");
-  return { code: 0, delivered_at: deliveredAt, copy_delivered: copyDelivered, alerted: true, problems: [] };
+  return { code: 0, delivered_at: deliveredAt, copy_delivered: copyDelivered, alerted: true, state_changed: Boolean(decided), problems: [] };
 }
 
 function parseArgs(argv) {
-  const args = { verdict: null, ack: false, ifRed: false, checkCredentials: false };
+  const args = { verdict: null, ack: false, ifRed: false, checkCredentials: false, state: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--verdict") args.verdict = argv[++i];
     else if (a === "--ack") args.ack = true;
     else if (a === "--if-red") args.ifRed = true;
     else if (a === "--check-credentials") args.checkCredentials = true;
+    else if (a === "--state") args.state = argv[++i];
     else throw new Error(`unknown argument: ${a}`);
   }
   return args;
@@ -319,12 +431,13 @@ async function main(argv) {
     return 1;
   }
 
-  const out = await runAlert({ verdict, ack: args.ack, ifRed: args.ifRed });
+  const out = await runAlert({ verdict, ack: args.ack, ifRed: args.ifRed, stateFile: args.state });
   if (out.delivered_at) console.log(`delivered_at=${out.delivered_at}`);
   if (process.env.GITHUB_OUTPUT && out.code === 0) {
     fs.appendFileSync(
       process.env.GITHUB_OUTPUT,
-      `alerted=${out.alerted}\ndelivered_at=${out.delivered_at ?? ""}\ncopy_delivered=${out.copy_delivered ?? "none"}\n`,
+      `alerted=${out.alerted}\ndelivered_at=${out.delivered_at ?? ""}\ncopy_delivered=${out.copy_delivered ?? "none"}\n` +
+      `state_changed=${out.state_changed === true}\n`,
     );
   }
   return out.code;

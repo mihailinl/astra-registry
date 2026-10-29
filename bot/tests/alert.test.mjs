@@ -1146,5 +1146,70 @@ await test("the workflow maps exactly the table's credentials, on the reach step
   assert.equal([...yml.matchAll(/secrets\.ASTRA_DEADMAN_URL_/g)].length, want.length, "a ping URL is mapped outside the reach step");
 });
 
+// ── R4 (2026-10-29): one page per state, not one per run ────────────────────
+//
+// About twenty pages an hour across the estate, and Deadline watch's same
+// message daily for nine days. Keyed by (check, code, id): at once on turning
+// red or on a new code or id, then at most once a day, and "resolved" once.
+
+function counting() {
+  const texts = [];
+  const fetchImpl = async (url, init) => {
+    texts.push(JSON.parse(init.body).text);
+    return { ok: true, status: 200, json: async () => ({ ok: true, result: { date: 1789_000_000 } }) };
+  };
+  return { texts, fetchImpl };
+}
+
+await test("R4: ten reds in a row page once; a new code pages once more; green sends `resolved` once", async () => {
+  const dir = fs.mkdtempSync(path.join(REPO, ".alert-state-test-"));
+  try {
+    const stateFile = path.join(dir, "state.json");
+    const api = counting();
+    const at = (min) => new Date(Date.parse("2026-10-29T03:00:00Z") + min * 60_000);
+    const send = (verdict, min) =>
+      runAlert({ verdict, env: ONE_GROUP, ifRed: true, fetchImpl: api.fetchImpl, log: quiet, stateFile, now: at(min) });
+    for (let i = 0; i < 10; i++) {
+      const out = await send(VERDICT, i * 6);
+      assert.equal(out.code, 0);
+    }
+    assert.equal(api.texts.length, 1, `ten red runs of one state sent ${api.texts.length} pages`);
+    const more = { ...VERDICT, codes: [...VERDICT.codes, "SERVE_86_STALE"] };
+    await send(more, 61);
+    await send(more, 67);
+    assert.equal(api.texts.length, 2, "a new code did not page at once, or paged twice");
+    assert.match(api.texts[1], /SERVE_86_STALE/);
+    const newId = { ...more, ids: ["astra-chess", "dice-roller"] };
+    await send(newId, 70);
+    assert.equal(api.texts.length, 3, "a new id did not page at once");
+    await send(newId, 70 + 24 * 60);
+    assert.equal(api.texts.length, 4, "the same red state did not page again after a day");
+    const green = { schema: VERDICT_SCHEMA, check: "served-set", status: "green", run: VERDICT.run };
+    await send(green, 70 + 24 * 60 + 10);
+    await send(green, 70 + 24 * 60 + 20);
+    assert.equal(api.texts.length, 5, "turning green sent no `resolved`, or sent it twice");
+    assert.match(api.texts[4], /resolved/);
+    await send(VERDICT, 70 + 24 * 60 + 30);
+    assert.equal(api.texts.length, 6, "red again after `resolved` did not page at once");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+await test("R4: with no state file, and with an unreadable one, every red pages — a fault never withholds one", async () => {
+  const api = counting();
+  for (let i = 0; i < 3; i++) await runAlert({ verdict: VERDICT, env: ONE_GROUP, ifRed: true, fetchImpl: api.fetchImpl, log: quiet });
+  assert.equal(api.texts.length, 3, "a job with no --state was deduplicated");
+  const dir = fs.mkdtempSync(path.join(REPO, ".alert-state-test-"));
+  try {
+    const stateFile = path.join(dir, "state.json");
+    fs.writeFileSync(stateFile, "{ not json");
+    await runAlert({ verdict: VERDICT, env: ONE_GROUP, ifRed: true, fetchImpl: api.fetchImpl, log: quiet, stateFile });
+    assert.equal(api.texts.length, 4, "an unreadable state file withheld a page");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 console.log(`\n${failures === 0 ? "PASS" : "FAIL"}  bot/tests/alert.test.mjs, ${failures} failed`);
 if (failures) process.exit(1);
