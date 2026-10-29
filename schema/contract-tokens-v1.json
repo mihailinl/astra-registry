@@ -1,6 +1,6 @@
 {
-  "contract_version": "6.7.0",
-  "source_commit": "c0aba9c64cd4716d9ed9199cad802159a890ae32",
+  "contract_version": "6.8.0",
+  "source_commit": "daf3b27732030768caf7edbe93e03a46dd7e0118",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -7244,7 +7244,7 @@
     "tools/testkeys/vectors/signed-set-v1.json",
     "tests/results/"
   ],
-  "trust31_tracked_set_sha256": "5ef6c0cc3244768b95334eb7a1964058d1c2a7aeef6f3bcdc13d7a19ae7233e1",
+  "trust31_tracked_set_sha256": "3fdab6458ab377dfa53bdc2f562d13fd8597a9c944eccfcfc5c0cee621830e3e",
   "pending": [
     {
       "id": "report_outcome_codes",

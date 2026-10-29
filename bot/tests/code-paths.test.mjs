@@ -283,6 +283,16 @@ export const ENTRIES = [
   // — and compile an advisory out of an entry nobody validated — without the
   // bot returning to shadow.
   "schema/moderation-work-v1.json",
+  // Contract 6.8.0's, published before either file lands, for the registry
+  // pull request that is the first bot-code tree ever acknowledged before
+  // its merge (astra-plugins-ops `dev/operator-acts-on-site-design.md` §6
+  // step 6; TRUST-31 "A tree acknowledged before its merge"). The first is
+  // the registry's check of the service's `astra.plugins.bot-moderation-
+  // work/2` answer, named as `schema/moderation-work-v1.json` names `/1`'s;
+  // the second types the record `state/acts/<jti>.json` the bot writes for
+  // every operator act it applies. Both are below, in `UNRESOLVED_BY`.
+  "schema/moderation-work-v2.json",
+  "schema/operator-act-v1.json",
   "schema/plugin-v1.json",
   "schema/publisher-v1.json",
   "schema/queue-v1.json",
@@ -418,7 +428,28 @@ test("every entry is a well-formed path, and one bad entry refuses the whole set
 // test still runs, the `empty` list above it is what does the work while
 // nothing is pending, and the next entry that names a path not yet on the
 // tree writes its row here with a task and a step.
-const UNRESOLVED_BY = new Map([]);
+const UNRESOLVED_BY = new Map([
+  // Contract 6.8.0 publishes both before the operator-acts registry pull
+  // request lands them (astra-plugins-ops `dev/operator-acts-on-site-design.md`
+  // §6 step 6: `bot/lib/operator-act.mjs`, `bot/lib/operator-acts.mjs` and the
+  // two schemas below). That pull request is the one TRUST-31 "A tree
+  // acknowledged before its merge" exists for, so it is published as a new
+  // rollout step, R11, rather than folded into R6 through R10, each of which
+  // already names a different exit. §9's table does not carry R11 yet — that
+  // is 6.9.0's work, when the operator-acts feature itself ships — but
+  // `log/rollout/R11-exit.json` is the landing condition this row is held to
+  // either way, by the same grammar every other step uses.
+  ["schema/moderation-work-v2.json", {
+    by: "the operator-acts registry pull request",
+    why: "the registry's check of the service's `astra.plugins.bot-moderation-work/2` answer",
+    due: "R11",
+  }],
+  ["schema/operator-act-v1.json", {
+    by: "the operator-acts registry pull request",
+    why: "types the record `state/acts/<jti>.json` the bot writes for every operator act it applies",
+    due: "R11",
+  }],
+]);
 
 /** Edit distance, with an early exit: anything over `max` is just "far". */
 function editDistance(a, b, max) {
@@ -591,7 +622,15 @@ test("the two enumerated groups are exactly what is on the tree", () => {
   // nineteenth. A canary that states the cost it enforces must not carry that
   // cost as a literal: the numbers below come off the tree and off the set, so
   // the failure text is right in every release without anyone maintaining it.
-  const setBots = ENTRIES.filter((e) => /^bot\/[^/]+\.mjs$/.test(e)).sort();
+  // A row in `UNRESOLVED_BY` is a DECLARED, expiring exception — the other
+  // test above already holds it to its own task and rollout step, and fails
+  // loudly the moment its file lands without the row being deleted, or its
+  // step exits without the file. So a declared row is excused here too,
+  // rather than read as the undeclared drift this comparison exists to
+  // catch: without the exclusion, publishing a schema or entry point before
+  // its file lands — contract 6.8.0's own worked example — would go red for
+  // a reason this file already has a name and an expiry for.
+  const setBots = ENTRIES.filter((e) => /^bot\/[^/]+\.mjs$/.test(e) && !UNRESOLVED_BY.has(e)).sort();
   const treeBots = onTree(/^bot\/[^/]+\.mjs$/);
   assert.deepEqual(
     setBots, treeBots,
@@ -599,7 +638,7 @@ test("the two enumerated groups are exactly what is on the tree", () => {
       `${setBots.length}, the tree holds ${treeBots.length}. Every entry point beyond the published set is a ` +
       `contract MINOR published BEFORE the file lands (contract 0.20.0's TRUST-31)`,
   );
-  const setSchemas = ENTRIES.filter((e) => /^schema\/[^/]+\.json$/.test(e)).sort();
+  const setSchemas = ENTRIES.filter((e) => /^schema\/[^/]+\.json$/.test(e) && !UNRESOLVED_BY.has(e)).sort();
   const treeSchemas = onTree(/^schema\/[^/]+\.json$/).filter((f) => f !== "schema/contract-tokens-v1.json");
   assert.deepEqual(
     setSchemas, treeSchemas,
