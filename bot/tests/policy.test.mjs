@@ -3473,7 +3473,7 @@ await test("ROLL-25 (3) — text-utils held `R_FIRST_BINDING`, approved, publish
   assertEqual(`${s.undelivered.plan.kind} ${s.undelivered.plan.wait?.code}`, "wait W_ALERT_UNDELIVERED",
     `with the notice window passed, the approval raises TRUST-14's alert and publishes nothing: ${said(s.undelivered.plan)}`);
   // 6.7.0: the alert also binds the whole digest and the held record it clears.
-  const { digest: alertDigest, held_decision_id: alertHeld, ...alertLabel } = s.undelivered.plan.alert ?? {};
+  const { digest: alertDigest, held_decision_id: alertHeld, token_hash: _bindingCovered, ...alertLabel } = s.undelivered.plan.alert ?? {};
   assertEqual(JSON.stringify(alertLabel),
     JSON.stringify({ fingerprint: sub.fingerprint, event: "approval", approval_decided_at: s.approvedAt }),
     "the alert does not name this fingerprint's approval");

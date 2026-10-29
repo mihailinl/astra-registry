@@ -2061,7 +2061,7 @@ const FP = submissionFingerprint({ repo: P.repo, tag: P.tag, id: P.id, version: 
 /** The whole SHA-256 FP is cut from (6.7.0): what an approval, an alert and an OK bind. */
 const FULL = submissionDigest({ repo: P.repo, tag: P.tag, id: P.id, version: P.version, commit: P.commit, digests: DIGESTS });
 /** The six facts every `held` record on `main` carries, from which its digest is derived (6.7.0). */
-const HELD_FACTS = { repo: P.repo, tag: P.tag, plugin_id: P.id, version: P.version, commit: P.commit, artifact_digests: DIGESTS, repository_id: P.rid };
+const HELD_FACTS = { repo: P.repo, tag: P.tag, plugin_id: P.id, version: P.version, commit: P.commit, artifact_digests: DIGESTS, repository_id: P.rid, repository_owner_id: P.oid };
 
 const lease = (over = {}) => ({
   submission_id: P.sid, lease_expires_at: "2026-09-26T13:00:00Z", attempt: "att-1", claimed_from: "received",
@@ -2718,6 +2718,94 @@ const okFor = (over = {}) => ({
   digest: over.fingerprint && over.fingerprint !== FP ? over.fingerprint.repeat(4) : FULL, held_decision_id: "1".repeat(32), ...over,
 });
 const runningWindow = () => alertsFor(approval().decided_at, hoursBefore(P.now, 1));
+
+// ── 6.7.0 (MIG-10, A2): R_FIRST_BINDING no longer holds every new tag ──────
+//
+// Until 6.7.0 every release carrying a binding line of a grandfathered or
+// frozen listing was held for a moderator until one had PUBLISHED through an
+// approved hold: the repository's own owner waited on a moderator to bind
+// their own plugin, and every tag pushed while the first approved release
+// waited out its windows was held again and needed a second approval of the
+// same binding. Watched red: the owner case still holding; an org member
+// clearing it; the approved-binding cover ignoring the token hash; ignoring
+// the deny record; and publishing inside the approved release's window.
+const FB_LINE = { outcome: "one", token: "t".repeat(24), token_hash: "2".repeat(16), code: null, alert: false, reason: null };
+const fbVerified = (over = {}) => {
+  const version = over.version ?? P.version;
+  const tag = over.tag ?? P.tag;
+  const fp = submissionFingerprint({ repo: P.repo, tag, id: P.id, version, commit: P.commit, digests: DIGESTS });
+  return verified({ binding: FB_LINE, owner_file: { commit: "9".repeat(40), pull_request: false }, version, tag, fingerprint: fp, ...over });
+};
+const fbRun = ({ actor = null, version, tag, verdict = "pass", records = [baseline()], alerts = new Map(), denied = new Set(), listingState = { state: "grandfathered" } } = {}) => decideWith({
+  verified: fbVerified({ actor, ...(version ? { version } : {}), ...(tag ? { tag } : {}) }),
+  facts: facts(version ? { version } : {}),
+  ...(version ? { listing: listing({ version: versionDoc(version, {
+    release: { kind: "github_release", repo: "placeholder/placeholder", tag: tag ?? `v${version}`, commit: null },
+    artifacts: { "linux-x64": { url: null, filename: `${P.id}-${version}-linux-x64.astraplugin`, sha256: P.sha, size: 100 } },
+  }) }) } : {}),
+  ask: ask({ verdict, gates: { stop_status: "no_stop", decisions: [] }, notice: { kind: "first", status: "pending" } }),
+  git: git({ existing: existing(), listingState, records, alerts, denied }),
+});
+const heldCodesOf = (plan) => plan.record?.reasons ?? [];
+
+test("6.7.0 (MIG-10): the owner's own first binding, with a live token, publishes with no moderator; a foreign actor is held", () => {
+  const owner = fbRun({ actor: { triggering_actor_id: P.oid, floor_days: 0, privileged: true, basis: "owner" } });
+  assert.equal(owner.state, "published", `the owner's first binding was not published: ${owner.kind} ${JSON.stringify(heldCodesOf(owner))} ${owner.wait?.code ?? ""}`);
+  const admin = fbRun({ actor: { triggering_actor_id: "700000555", floor_days: 0, privileged: true, basis: "admin" } });
+  assert.equal(admin.state, "published", "a repository admin's first binding was held");
+  const foreign = fbRun({ actor: { triggering_actor_id: "700000555", floor_days: 0, privileged: false, basis: "not_shown" } });
+  assert.equal(foreign.state, "held");
+  assert.ok(heldCodesOf(foreign).includes("R_FIRST_BINDING"), JSON.stringify(heldCodesOf(foreign)));
+  const member = fbRun({ actor: { triggering_actor_id: "700000555", floor_days: 0, privileged: true, basis: "org_member" } });
+  assert.ok(heldCodesOf(member).includes("R_FIRST_BINDING"), "an organisation member binding the organisation's listing to themself was not held");
+  const noActor = fbRun({ actor: null });
+  assert.ok(heldCodesOf(noActor).includes("R_FIRST_BINDING"), "a build nobody could attribute was not held");
+  const dead = fbRun({ actor: { triggering_actor_id: P.oid, floor_days: 0, privileged: true, basis: "owner" }, verdict: "B_BINDING_UNUSABLE" });
+  assert.notEqual(dead.state, "published", "the owner's release with a token the service will not use was published");
+  // A token the service did not answer `pass` for (a shadow answer here) is
+  // not live: the owner's first binding is held as before.
+  const unproven = decideWith({
+    shadow: true,
+    verified: fbVerified({ actor: { triggering_actor_id: P.oid, floor_days: 0, privileged: true, basis: "owner" } }),
+    ask: ask({ verdict: "shadow", gates: { stop_status: "no_stop", decisions: [] }, notice: { kind: "first", status: "pending" } }),
+    git: git({ existing: existing(), listingState: { state: "grandfathered" }, records: [baseline()] }),
+  });
+  assert.match(String(unproven.why ?? ""), /would have been state held/,
+    `a first binding whose token the service did not answer \`pass\` for was cleared: ${unproven.why}`);
+  // Every identity check stands: a listing whose source.repo moved still holds R_IDENTITY_CHANGED.
+  const moved = decideWith({
+    verified: fbVerified({ actor: { triggering_actor_id: P.oid, floor_days: 0, privileged: true, basis: "owner" } }),
+    ask: ask({ verdict: "pass", gates: { stop_status: "no_stop", decisions: [] }, notice: { kind: "first", status: "pending" } }),
+    git: git({ existing: existing({ repo: "a-stranger/dice-roller-old" }), listingState: { state: "grandfathered" }, records: [baseline()] }),
+  });
+  assert.equal(moved.state, "held");
+  assert.deepEqual(heldCodesOf(moved), ["R_IDENTITY_CHANGED"], "the owner's cleared first binding took an identity hold with it");
+});
+
+test("6.7.0 (MIG-10): a second tag under a binding a moderator approved is not held again; it waits the first's window, and a deny stops it", () => {
+  const firstFp = fbVerified().fingerprint;
+  const held = heldRecord({ reasons: ["R_FIRST_BINDING"], decision_id: "3".repeat(32), decided_at: hoursBefore(P.now, 30) });
+  const alertFor = (over = {}) => new Map([[firstFp, {
+    schema: ALERT_SCHEMA, fingerprint: firstFp, event: "approval", approval_decided_at: hoursBefore(P.now, 28),
+    delivered_at: hoursBefore(P.now, OPERATOR_WINDOW_HOURS + 1), run: "1/1", digest: FULL, held_decision_id: "3".repeat(32),
+    token_hash: FB_LINE.token_hash, ...over,
+  }]]);
+  const foreign = { triggering_actor_id: "700000555", floor_days: 0, privileged: false, basis: "not_shown" };
+  const second = (over) => fbRun({ actor: foreign, version: "0.2.1", tag: "v0.2.1", records: [baseline(), held], ...over });
+
+  const passed = second({ alerts: alertFor() });
+  assert.equal(passed.state, "published", `the second tag under the approved binding: ${passed.kind} ${JSON.stringify(heldCodesOf(passed))} ${passed.wait?.code ?? ""} ${passed.why ?? ""}`);
+  const running = second({ alerts: alertFor({ delivered_at: hoursBefore(P.now, 1) }) });
+  assert.equal(running.wait?.code, "W_OPERATOR_WINDOW", "the second tag published inside the approved release's operator window");
+  const denied = second({ alerts: alertFor(), denied: new Set([firstFp]) });
+  assert.ok(heldCodesOf(denied).includes("R_FIRST_BINDING"), "a denied approval still covered the binding");
+  const otherToken = second({ alerts: alertFor({ token_hash: "4".repeat(16) }) });
+  assert.ok(heldCodesOf(otherToken).includes("R_FIRST_BINDING"), "an approval of another binding token covered this one");
+  const oldAlert = second({ alerts: alertFor({ token_hash: undefined }) });
+  assert.ok(heldCodesOf(oldAlert).includes("R_FIRST_BINDING"), "an alert that names no binding (from before 6.7.0) covered one");
+  const otherRepo = second({ alerts: alertFor(), records: [baseline(), heldRecord({ reasons: ["R_FIRST_BINDING"], decision_id: "3".repeat(32), repository_owner_id: "1" })] });
+  assert.ok(heldCodesOf(otherRepo).includes("R_FIRST_BINDING"), "an approval of a hold under another owner id covered this one");
+});
 
 // ── 6.7.0 (BOT-26, TRUST-32): the 64-bit label binds nothing ───────────────
 //

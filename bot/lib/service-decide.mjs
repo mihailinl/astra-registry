@@ -515,6 +515,52 @@ export function id41({ identity, record, lineHash }) {
 
 // ── the approval (BOT-26) ───────────────────────────────────────────────────
 
+/** The accounts whose own first binding needs no moderator (contract 6.7.0, MIG-10): what `compareActor` calls them. */
+export const FIRST_BINDING_SELF_BASES = Object.freeze(["owner", "admin", "maintain"]);
+
+/**
+ * MIG-10 since contract 6.7.0: does this release's binding need no
+ * `R_FIRST_BINDING` hold? Two ways, and nothing else changes: every ID-*
+ * check (ID-41's rows, the recycled repository, the owner id, ID-25) runs
+ * before and after exactly as it did.
+ *
+ *  - `self`: the account that ran the build is the repository's owner, or
+ *    GitHub shows it `admin` or `maintain` on the repository (MIG-31's check,
+ *    `verify`), AND the service answered the binding line `pass` for this
+ *    repository id (ID-9: the token is live and the repository's). Public
+ *    membership of the owning organisation alone does not count here: a
+ *    member binding an organisation's listing to their own account is the
+ *    takeover DEC-10 holds for.
+ *  - `approved`: a moderator already approved a first binding of this
+ *    listing under THIS binding token. The approval is on `main` as the
+ *    alert TRUST-14 raised for it (`state/alerts/<fp>.json`, carrying
+ *    `token_hash` and `held_decision_id` since 6.7.0), whose held record is
+ *    an `R_FIRST_BINDING` hold of the same plugin id, repository id and owner
+ *    id, and whose fingerprint no deny record names. Until 6.7.0 every later
+ *    tag re-held until that first release was published, and each needed a
+ *    second approval of the same binding. Such a release waits out the
+ *    approved one's operator window (TRUST-32) before it publishes, so an
+ *    operator who denies the first never finds the second already out.
+ *
+ * @returns {{by: string, alert?: object, windowEndsAt?: string}|null}
+ */
+export function firstBindingCleared({ actor, verdict, lineHash, records = [], alerts = null, denied = null, ids, pluginId, oks = null }) {
+  if (!lineHash || verdict !== "pass") return null;
+  if (actor?.privileged === true && FIRST_BINDING_SELF_BASES.includes(actor.basis)) return { by: actor.basis };
+  for (const [fp, alert] of alerts ?? []) {
+    if (alert?.event !== "approval" || alert.token_hash !== lineHash || !isStr(alert.held_decision_id)) continue;
+    if (denied?.has(fp)) continue;
+    const held = records.find((r) => r?.decision_id === alert.held_decision_id && r?.state === "held");
+    if (!held || held.fingerprint !== fp || !(held.reasons ?? []).includes("R_FIRST_BINDING")) continue;
+    if (held.plugin_id !== pluginId || held.repository_id !== ids.repository_id || held.repository_owner_id !== ids.repository_owner_id) continue;
+    if (!isTime(alert.delivered_at)) continue;
+    const okd = oks?.get(fp) && okAnswers({ ok: oks.get(fp), record: alert, fingerprint: fp, digest: alert.digest, heldDecisionId: alert.held_decision_id });
+    const windowEndsAt = okd ? alert.delivered_at : iso(new Date(new Date(alert.delivered_at).getTime() + OPERATOR_WINDOW_HOURS * HOUR_MS));
+    return { by: "approved", alert, fingerprint: fp, windowEndsAt };
+  }
+  return null;
+}
+
 /**
  * The whole SHA-256 of the six facts a decision record on `main` carries
  * (`submissionDigest`), or null when they are not all there or do not hash to
@@ -748,7 +794,7 @@ export function noticeElapsed({ notice, windowSeconds, bindingChanged, now }) {
  * @returns {{ok: boolean, name: object|null, wait: object|null}}
  */
 export function operatorWindow({
-  record, fingerprint, event, approvalDecidedAt, now, ok = null, hintFrom = now, digest = null, heldDecisionId = null,
+  record, fingerprint, event, approvalDecidedAt, now, ok = null, hintFrom = now, digest = null, heldDecisionId = null, tokenHash = null,
 }) {
   // Contract 6.7.0: an alert record from 6.7.0 on binds the whole digest, and
   // one that names another digest under the same 16-hex label is an alert
@@ -766,6 +812,8 @@ export function operatorWindow({
       name: {
         fingerprint, event, approval_decided_at: event === "approval" ? approvalDecidedAt : null,
         digest, held_decision_id: heldDecisionId,
+        // 6.7.0 (MIG-10): the binding the approval covers, for later tags.
+        ...(tokenHash ? { token_hash: tokenHash } : {}),
       },
       wait: null,
     };
@@ -1155,6 +1203,7 @@ export function decideSubmission(input) {
   const lineHash = binding.outcome === "one" ? binding.token_hash ?? null : null;
   const heldCodes = [];
   let recycled = null;
+  let firstCleared = null;
   const listingState = git.listingState ?? null;
 
   if (binding.outcome === "malformed") {
@@ -1185,7 +1234,16 @@ export function decideSubmission(input) {
     if (listedRepo && listedRepo.toLowerCase() !== identity.repo.toLowerCase() && !heldCodes.includes("R_IDENTITY_CHANGED")) {
       heldCodes.push("R_IDENTITY_CHANGED");
     }
-    if (binding.outcome === "one") heldCodes.push("R_FIRST_BINDING"); // MIG-10; ID-41: never R_BINDING_CHANGED
+    // MIG-10; ID-41: never R_BINDING_CHANGED. Since 6.7.0 not for the
+    // repository's own owner or admin with a live token, nor under a binding
+    // a moderator already approved (`firstBindingCleared`).
+    if (binding.outcome === "one") {
+      firstCleared = firstBindingCleared({
+        actor: verified.actor, verdict, lineHash, records, alerts: git.alerts, denied: git.denied, oks: git.oks,
+        ids: identity, pluginId: verified.plugin_id,
+      });
+      if (!firstCleared) heldCodes.push("R_FIRST_BINDING");
+    }
     if (binding.outcome === "none" && listingState?.state === "frozen") {
       findings.push({ level: "error", code: "B_UNBOUND", where: null, message: "ID-25: a `frozen` listing publishes only a bound release" });
     }
@@ -1430,6 +1488,18 @@ export function decideSubmission(input) {
     });
   }
 
+  // MIG-10 since 6.7.0: a release under a binding a moderator approved waits
+  // out that approval's operator window, so a deny of the approved release
+  // within it is never outrun by this one.
+  if (firstCleared?.by === "approved" && new Date(firstCleared.windowEndsAt).getTime() > new Date(now).getTime()) {
+    return waitPlan("W_OPERATOR_WINDOW",
+      `TRUST-32: this release's binding was approved with ${firstCleared.fingerprint}, whose operator window runs until ` +
+      `${firstCleared.windowEndsAt}; it publishes then, unless an operator denies that release`, {
+        earliest: operatorRetryHint({ windowEndsAt: firstCleared.windowEndsAt, from: startedAt }),
+        windowEndsAt: firstCleared.windowEndsAt, reasons, derived: derivedFacts,
+      });
+  }
+
   // DEC-8 — never before the queue entry's `publish_after` on main.
   if (queued && isTime(queued.publish_after) && new Date(queued.publish_after).getTime() > new Date(now).getTime()) {
     return waitPlan("W_NOTICE_PENDING", `DEC-8: the queue entry on main says ${queued.publish_after}`, {
@@ -1478,6 +1548,7 @@ export function decideSubmission(input) {
       hintFrom: startedAt,
       digest,
       heldDecisionId: honoured.held_decision_id ?? null,
+      tokenHash: lineHash,
     });
     if (w.name) {
       return plan("wait", {

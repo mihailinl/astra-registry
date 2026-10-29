@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://registry.astra.app/schema/alert-v1.json",
   "title": "astra.registry.alert/1",
-  "description": "state/alerts/<fingerprint>.json — TRUST-14's alert record: one per fingerprint, written by the service path's publish job in the run whose alert the channel reported delivered, and the record TRUST-32's gate reads (contract B.4 from 2.4.0; registry plan TRUST-14, TRUST-32, B-T3.3b).\n\nREGISTRY-ONLY. No other party reads it, so it is outside SCOPE-8's two-way test and SCOPE-7's file. It is inside TRUST-31's set, as its fourteenth schema, because tools/validate.mjs judges every record against it by literal path from this repository, and a writer who could edit it from outside the set could make the publish path's first check pass a record TRUST-32 reads.\n\nSIX REQUIRED MEMBERS AND TWO FROM 6.7.0 (`digest`, `held_decision_id`), and they are bot/lib/service-publish.mjs's ALERT_MEMBERS and alertProblems, rule for rule: bot/tests/service.test.mjs holds the two to one verdict on every case it builds, so a rule added to one and not the other is red.",
+  "description": "state/alerts/<fingerprint>.json — TRUST-14's alert record: one per fingerprint, written by the service path's publish job in the run whose alert the channel reported delivered, and the record TRUST-32's gate reads (contract B.4 from 2.4.0; registry plan TRUST-14, TRUST-32, B-T3.3b).\n\nREGISTRY-ONLY. No other party reads it, so it is outside SCOPE-8's two-way test and SCOPE-7's file. It is inside TRUST-31's set, as its fourteenth schema, because tools/validate.mjs judges every record against it by literal path from this repository, and a writer who could edit it from outside the set could make the publish path's first check pass a record TRUST-32 reads.\n\nSIX REQUIRED MEMBERS AND THREE FROM 6.7.0 (`digest`, `held_decision_id`, `token_hash`), and they are bot/lib/service-publish.mjs's ALERT_MEMBERS and alertProblems, rule for rule: bot/tests/service.test.mjs holds the two to one verdict on every case it builds, so a rule added to one and not the other is red.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -52,6 +52,11 @@
       "$comment": "Contract 6.7.0: the decision_id of the `held` record the approval cleared. Written with `digest`.",
       "type": "string",
       "pattern": "^[0-9a-f]{32}$"
+    },
+    "token_hash": {
+      "$comment": "Contract 6.7.0 (MIG-10): §0.7's token_hash of the binding line the approved release carried, when it carried one. A later release of the same listing under the same binding is not held R_FIRST_BINDING again; it waits out this alert's operator window.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$"
     }
   }
 }

@@ -45,7 +45,7 @@ import { isTime } from "../../tools/lib/time.mjs";
 /** `astra.registry.alert/1` (registry-only; TRUST-14's record). */
 export const ALERT_SCHEMA = "astra.registry.alert/1";
 /** Its members, exactly (registry plan B-T3.3b), the last two since contract 6.7.0 and written on every new record. */
-export const ALERT_MEMBERS = Object.freeze(["schema", "fingerprint", "event", "approval_decided_at", "delivered_at", "run", "digest", "held_decision_id"]);
+export const ALERT_MEMBERS = Object.freeze(["schema", "fingerprint", "event", "approval_decided_at", "delivered_at", "run", "digest", "held_decision_id", "token_hash"]);
 /** The members every record carries; the other two are written from 6.7.0 on and absent before it. */
 export const ALERT_REQUIRED = Object.freeze(ALERT_MEMBERS.slice(0, 6));
 
@@ -76,6 +76,7 @@ export function alertProblems(doc) {
   // bytes (`operatorWindow`), which errs toward a new alert.
   if ("digest" in doc && !/^[0-9a-f]{64}$/.test(String(doc.digest))) p.push("digest");
   if ("held_decision_id" in doc && !/^[0-9a-f]{32}$/.test(String(doc.held_decision_id))) p.push("held_decision_id");
+  if ("token_hash" in doc && !/^[0-9a-f]{16}$/.test(String(doc.token_hash))) p.push("token_hash");
   return p;
 }
 
@@ -227,6 +228,7 @@ export function composePublication({ plans, root, listingsDir, reportsDir, deliv
         // 6.7.0: what the alert binds, beyond the 64-bit label it is filed under.
         digest: plan.alert.digest,
         held_decision_id: plan.alert.held_decision_id,
+        ...(plan.alert.token_hash ? { token_hash: plan.alert.token_hash } : {}),
       };
       const problems = alertProblems(doc);
       if (problems.length) throw new Error(`an alert record this run composed is malformed: ${problems.join(", ")}`);
