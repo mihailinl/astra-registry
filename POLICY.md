@@ -246,7 +246,7 @@ nowhere else (MIG-3).
 | Situation | What happens |
 |---|---|
 | Policy breach found before install matters | The listing is removed. `git log plugins/<id>/` keeps the record. |
-| Author asks for removal | **Through the plugins service**, the only way since the cutover (ROLL-33; amended 2026-09-24, and again in the cutover commit): removed, no argument, and at once — unless the takedown bound below is full that day, when it waits for an operator's confirmation. For a listing not yet bound to its author's account, the registry cannot tell the author from anyone else with push access to the repository, so there the request goes to a moderator instead, 7 days after the registry records it. |
+| Author asks for removal | **Through the plugins service**, the only way since the cutover (ROLL-33; amended 2026-09-24, and again in the cutover commit): removed, no argument, and at once — unless the takedown bound below is full that day, when it waits until the trailing 24 hours make room and then goes by itself. For a listing not yet bound to its author's account, the registry cannot tell the author from anyone else with push access to the repository, so there the request goes to a moderator instead, 7 days after the registry records it. |
 | Malicious plugin, already installed by users | Removal alone still does nothing to an installed copy — but a **signed revocation** does, and it exists. An advisory with `"action": "disable"` refuses new installs *and* stops the copy that is there and will not start it again; `"block_install"` refuses installs and updates and leaves a running copy alone. `docs/POLICY.md` §8 is the full table. |
 | Licensing or trademark dispute | Listing removed pending resolution. Not a reason to break a working install, so it gets `"action": "warn"` at most, and usually no advisory at all. |
 
@@ -264,14 +264,16 @@ is true for everything except `warn`, `stops_installed()` only for `disable`.
 ### The takedown bound
 
 **At most three listed plugins are taken away in any trailing 24 hours before
-the next takedown waits for a person.** Past that, a takedown decided through the
-plugins service — a moderator's yank, delist or revocation, `block_install`
-included, and an author's own yank or removal request — is held until an
-operator confirms it. It caps what a compromised moderation panel, or a
-compromised service behind it, could withdraw in one day; the price is that on a
-day more than three plugins have to go, the fourth waits for a second person. A
-withdrawal the operator makes by hand is already a person's act, and counts like
-any other.
+the next takedown waits.** Past that, a takedown decided through the plugins
+service — a moderator's yank, delist or revocation, `block_install` and
+`disable` included, and an author's own yank or removal request — is held, and
+goes by itself in the first moderation run after the trailing 24 hours make
+room for it, oldest first. An operator can release it at once, as a
+break-glass act; nothing waits for one. It caps what a compromised moderation
+panel, or a compromised service behind it, could withdraw in one day; the price
+is that on a day more than three plugins have to go, the fourth waits for the
+window. A withdrawal the operator makes by hand is already a person's act, and
+counts like any other.
 
 What counts toward the takedown bound is read from this repository's git history,
 whatever route a withdrawal took: every listed plugin delisted or yanked, and

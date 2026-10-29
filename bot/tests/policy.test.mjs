@@ -1843,7 +1843,7 @@ await test("MIG-14 — every round of the migration notice says what a notice mu
 //
 // `TAKEDOWN_BOUND` in `bot/lib/moderation.mjs` decides how many listed plugin
 // ids the estate may withdraw in a trailing 24 h before the next takedown
-// waits for an operator (TRUST-26, MOD-9). The owner closed OPEN-OWNER-3 at 3;
+// waits (TRUST-26, MOD-9). The owner closed OPEN-OWNER-3 at 3;
 // reg.61a lands that 3 and the POLICY.md §7 sentence together, and until it
 // does the constant is 1 — the strictest value that is still a bound. Both
 // directions are live from today:
@@ -1855,8 +1855,8 @@ await test("MIG-14 — every round of the migration notice says what a notice mu
 //                        never published.
 //   a published bound  → the constant is that number, every policy document
 //                        stating one states the same one, and the document also
-//                        says that above the bound a takedown waits for an
-//                        operator, that a removal request counts and that an
+//                        says that above the bound a takedown waits (and that an
+//                        operator can release it), that a removal request counts and that an
 //                        author's yank counts. So reg.61a cannot land half of
 //                        itself in either order.
 //
@@ -1991,7 +1991,7 @@ await test("M-T3.2 — the takedown bound the code enforces is the one a documen
     .filter(({ p }) => /takedown/i.test(p));
   const said = paragraphs.map(({ p }) => p).join("\n\n");
   for (const [what, re] of [
-    ["that above the bound a takedown waits for an operator", /\boperator\b/i],
+    ["that above the bound a takedown waits, and that an operator can release it at once", /\boperator\b/i],
     ["that a removal request counts toward it", /removal request/i],
     ["that an author's yank counts toward it", /\byank/i],
   ]) {
@@ -2099,7 +2099,9 @@ await test("reg.61a — the approved-update window is the owner's and POLICY.md 
 // author's removal request "Removed, no argument, no delay." MOD-9's holds
 // make that false on the plugins-service path: a request for a listing with no
 // bound account reaches a moderator only after TRUST-27's 7 days (FLOW-28),
-// and one above the takedown bound waits for an operator. ROLL-47 wants the
+// and one above the takedown bound waits for the bound's window (since
+// contract 6.6.0 it then goes by itself; until then it waited for an
+// operator). ROLL-47 wants the
 // promise amended explicitly, DATED, with a grep canary. This is the canary.
 //
 // **It was amended ahead of the change that first makes it false** — the
@@ -2119,14 +2121,14 @@ await test("ROLL-47 C6 — POLICY.md's removal row states the plugins-service pa
   assert(!/^Removed, no argument, no delay\.?\s*\|?$/.test(cell),
     "POLICY.md §7 promises an author's removal request \"Removed, no argument, no delay\" again, unqualified. On " +
     "the plugins-service path MOD-9 holds an unbound listing's request for a moderator after TRUST-27's 7 days " +
-    "(FLOW-28) and holds any takedown above the bound for an operator, so the promise is false there; ROLL-47 " +
+    "(FLOW-28) and holds any takedown above the bound until the window makes room, so the promise is false there; ROLL-47 " +
     "C6 requires it amended, dated, and this is its canary");
   assert(/\bamended\s+\d{4}-\d{2}-\d{2}\b/i.test(row),
     "POLICY.md §7's removal row is amended but not DATED. ROLL-47 requires each promise it lists amended " +
     "\"explicitly, dated\", so that a reader can tell which version of the promise they were given");
   for (const [what, re] of [
     ["which path the waits are on", /plugins service/i],
-    ["that above the takedown bound the request waits for an operator", /\boperator\b/i],
+    ["that above the takedown bound the request waits for the trailing 24 hours", /trailing 24 hours/i],
     ["that an unbound listing's request goes to a moderator", /\bmoderator\b/i],
   ]) {
     assert(re.test(row), `POLICY.md §7's removal row never says ${what} (FLOW-28, MOD-9)`);

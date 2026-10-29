@@ -550,12 +550,36 @@ export function tagVerdict(listing, tag, memoryTags = []) {
     return { register: false, why: `${tag} has a terminal decision record for this repository (BOT-74, BOT-19)` };
   }
   if (memoryTags.includes(tag)) return { register: false, why: `${tag} was registered already, by an earlier poll` };
+  // A4 (2026-10-29): only a tag NEWER than the listing's newest version. Until
+  // then every old tag the feed still carried was registered again, and each
+  // was refused downstream — about thirty refusals on 2026-10-25 — because a
+  // release older than the listing is never one it publishes.
+  const newest = listing.prefix_from?.version ?? null;
+  if (newest) {
+    // A tag that names no version is left to BOT-74 as before: there is
+    // nothing to compare, and the submission's own checks judge it.
+    const version = tagVersion(listing.prefix, tag);
+    if (version !== null && !(compareSemver(version, newest) > 0)) {
+      return { register: false, why: `${tag} is ${version}, not newer than the listing's newest version ${newest} (A4)` };
+    }
+  }
   return {
     register: true,
     why: listing.prefix === null
       ? `${tag}: the newest listed tag does not end in its version, so every tag matches (BOT-74)`
       : `${tag} starts with ${JSON.stringify(listing.prefix)} and nothing records it`,
   };
+}
+
+/**
+ * The version a tag names: what follows the BOT-74 prefix, or — with no
+ * prefix — a semver at the tag's end. `null` when it names none.
+ */
+export function tagVersion(prefix, tag) {
+  const rest = prefix === null
+    ? (/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/.exec(String(tag))?.[1] ?? null)
+    : String(tag).slice(prefix.length);
+  return rest !== null && parseSemver(rest) ? rest : null;
 }
 
 // ── the memory, and its key ────────────────────────────────────────────────
@@ -746,6 +770,19 @@ export function pollListing({ listing, listings = [listing], row, feed }) {
     } else {
       skipped.push({ tag, why: v.why });
     }
+  }
+  // A4: a repository none of whose listings has a listed version has nothing
+  // to compare a tag with, so only its NEWEST tag is a candidate — by semver
+  // where every candidate names one, else the feed's own order, newest first.
+  if (candidates.length > 1 && listings.every((l) => !l.prefix_from?.version)) {
+    const versioned = candidates.map((t) => ({ t, v: tagVersion(null, t) }));
+    const keep = versioned.every((x) => x.v)
+      ? versioned.reduce((a, b) => (compareSemver(b.v, a.v) > 0 ? b : a)).t
+      : candidates[0];
+    for (const t of candidates.filter((c) => c !== keep)) {
+      skipped.push({ tag: t, why: `${t} is not the newest tag of a repository with no listed version; ${keep} is (A4)` });
+    }
+    candidates.splice(0, candidates.length, keep);
   }
   return { candidates, skipped, etag: feed.etag };
 }

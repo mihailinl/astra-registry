@@ -32,7 +32,7 @@ import {
   AUTHOR_FORBIDDEN_MEMBERS,
   HOLDS_DIR,
   HOLD_KINDS,
-  HOLD_PERIOD_HOURS,
+  LEFTOVER_KINDS,
   RECORD_SCHEMA,
   REVERSAL_CODES,
   SCHEMA,
@@ -46,14 +46,11 @@ import {
   isTakedown,
   readHolds,
   recordFile,
-  releaseAfter,
   resolveHold,
   resultKey,
   resultsToPost,
+  WRITTEN_KINDS,
 } from "../lib/holds.mjs";
-// The members ops entry 101 added, read off the namespace: this suite then runs
-// against a module that lacks them and is red test by test, not at import.
-import * as holdsModule from "../lib/holds.mjs";
 
 const REPO_ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 
@@ -130,6 +127,25 @@ const record = (act, id, over = {}) => ({
 function heldHold(decision, held_for, { confirm = null, cancel = null, held_at = HELD_AT } = {}) {
   const entry = holdEntry(decision, { held_for, held_at });
   return { id: decision.service_decision_id, file: "", entry, confirm, cancel, problems: [] };
+}
+
+/**
+ * An entry the rule before contract 6.6.0 wrote — a `reversal` (with the
+ * `release_after` it carried) or a `disable_confirmation`. `holdEntry` refuses
+ * those kinds now, so it is built by hand, member for member as the old
+ * `holdEntry` wrote it, and judged by the directory's own check.
+ */
+function leftoverHold(decision, held_for, { confirm = null, cancel = null, held_at = HELD_AT } = {}) {
+  const plus24 = new Date(Date.parse(held_at) + 24 * 3600_000).toISOString().replace(/\.\d{3}Z$/, "Z");
+  const entry = {
+    schema: SCHEMA,
+    held_for,
+    service_decision_id: decision.service_decision_id,
+    held_at,
+    ...(held_for === "reversal" ? { release_after: plus24 } : {}),
+    decision: { ...decision },
+  };
+  return { id: decision.service_decision_id, file: "", entry, confirm, cancel, problems: checkHoldEntry(entry) };
 }
 
 function tmpTree() {
@@ -210,7 +226,7 @@ await test("the members holdEntry copies are the members the schema names, in bo
   assertEqual(Object.keys(EVERY_MEMBER).slice().sort().join(","), named.slice().sort().join(","),
     "the fixture and schema/hold-v1.json no longer name the same decision members, so this test is " +
     "comparing the copy against less than the schema admits");
-  const entry = holdEntry(EVERY_MEMBER, { held_for: "disable_confirmation", held_at: HELD_AT });
+  const entry = holdEntry(EVERY_MEMBER, { held_for: "bound", held_at: HELD_AT });
   const dropped = named.filter((m) => !Object.hasOwn(entry.decision, m));
   assertEqual(dropped.join(", "), "",
     "holdEntry drops a member schema/hold-v1.json names, so a hold entry carries less than the release " +
@@ -218,44 +234,27 @@ await test("the members holdEntry copies are the members the schema names, in bo
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-section("what MOD-9 holds, and what it lets through");
+section("what MOD-9 holds, and what it lets through (contract 6.6.0)");
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// The owner, 2026-10-29: the console's step-up is the only confirmation. A
+// reversal and a `disable` apply in the run that compiles them; TRUST-26's
+// bound and the two unbound author actions are all that is held.
 
-await test("every reversal is held, at or under the bound and over it", () => {
+await test("no reversal is held, at or under the bound or over it, bound listing or not", () => {
   for (const code of REVERSAL_CODES) {
     for (const overBound of [false, true]) {
-      assertEqual(holdKindFor(moderatorDecision({ code }), { overBound }), "reversal",
-        `a ${code} is not held as a reversal (overBound ${overBound})`);
+      for (const listingBound of [true, false]) {
+        assertEqual(holdKindFor(moderatorDecision({ code }), { overBound, listingBound }), null,
+          `a ${code} was held (overBound ${overBound}, listingBound ${listingBound}). MOD-9 holds no reversal since ` +
+          "contract 6.6.0: the moderator's step-up is its confirmation, and a hold here sat on GitHub where nobody saw it");
+      }
     }
   }
-  // MOD-9's own list, by name, and not a count: a count stays green when one
-  // code is swapped for another. Contract 2.5.0 added `M_IDENTITY_RESET` to it.
+  // The codes a leftover `reversal` entry may carry, by name and not a count:
+  // a count stays green when one code is swapped for another.
   assertEqual(REVERSAL_CODES.join(","), "M_RELIST,M_UNREVOKE,M_IDENTITY_RESET",
-    "MOD-9 names three reversals — `M_RELIST`, `M_UNREVOKE`, `M_IDENTITY_RESET` — and this list has moved");
-});
-
-await test("an M_IDENTITY_RESET is a reversal: 24 hours from its commit AND a confirmation, never one alone", () => {
-  // B-T4.2's canary, the hold half: "a reset before its hold period, or without
-  // a confirmation, writes nothing". What writes is the release; what decides
-  // whether there is one is this. The entry is the schema's (hold-v1.json's
-  // `code` enum gained the reset), so an enum that lost it refuses here.
-  const reset = moderatorDecision({
-    service_decision_id: "sd-reset-1", code: "M_IDENTITY_RESET", category: "identity_reset",
-    versions: undefined, reverses: undefined,
-  });
-  delete reset.versions;
-  delete reset.reverses;
-  assertEqual(holdKindFor(reset, { overBound: true, listingBound: false }), "reversal",
-    "an M_IDENTITY_RESET is not held as a reversal; MOD-9 names it one");
-  assert(!isTakedown(reset), "a reset counts as a takedown, so a full bound would hold the thing that lifts a permanent refusal");
-  const landed = { sha: "c".repeat(40), at: HELD_AT };
-  const confirm = record("confirm", "sd-reset-1");
-  const before = resolveHold(heldHold(reset, "reversal", { confirm }), { now: BEFORE, shadow: false, landed });
-  assertEqual(before.act, "wait", `a reset was ${before.act} before its 24 hours, with a confirmation: ${before.reason}`);
-  const unconfirmed = resolveHold(heldHold(reset, "reversal"), { now: AFTER, shadow: false, landed });
-  assertEqual(unconfirmed.act, "wait", `a reset was ${unconfirmed.act} after its 24 hours with no confirmation`);
-  const due = resolveHold(heldHold(reset, "reversal", { confirm }), { now: AFTER, shadow: false, landed });
-  assertEqual(`${due.act} ${due.result}`, "release applied", `a confirmed reset past its period was not due: ${due.reason}`);
+    "the reversal codes a leftover entry may carry have moved");
 });
 
 await test("a reversal is never held for the bound, so a full bound cannot stall an un-breaking", () => {
@@ -265,13 +264,14 @@ await test("a reversal is never held for the bound, so a full bound cannot stall
   }
 });
 
-await test("an M_REVOKE with action disable is held from the first commit, with no flag and no bound", () => {
+await test("an M_REVOKE with action disable applies at once under the bound, and is held `bound` over it", () => {
   const d = moderatorDecision({ service_decision_id: "sd-revoke-1", code: "M_REVOKE", action: "disable", severity: "high" });
-  assertEqual(holdKindFor(d, { overBound: false }), "disable_confirmation",
-    "a disable under the bound is not held, so software already running on somebody's machine stops " +
-    "without a second person having seen the decision (OPEN-OWNER-14)");
-  assertEqual(holdKindFor(d, { overBound: true }), "disable_confirmation",
-    "a disable over the bound is recorded as a bound hold, so the bound rising would release it");
+  assertEqual(holdKindFor(d, { overBound: false }), null,
+    "a disable under the bound was held. Since contract 6.6.0 the moderator's step-up in the console is the only " +
+    "confirmation, and a second one on GitHub is what the owner refused on 2026-10-29");
+  assertEqual(holdKindFor(d, { overBound: true }), "bound",
+    "a disable over the bound applied at once: TRUST-26's bound is the registry's one guard against a compromised " +
+    "service withdrawing the catalogue, and a disable reaches every installed copy");
 });
 
 await test("block_install applies at once under the bound and is held over it", () => {
@@ -285,10 +285,10 @@ await test("block_install applies at once under the bound and is held over it", 
 
 // OPEN-OWNER-45's case, walked rather than left to be discovered. He was shown
 // it and kept the rule: author actions count toward TRUST-26's bound, so three
-// of them fill it and the next moderator action waits on an operator. The
-// correction that rides with it (C16) is that FLOW-42's cap means three
-// DISTINCT accounts, not one author tidying up — the count is M-T3.2's, and
-// only the consequence is asserted here.
+// of them fill it and the next moderator action waits. The correction that
+// rides with it (C16) is that FLOW-42's cap means three DISTINCT accounts, not
+// one author tidying up — the count is M-T3.2's, and only the consequence is
+// asserted here.
 await test("three A_YANKs fill the bound and the next block_install is held (OPEN-OWNER-45)", () => {
   const yanks = [1, 2, 3].map((n) => authorDecision({
     service_decision_id: `sd-yank-${n}`,
@@ -320,160 +320,98 @@ await test("an unbound A_YANK and an unbound removal request get their own kinds
 
 await test("an unbound A_YANK stays unbound_yank even when the bound is also full", () => {
   assertEqual(holdKindFor(authorDecision(), { listingBound: false, overBound: true }), "unbound_yank",
-    "an unbound A_YANK over the bound was recorded as a bound hold, and a bound hold releases on a " +
-    "confirmation — so the bound rising, or an operator confirming, would apply it");
+    "an unbound A_YANK over the bound was recorded as a bound hold, and a bound hold releases when the window " +
+    "admits it — so a quiet day would apply it");
+});
+
+await test("holdEntry refuses to write a reversal or a disable_confirmation hold; it only reads them", () => {
+  assertEqual(HOLD_KINDS.slice().sort().join(","), [...WRITTEN_KINDS, ...LEFTOVER_KINDS].sort().join(","),
+    "HOLD_KINDS is not the written kinds and the leftover kinds, so a kind is either written with no rule or read with none");
+  assertEqual(LEFTOVER_KINDS.slice().sort().join(","), "disable_confirmation,reversal",
+    "the kinds the rule before contract 6.6.0 wrote have moved");
+  for (const held_for of LEFTOVER_KINDS) {
+    let threw = "";
+    try {
+      holdEntry(moderatorDecision(), { held_for, held_at: HELD_AT });
+    } catch (e) { threw = e.message; }
+    assert(threw.includes("refusing to write"),
+      `holdEntry wrote a \`${held_for}\` hold. Nothing is held for a person's confirmation since contract 6.6.0, so ` +
+      "a compile that still asks for one is a compile running the old rule, and the next run would release the entry");
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-section("the 24-hour period, and the record that ends it");
+section("a bound hold releases by itself, and MOD-52 is break-glass");
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// `boundAdmits` is `bot/moderation-run.mjs`'s `admitHeldTakedowns` answer: the
+// trailing 24 hours, counted from the tree at this run, have room for this
+// hold after every older one. This module only believes it; the counting and
+// the oldest-first order are proved through the job in moderation-run.test.mjs.
 
-await test("a reversal waits out the period, and a confirm inside it does not shorten it", () => {
-  assertEqual(HOLD_PERIOD_HOURS, 24, "OPEN-OWNER-4 closed at 24 hours on 2026-09-17");
-  const confirm = record("confirm", "sd-relist-1");
-  // Landed in the same second it was held, so the period ends at release_after
-  // and the reason can be asked for that instant. When the commit lands later,
-  // it ends later: the next section.
-  const landed = { sha: "c".repeat(40), at: HELD_AT };
-  const before = resolveHold(heldHold(moderatorDecision(), "reversal", { confirm }), { now: BEFORE, shadow: false, landed });
-  assertEqual(before.act, "wait",
-    "a confirmed reversal released before its 24 hours were up, so the period an operator has to object " +
-    "to it is whatever the operator's own reflexes are");
-  assert(before.reason.includes("2026-09-19T09:05:00Z"), `the wait does not say when it ends: ${before.reason}`);
+const revokeOf = (action, id) => moderatorDecision({ service_decision_id: id, code: "M_REVOKE", action, severity: "high" });
+
+await test("a bound hold waits while the window is full, and releases with no confirm record once it admits it", () => {
+  for (const action of ["block_install", "disable"]) {
+    const d = revokeOf(action, "sd-revoke-3");
+    const full = resolveHold(heldHold(d, "bound"), { shadow: false });
+    assertEqual(full.act, "wait",
+      `a ${action} bound hold released with nobody's record and no window counted; boundAdmits must default to the ` +
+      "direction that keeps a takedown held");
+    assert(full.reason.includes("releases by itself"), `the wait does not say how it ends: ${full.reason}`);
+    const room = resolveHold(heldHold(d, "bound"), { shadow: false, boundAdmits: true });
+    assertEqual(`${room.act} ${room.result} ${room.gate}`, "release applied bound",
+      `a ${action} bound hold whose window admits it did not release by itself (MOD-9 since contract 6.6.0): ${room.reason}`);
+  }
 });
 
-await test("the period passing is not a release: a reversal still needs the record", () => {
-  const after = resolveHold(heldHold(moderatorDecision(), "reversal"), { now: AFTER, shadow: false });
-  assertEqual(after.act, "wait",
-    "a reversal released itself once its period had passed, with nobody having confirmed it");
-  assert(after.reason.includes("no operator has confirmed"), `the wait names the wrong reason: ${after.reason}`);
-});
-
-await test("period plus confirm releases, and the release is applied", () => {
-  const r = resolveHold(
-    heldHold(moderatorDecision(), "reversal", { confirm: record("confirm", "sd-relist-1") }),
-    { now: AFTER, shadow: false },
-  );
-  assertEqual(r.act, "release", `a confirmed reversal past its period did not release: ${r.reason}`);
-  assertEqual(r.result, "applied", "a released reversal posts something other than applied");
+await test("a confirm record releases a bound hold at once over a full window (MOD-52, break-glass)", () => {
+  const d = revokeOf("block_install", "sd-revoke-3");
+  const r = resolveHold(heldHold(d, "bound", { confirm: record("confirm", "sd-revoke-3") }), { shadow: false, boundAdmits: false });
+  assertEqual(r.act, "release",
+    "an operator's MOD-52 confirmation no longer releases a bound hold at once; it is the break-glass path, the " +
+    `repair the service cannot block: ${r.reason}`);
+  assertEqual(r.result, "applied", "a released bound hold posts something other than applied");
+  assertEqual(r.gate, undefined,
+    "a confirmed release was marked as one the window admitted, so the job would gate it on room it does not need");
 });
 
 await test("a confirm for another decision is ignored, and is not an error either", () => {
-  const r = resolveHold(
-    heldHold(moderatorDecision(), "reversal", { confirm: record("confirm", "sd-relist-2") }),
-    { now: AFTER, shadow: false },
-  );
+  const d = revokeOf("block_install", "sd-revoke-3");
+  const r = resolveHold(heldHold(d, "bound", { confirm: record("confirm", "sd-revoke-4") }), { shadow: false });
   assertEqual(r.act, "wait",
     "a confirmation naming another decision released this one; matching on the plugin instead of the id " +
     "is what that mutation looks like, and one confirmation then releases every hold against the listing");
-  assert(r.reason.includes("sd-relist-2"), `the wait does not name the record it refused: ${r.reason}`);
-});
-
-await test("a bound hold and a disable release on the confirmation alone, with no period", () => {
-  for (const [held_for, decision] of [
-    ["bound", moderatorDecision({ service_decision_id: "sd-revoke-3", code: "M_REVOKE", action: "block_install", severity: "high" })],
-    ["disable_confirmation", moderatorDecision({ service_decision_id: "sd-revoke-1", code: "M_REVOKE", action: "disable", severity: "high" })],
-  ]) {
-    const id = decision.service_decision_id;
-    const waiting = resolveHold(heldHold(decision, held_for), { now: BEFORE, shadow: false });
-    assertEqual(waiting.act, "wait", `an unconfirmed ${held_for} hold released`);
-    const released = resolveHold(
-      heldHold(decision, held_for, { confirm: record("confirm", id) }),
-      { now: BEFORE, shadow: false },
-    );
-    assertEqual(released.act, "release",
-      `a confirmed ${held_for} hold waited: ${released.reason}. These two release AT ONCE — the period is ` +
-      `the operator's window to object, and these are already waiting on that operator`);
-    assertEqual(released.result, "applied", `a released ${held_for} hold posts something other than applied`);
-  }
-});
-
-await test("a disable never releases without a confirm record, at any time", () => {
-  const d = moderatorDecision({ service_decision_id: "sd-revoke-1", code: "M_REVOKE", action: "disable", severity: "high" });
-  for (const now of [BEFORE, AFTER, new Date("2027-01-01T00:00:00Z")]) {
-    const r = resolveHold(heldHold(d, "disable_confirmation"), { now, shadow: false });
-    assertEqual(r.act, "wait",
-      `a disable released at ${now.toISOString()} with no operator's confirmation; it is the one action ` +
-      `that stops software already running on somebody's machine (OPEN-OWNER-14)`);
-  }
+  assert(r.reason.includes("sd-revoke-4"), `the wait does not name the record it refused: ${r.reason}`);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-section("the 24 hours run from the commit that added the entry (MOD-9; ops entry 101)");
+section("an entry left from before contract 6.6.0 is ended, never stuck");
 // ─────────────────────────────────────────────────────────────────────────────
-//
-// MOD-9: released only "after a 24 h hold period (OPEN-OWNER-4) has run from
-// that commit" — the commit that adds `state/holds/<id>.json`. `held_at` is
-// the commit job's clock at the compile, and that commit lands after the gates
-// and the push. Until ops entry 101 closed the period ran from `held_at`, so a
-// hold compiled at T and committed at T + 15 min was due at T + 24 h: fifteen
-// minutes before MOD-9 lets it be. `bot/tests/moderation-run.test.mjs` proves
-// the same through the job, the workflow's commit step and real history.
 
-const plusMinutes = (iso, minutes) => new Date(Date.parse(iso) + minutes * 60_000);
-const SHA = "c".repeat(40);
-
-await test("a reversal's 24 hours run from the commit that added the entry, not from held_at", () => {
-  const confirm = record("confirm", "sd-relist-1");
-  const hold = heldHold(moderatorDecision(), "reversal", { confirm });
-  // Compiled at HELD_AT, committed fifteen minutes later.
-  const landed = { sha: SHA, at: plusMinutes(HELD_AT, 15).toISOString().replace(/\.\d{3}Z$/, "Z") };
-
-  const early = resolveHold(hold, { now: plusMinutes(HELD_AT, 24 * 60 + 1), shadow: false, landed });
-  assertEqual(early.act, "wait",
-    "a confirmed reversal released 24 h and 1 min after held_at, 14 minutes before 24 hours had run from the " +
-    "commit that added its entry — the early direction, the one MOD-9 forbids");
-  assert(early.reason.includes("2026-09-19T09:20:00Z") && early.reason.includes(SHA),
-    `the wait does not say when the period ends or what it was counted from: ${early.reason}`);
-
-  const due = resolveHold(hold, { now: plusMinutes(HELD_AT, 24 * 60 + 15), shadow: false, landed });
-  assertEqual(due.act, "release", `24 hours after the commit, with a confirm record, the reversal waited: ${due.reason}`);
-
-  // And the entry's own release_after still binds: a commit dated before
-  // held_at (a hand edit that moved held_at later) cannot bring the release
-  // forward of what the directory tells a person.
-  const before = { sha: SHA, at: "2026-09-18T08:05:00Z" };
-  const notYet = resolveHold(hold, { now: new Date("2026-09-19T08:06:00Z"), shadow: false, landed: before });
-  assertEqual(notYet.act, "wait", "a reversal released before its own release_after because its commit is older than held_at");
-  assertEqual(resolveHold(hold, { now: new Date("2026-09-19T09:05:00Z"), shadow: false, landed: before }).act, "release",
-    "at release_after, with the commit's 24 hours run and a confirm record, the reversal waited");
+await test("a leftover reversal is released at once, with no confirm record and no period", () => {
+  for (const code of REVERSAL_CODES) {
+    const hold = leftoverHold(moderatorDecision({ service_decision_id: `sd-${code.toLowerCase()}`, code }), "reversal");
+    assertEqual(hold.problems.join("; "), "", `a leftover ${code} reversal entry, as the old rule wrote it, is unsound`);
+    const r = resolveHold(hold, { shadow: false });
+    assertEqual(`${r.act} ${r.result}`, "release applied",
+      `a leftover ${code} held under the old rule waited (${r.reason}); nothing will ever confirm it now, so it ` +
+      "would sit on the tree for good while a fresh one applies at once");
+    assertEqual(r.gate, undefined, "a leftover reversal was gated on TRUST-26's window, and a reversal is no takedown");
+  }
 });
 
-await test("an entry no commit has added has not started its 24 hours", () => {
-  const hold = heldHold(moderatorDecision(), "reversal", { confirm: record("confirm", "sd-relist-1") });
-  const r = resolveHold(hold, {
-    now: new Date("2030-01-01T00:00:00Z"),
-    shadow: false,
-    landed: { sha: null, at: null, uncommitted: true, why: "state/holds/sd-relist-1.json is in no commit on HEAD" },
-  });
-  assertEqual(r.act, "wait",
-    "a reversal whose entry is in no commit released: MOD-9 counts from that commit, and there is none yet");
-  assert(r.reason.includes("not started"), `the wait does not say the period has not started: ${r.reason}`);
-});
-
-await test("without its commit, a reversal waits out held_at + 24 h + the commit job's timeout, never earlier", () => {
-  const hold = heldHold(moderatorDecision(), "reversal", { confirm: record("confirm", "sd-relist-1") });
-  const unread = [
-    ["no landing handed in", undefined],
-    ["a shallow checkout", { sha: null, at: null, why: "a shallow clone" }],
-    ["a landing with no readable time", { sha: SHA, at: "not a time" }],
-  ];
-  for (const [what, landed] of unread) {
-    const r = resolveHold(hold, { now: plusMinutes(HELD_AT, 24 * 60 + 1), shadow: false, landed });
-    assertEqual(r.act, "wait",
-      `with ${what}, a confirmed reversal released 24 h and 1 min after held_at — counted from the compile, as ` +
-      "before ops entry 101, while its commit may have landed up to the commit job's timeout later");
-  }
-  const slack = holdsModule.HOLD_COMMIT_SLACK_MINUTES;
-  assert(Number.isInteger(slack) && slack > 0, `HOLD_COMMIT_SLACK_MINUTES is ${slack}`);
-  for (const [what, landed] of unread) {
-    const last = new Date(plusMinutes(HELD_AT, 24 * 60 + slack).getTime() - 1000);
-    assertEqual(resolveHold(hold, { now: last, shadow: false, landed }).act, "wait",
-      `with ${what}, the reversal released a second before held_at + 24 h + ${slack} min`);
-    const r = resolveHold(hold, { now: plusMinutes(HELD_AT, 24 * 60 + slack), shadow: false, landed });
-    assertEqual(r.act, "release", `with ${what}, the fallback never ends: ${r.reason}`);
-    assert(r.reason.includes("could not be read"), `the release does not say it was counted without its commit: ${r.reason}`);
-  }
+await test("a leftover disable_confirmation is released as a bound hold, never unconditionally", () => {
+  const d = revokeOf("disable", "sd-revoke-1");
+  const hold = leftoverHold(d, "disable_confirmation");
+  assertEqual(hold.problems.join("; "), "", "a leftover disable_confirmation entry, as the old rule wrote it, is unsound");
+  assertEqual(resolveHold(hold, { shadow: false }).act, "wait",
+    "a leftover disable was released with the window full. The old rule recorded a disable over the bound under " +
+    "this kind, so releasing it unconditionally could put a fourth withdrawal into the window");
+  const room = resolveHold(hold, { shadow: false, boundAdmits: true });
+  assertEqual(`${room.act} ${room.gate}`, "release bound", `a leftover disable the window admits stayed held: ${room.reason}`);
+  const confirmed = resolveHold(leftoverHold(d, "disable_confirmation", { confirm: record("confirm", "sd-revoke-1") }), { shadow: false });
+  assertEqual(confirmed.act, "release", "a leftover disable with its confirm record on the tree was not released");
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -534,30 +472,30 @@ await test("an unbound removal request IS ended by a delist, and by a confirmati
 section("MOD-46's coverage check blocks one thing");
 // ─────────────────────────────────────────────────────────────────────────────
 
-await test("a red coverage report blocks a reversal", () => {
-  const r = resolveHold(
-    heldHold(moderatorDecision(), "reversal", { confirm: record("confirm", "sd-relist-1") }),
-    { now: AFTER, shadow: false, coverageRed: true },
-  );
+await test("a red coverage report holds a leftover reversal a run", () => {
+  const r = resolveHold(leftoverHold(moderatorDecision(), "reversal"), { shadow: false, coverageRed: true });
   assertEqual(r.act, "wait",
-    "a reversal released while MOD-46's coverage check was failing: the registry cannot currently account " +
-    "for every withdrawal it has published, and giving something back in that state publishes a claim it " +
-    "cannot back");
+    "a leftover reversal was released while MOD-46's coverage check was failing: the registry cannot currently " +
+    "account for every withdrawal it has published, and giving something back from a hold in that state " +
+    "publishes a claim it cannot back");
   assert(r.reason.includes("MOD-46"), `the wait does not name the check: ${r.reason}`);
 });
 
 await test("a red coverage report does not block a takedown", () => {
-  for (const [held_for, decision] of [
-    ["bound", moderatorDecision({ service_decision_id: "sd-revoke-3", code: "M_REVOKE", action: "block_install", severity: "high" })],
-    ["disable_confirmation", moderatorDecision({ service_decision_id: "sd-revoke-1", code: "M_REVOKE", action: "disable", severity: "high" })],
+  for (const [held_for, decision, build] of [
+    ["bound", revokeOf("block_install", "sd-revoke-3"), heldHold],
+    ["disable_confirmation", revokeOf("disable", "sd-revoke-1"), leftoverHold],
   ]) {
-    const r = resolveHold(
-      heldHold(decision, held_for, { confirm: record("confirm", decision.service_decision_id) }),
-      { now: AFTER, shadow: false, coverageRed: true },
+    const confirmed = resolveHold(
+      build(decision, held_for, { confirm: record("confirm", decision.service_decision_id) }),
+      { shadow: false, coverageRed: true },
     );
-    assertEqual(r.act, "release",
-      `a red coverage report stalled a ${held_for} takedown: a failing report would then be a way to stop ` +
-      `the registry withdrawing anything at all`);
+    const admitted = resolveHold(build(decision, held_for), { shadow: false, coverageRed: true, boundAdmits: true });
+    for (const r of [confirmed, admitted]) {
+      assertEqual(r.act, "release",
+        `a red coverage report stalled a ${held_for} takedown: a failing report would then be a way to stop ` +
+        `the registry withdrawing anything at all`);
+    }
   }
 });
 
@@ -567,7 +505,7 @@ section("shadow: the hold is due, the result waits");
 
 await test("under shadow a confirmed hold is still due to release, and nothing is posted for it", () => {
   const r = resolveHold(
-    heldHold(moderatorDecision(), "reversal", { confirm: record("confirm", "sd-relist-1") }),
+    heldHold(revokeOf("block_install", "sd-revoke-3"), "bound", { confirm: record("confirm", "sd-revoke-3") }),
     { now: AFTER, shadow: true },
   );
   assertEqual(r.act, "release",
@@ -579,7 +517,7 @@ await test("under shadow a confirmed hold is still due to release, and nothing i
 });
 
 await test("an answer that carries no shadow member is read as shadow", () => {
-  const hold = heldHold(moderatorDecision(), "reversal", { confirm: record("confirm", "sd-relist-1") });
+  const hold = heldHold(revokeOf("block_install", "sd-revoke-3"), "bound", { confirm: record("confirm", "sd-revoke-3") });
   assertEqual(resolveHold(hold, { now: AFTER }).post, false,
     "resolveHold posts when nobody told it whether the run is in shadow; the silent direction has to be " +
     "the one a missing member produces");
@@ -617,7 +555,7 @@ section("the service is down, and the runner crashed");
 // today" is what a later import quietly changes.
 await test("with the service down a confirmed hold is still due to release, because nothing here asks it", () => {
   const r = resolveHold(
-    heldHold(moderatorDecision(), "reversal", { confirm: record("confirm", "sd-relist-1") }),
+    heldHold(revokeOf("block_install", "sd-revoke-3"), "bound", { confirm: record("confirm", "sd-revoke-3") }),
     { now: AFTER, shadow: false },
   );
   assertEqual(r.act, "release", "a release needed something the list answer carries");
@@ -682,8 +620,8 @@ await test("readHolds pairs an entry with its record, and a missing directory is
   const t = tmpTree();
   try {
     assertEqual(readHolds(path.join(t.root, "nowhere")).length, 0, "a missing state/holds/ threw instead of answering none");
-    t.write(path.join(HOLDS_DIR, "sd-relist-1.json"), holdEntry(moderatorDecision(), { held_for: "reversal", held_at: HELD_AT }));
-    t.write(recordFile("sd-relist-1", "confirm"), record("confirm", "sd-relist-1"));
+    t.write(path.join(HOLDS_DIR, "sd-revoke-3.json"), holdEntry(revokeOf("block_install", "sd-revoke-3"), { held_for: "bound", held_at: HELD_AT }));
+    t.write(recordFile("sd-revoke-3", "confirm"), record("confirm", "sd-revoke-3"));
     const holds = readHolds(t.root);
     assertEqual(holds.length, 1, "the walk found the wrong number of holds");
     assertEqual(holds[0].problems.join("; "), "", "a sound hold was reported as unsound");
@@ -692,26 +630,46 @@ await test("readHolds pairs an entry with its record, and a missing directory is
   } finally { t.done(); }
 });
 
-await test("a hand-edited release_after cannot shorten a hold", () => {
+await test("release_after is read on a leftover reversal and decides nothing, and is refused on any other kind", () => {
   const t = tmpTree();
   try {
-    const entry = holdEntry(moderatorDecision(), { held_for: "reversal", held_at: HELD_AT });
-    assertEqual(entry.release_after, releaseAfter(HELD_AT), "holdEntry writes a release_after of its own devising");
-    entry.release_after = "2026-09-18T10:00:00Z";
-    t.write(path.join(HOLDS_DIR, "sd-relist-1.json"), entry);
-    t.write(recordFile("sd-relist-1", "confirm"), record("confirm", "sd-relist-1"));
-    const [hold] = readHolds(t.root);
-    assert(hold.problems.some((p) => p.includes("cannot shorten a hold")),
-      `an entry whose release_after is an hour after held_at was accepted: ${hold.problems.join("; ") || "no problems reported"}`);
-    const r = resolveHold(hold, { now: new Date("2026-09-18T11:00:00Z"), shadow: false });
-    assertEqual(r.act, "wait", "a hold with a hand-shortened release_after released early");
+    // As the old rule wrote it, then hand-edited: nothing reads the value now,
+    // so the entry is sound and releases at once like any leftover.
+    const leftover = leftoverHold(moderatorDecision(), "reversal").entry;
+    leftover.release_after = "2026-09-18T10:00:00Z";
+    t.write(path.join(HOLDS_DIR, "sd-relist-1.json"), leftover);
+    // A kind the bot writes now, carrying one: something wrote it that believes
+    // a period still applies, and it is refused by name.
+    const bound = holdEntry(revokeOf("block_install", "sd-revoke-3"), { held_for: "bound", held_at: HELD_AT });
+    bound.release_after = "2026-09-19T09:05:00Z";
+    t.write(path.join(HOLDS_DIR, "sd-revoke-3.json"), bound);
+    const byId = Object.fromEntries(readHolds(t.root).map((h) => [h.id, h]));
+    assertEqual(byId["sd-relist-1"].problems.join("; "), "",
+      "a leftover reversal's release_after was judged against a 24-hour period that no longer exists, and the entry " +
+      "would stay on the tree unsound for good");
+    assertEqual(resolveHold(byId["sd-relist-1"], { shadow: false }).act, "release", "a sound leftover reversal waited");
+    assert(byId["sd-revoke-3"].problems.some((p) => p.includes("only a leftover reversal carries one")),
+      `a bound hold with a release_after was accepted: ${byId["sd-revoke-3"].problems.join("; ") || "no problems reported"}`);
+  } finally { t.done(); }
+});
+
+await test("readHolds walks the oldest hold first, and two held in one run by id", () => {
+  const t = tmpTree();
+  try {
+    const at = { "sd-a": "2026-09-18T11:00:00Z", "sd-b": "2026-09-18T09:00:00Z", "sd-d": "2026-09-18T10:00:00Z", "sd-c": "2026-09-18T10:00:00Z" };
+    for (const [id, held_at] of Object.entries(at)) {
+      t.write(path.join(HOLDS_DIR, `${id}.json`), holdEntry(revokeOf("block_install", id), { held_for: "bound", held_at }));
+    }
+    assertEqual(readHolds(t.root).map((h) => h.id).join(","), "sd-b,sd-c,sd-d,sd-a",
+      "readHolds does not walk oldest first: TRUST-26's window releases bound holds in this order, so a newer hold " +
+      "would take the room an older one has been waiting for");
   } finally { t.done(); }
 });
 
 await test("a file named for one decision and holding another is refused", () => {
   const t = tmpTree();
   try {
-    t.write(path.join(HOLDS_DIR, "sd-relist-9.json"), holdEntry(moderatorDecision(), { held_for: "reversal", held_at: HELD_AT }));
+    t.write(path.join(HOLDS_DIR, "sd-relist-9.json"), holdEntry(moderatorDecision({ code: "M_DELIST" }), { held_for: "bound", held_at: HELD_AT }));
     const [hold] = readHolds(t.root);
     assert(hold.problems.some((p) => p.includes("matched by id")),
       `a hold file named for sd-relist-9 holding sd-relist-1 was accepted: ${hold.problems.join("; ") || "no problems reported"}`);
@@ -766,8 +724,8 @@ section("writing one: what may not ride into git inside a hold entry");
 await test("an unnamed member on a decision does not reach the hold entry", () => {
   const named = Object.keys(holdSchema().properties.decision.properties).filter((k) => k !== "$comment");
   assert(named.length >= 10, `the allowlist is ${named.length} members and was 12 on 2026-09-19`);
-  const entry = holdEntry({ ...moderatorDecision(), withheld_since: "2026-09-18T00:00:00Z", x: "surprise" },
-    { held_for: "reversal", held_at: HELD_AT });
+  const entry = holdEntry({ ...moderatorDecision({ code: "M_DELIST" }), withheld_since: "2026-09-18T00:00:00Z", x: "surprise" },
+    { held_for: "bound", held_at: HELD_AT });
   assertEqual(Object.keys(entry.decision).filter((k) => !named.includes(k)).join(", "), "",
     "a member schema/hold-v1.json does not name reached the hold entry, and the entry is committed; " +
     "passing the decision object straight through instead of the allowlist is what that looks like");
@@ -784,13 +742,19 @@ await test("holdEntry refuses to write what the directory would refuse to read",
     "next run read it back and refused it, with the moderator handle already in the public history");
 });
 
-await test("only a reversal is written with a release_after", () => {
-  const d = moderatorDecision({ service_decision_id: "sd-revoke-1", code: "M_REVOKE", action: "disable", severity: "high" });
-  const entry = holdEntry(d, { held_for: "disable_confirmation", held_at: HELD_AT });
-  assertEqual(entry.release_after, undefined,
-    "a disable hold was written with a release_after, and a kind that waits on a person must not look like " +
-    "one that waits on a clock");
-  assertEqual(entry.schema, SCHEMA, "the entry does not declare its own schema");
+await test("no kind the bot writes carries a release_after", () => {
+  for (const [held_for, d] of [
+    ["bound", revokeOf("disable", "sd-revoke-1")],
+    ["unbound_removal", authorDecision({ service_decision_id: "sd-rr-1", code: "A_REMOVAL_REQUEST" })],
+    ["unbound_yank", authorDecision()],
+  ]) {
+    const entry = holdEntry(d, { held_for, held_at: HELD_AT });
+    assertEqual(entry.release_after, undefined,
+      `a ${held_for} hold was written with a release_after; nothing is held for a period since contract 6.6.0, ` +
+      "and a hold that looks like one tells a person with no tooling it waits on a clock");
+    assertEqual(entry.schema, SCHEMA, "the entry does not declare its own schema");
+  }
+  assertEqual(WRITTEN_KINDS.slice().sort().join(","), "bound,unbound_removal,unbound_yank", "the kinds the bot writes have moved");
 });
 
 // ── result ──────────────────────────────────────────────────────────────────

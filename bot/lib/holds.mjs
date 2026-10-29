@@ -3,8 +3,9 @@
 //
 // Registry plan M-T3.3. Pure and offline. `bot/moderation-run.mjs` (M-T3.4)
 // imports it: its `commit` job enters a hold with `holdEntry`, walks every hold
-// here even when `list` failed — a hold's release is driven by a record in git
-// and not by anything the service answers — and reads each commit that deleted
+// here even when `list` failed — a hold's release is driven by git, a record or
+// the takedown window counted from the tree, and not by anything the service
+// answers — and reads each commit that deleted
 // an entry with `classifyHoldCommit`. That job runs on a dispatch since B-T5.1
 // (2026-10-14); its schedule stays commented until its first post arms BOT-83's
 // receiver.
@@ -21,35 +22,56 @@
 // `schema/hold-v1.json` copies BOT-80's members into the file instead of
 // recording an id to re-fetch.
 //
-// ── THE FIVE KINDS, AND WHAT ENDS EACH ──────────────────────────────────────
+// ── THE KINDS, AND WHAT ENDS EACH ───────────────────────────────────────────
 //
-// MOD-9 as published, with OPEN-OWNER-4 closed at 24 hours and OPEN-OWNER-14
-// closed at "an operator's confirmation for each `disable`, none for
-// `block_install`":
+// MOD-9 since contract 6.6.0 (the owner, 2026-10-29: the console's step-up is
+// the only confirmation). Three kinds are written:
 //
-//   reversal              every `M_RELIST`, `M_UNREVOKE` and `M_IDENTITY_RESET`
-//                         (MOD-9 names the reset a reversal since contract 2.5.0).
-//                         Ends: the 24-hour period AND a confirm record.
-//                         A failing MOD-46 coverage check blocks THIS AND
-//                         NOTHING ELSE — a red coverage report must never be
-//                         able to stall a takedown.
-//   disable_confirmation  every `M_REVOKE` with action `disable`.
-//                         Ends: a confirm record, at once. No period.
-//   bound                 a takedown above TRUST-26's bound, `block_install`
-//                         included. Ends: a confirm record, at once.
+//   bound                 a takedown above TRUST-26's bound, `block_install` and
+//                         `disable` included. Ends BY ITSELF: released in the
+//                         first moderation run whose trailing 24 h, re-counted
+//                         from the tree at that run, admits it — oldest held
+//                         first, and never more in one run than the bound
+//                         admits (`bot/moderation-run.mjs`'s
+//                         `admitHeldTakedowns` spends TRUST-26's ledger for it
+//                         and hands the answer in as `boundAdmits`). A confirm
+//                         record releases it at once, over the bound: MOD-52 is
+//                         the break-glass path, and nothing waits for it.
 //   unbound_removal       an `A_REMOVAL_REQUEST` for a listing with no identity
-//                         record. Ends: a confirm record; OR is cancelled by an
-//                         applied `author_request` delist of the same listing,
-//                         or by a cancel record. (MOD-9 states the two
-//                         cancellations and not the confirmation; the
-//                         confirmation is this plan's reading, and it is the
-//                         reading the contrast with `unbound_yank` below forces
-//                         — `unbound_yank` is called out as the kind that is
-//                         *never applied*, which says nothing is wrong with
-//                         applying this one on an operator's say-so.)
+//                         record. Ends: an applied `author_request` delist of
+//                         the same listing (the moderator's console act, and the
+//                         normal end), or a cancel record; OR a confirm record.
+//                         (MOD-9 states the two cancellations and not the
+//                         confirmation; the confirmation is this plan's reading,
+//                         and it is the reading the contrast with `unbound_yank`
+//                         below forces — `unbound_yank` is called out as the
+//                         kind that is *never applied*, which says nothing is
+//                         wrong with applying this one on an operator's say-so.)
 //   unbound_yank          an `A_YANK` for a listing with no identity record.
 //                         NEVER APPLIED. Ends only by a cancel record or by the
 //                         entry being deleted by hand (BOT-70).
+//
+// Two more are READ and never written — the kinds the rule before 6.6.0 wrote,
+// kept so that a run meeting an entry left from then can end it and nothing
+// written under the old rule stays stuck:
+//
+//   reversal              an `M_RELIST`, `M_UNREVOKE` or `M_IDENTITY_RESET`
+//                         held for 24 hours and a confirmation (OPEN-OWNER-4,
+//                         superseded). Released AT ONCE, with no period and no
+//                         confirm record: those codes now apply in the run that
+//                         compiles them, so a leftover one waits for nothing a
+//                         fresh one would not. A failing MOD-46 coverage check
+//                         still holds it a run — MOD-46 blocks the release of a
+//                         held relist or unrevoke, and this is the only kind
+//                         that can still be one.
+//   disable_confirmation  an `M_REVOKE` with action `disable` held for an
+//                         operator's confirmation (OPEN-OWNER-14, superseded).
+//                         Released like a `bound` hold, NOT at once: the old
+//                         rule recorded a disable that was also over the bound
+//                         under this kind (strictest first), so the entry cannot
+//                         say whether the bound would have held it, and a
+//                         disable is a takedown. Releasing it unconditionally
+//                         could put a fourth withdrawal into the window.
 //
 // **A TRUST-42 acknowledgement at the service is not a confirmation** and ends
 // nothing here (BOT-32's 0.12.0 note). There is no acknowledgement input to this
@@ -76,7 +98,7 @@
 // **A due hold is released or cancelled by a commit, in shadow or out of it.**
 // When `resolveHold` answers `release`, the commit job's `releaseHolds`
 // composes M-T3.3's release commit — the held decision applied from the entry,
-// its log entry, the entry and its confirm record deleted, under
+// its log entry, the entry and any confirm record deleted, under
 // `Service-Decision:`; when it answers `cancel`, `cancelHolds` composes the
 // cancel commit — the entry and its records deleted under the trailer, and no
 // log entry. Both were built on 2026-10-14 (the reset's release on B-T4.2).
@@ -88,8 +110,9 @@
 // What this module decides is WHEN a hold is due, and that answer is the same
 // under a `shadow: true` list answer and with `list` down: a hold is not work
 // that answer names, the `held` result already took it off the list (BOT-81),
-// and the release is driven by the MOD-52 record in git — so the release and
-// cancel commits are made in shadow too. Its `applied` or
+// and the release is driven by git — a MOD-52 record, or TRUST-26's window
+// counted from the tree — so the release and cancel commits are made in
+// shadow too. Its `applied` or
 // `cancelled` result, though, SETTLES a decision, which is what BOT-92 calls
 // state-setting, so it is posted only in a run whose list answer is `shadow:
 // false` — the next such run, not this one, re-posted until accepted. "Until
@@ -103,33 +126,14 @@
 // bot's own release or cancel commit, or a person's — which
 // `classifyHoldCommit` reads.
 //
-// ── WHEN A REVERSAL'S 24 HOURS START ────────────────────────────────────────
+// ── THE 24 HOURS THAT ARE GONE ──────────────────────────────────────────────
 //
-// MOD-9: a reversal is released only on a confirmation "after a 24 h hold period
-// (OPEN-OWNER-4) has run from that commit" — the commit that adds
-// `state/holds/<id>.json`. Not from `held_at`. `held_at` is the commit job's
-// clock when it compiled the hold, and the commit that lands it comes after the
-// job's gates and its push, which the job's `timeout-minutes` bounds and
-// nothing else does. Until 2026-09-23 the period was counted from `held_at`, so
-// a hold could be due up to that timeout before 24 hours had run from its
-// commit (ops entry 101) — early, the one direction MOD-9 forbids.
-//
-// So `resolveHold` is handed where the entry LANDED (`bot/moderation-run.mjs`'s
-// `entryLanding`: the commit on HEAD's first-parent line that added the file,
-// at its committer time — a hold merged from a branch is dated at the merge
-// that brought it onto `main`, as TRUST-26's window dates a withdrawal, ops
-// entries 92 and 93), and `reversalDue` counts from that. Three answers:
-//
-//   landed      the later of `release_after` and that commit + 24 h. The
-//               entry's own `release_after` still binds: a release is never
-//               earlier than the directory tells a person it will be.
-//   not started the file is in no commit yet — the entry this run just wrote.
-//               There is no commit for the 24 hours to run from, so it waits.
-//   unknown     the history cannot be read (a shallow checkout, a git that
-//               failed, or a caller that read nothing). Then `held_at` + 24 h
-//               + HOLD_COMMIT_SLACK_MINUTES, which is the commit job's timeout
-//               and a minute more: never earlier than the commit could have
-//               landed, for any hold that job entered.
+// Until contract 6.6.0 a reversal waited 24 hours from the commit that added
+// its entry, and this module counted them (`reversalDue`, `releaseAfter`,
+// `HOLD_PERIOD_HOURS`, `HOLD_COMMIT_SLACK_MINUTES`; ops entry 101). Nothing is
+// held for a period any more, so those are gone. A leftover entry still
+// carries `release_after`; it is read as a member the old rule wrote and
+// decides nothing.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -144,56 +148,43 @@ export const RECORD_SCHEMA = "astra.registry.hold-record/1";
 export const HOLDS_DIR = path.join("state", "holds");
 
 /**
- * OPEN-OWNER-4, closed at 24 hours on 2026-09-17. It applies to `reversal` and
- * to nothing else: the other four kinds wait on a person, not on a clock, and
- * giving them a period would mean a `disable` releasing itself.
+ * The kinds this module WRITES, in the order `holdKindFor` tries them, which is
+ * STRICTEST FIRST. A decision can qualify for two — an unbound `A_YANK` issued
+ * while the estate is at the bound is both `unbound_yank` and `bound` — and
+ * the one recorded must be the one whose release rule is hardest to satisfy,
+ * so that a widening somewhere else (the window making room) can never release
+ * something that was held for another reason.
  */
-export const HOLD_PERIOD_HOURS = 24;
+export const WRITTEN_KINDS = ["unbound_yank", "unbound_removal", "bound"];
 
 /**
- * How long after its `held_at` a hold's commit can land, when the commit itself
- * cannot be read (see "WHEN A REVERSAL'S 24 HOURS START" above).
- *
- * `held_at` is the commit job's `now`, taken in its compile step; the commit
- * that adds the entry is made in the same job's `apply` step, after the gates,
- * and a job that has not finished inside `plugins-moderation.yml`'s
- * `timeout-minutes` for `commit` is cancelled with nothing pushed. So that
- * timeout bounds the gap — plus one minute, because both stamps are truncated
- * to the second and a runner's cancellation is not instantaneous.
- * `bot/tests/moderation-run.test.mjs` holds this above that job's timeout, so
- * raising the timeout without raising this is red.
- *
- * It bounds only a hold that job entered. `held_at` on an entry a person wrote
- * is that person's claim, which is why the commit, when it can be read, is
- * what the period is counted from.
+ * The kinds the rule before contract 6.6.0 wrote, and this module now only
+ * READS and ends (see "THE KINDS" in the header). `holdEntry` refuses to write
+ * one.
  */
-export const HOLD_COMMIT_SLACK_MINUTES = 21;
+export const LEFTOVER_KINDS = ["reversal", "disable_confirmation"];
 
 /**
- * The five kinds, in the order `holdKindFor` tries them, which is STRICTEST
- * FIRST. A decision can qualify for two — a `disable` issued while the estate is
- * already at the bound is both `disable_confirmation` and `bound` — and the one
- * recorded must be the one whose release rule is hardest to satisfy, so that a
- * widening somewhere else (the bound rising, coverage going green) can never
- * release something that was held for another reason.
- *
- * Compared against `schema/hold-v1.json`'s `held_for` enum by
- * `bot/tests/holds.test.mjs`: a kind in one and not the other is either a hold
- * nothing knows how to end or an end for a hold nothing can write.
+ * Every kind a hold entry on the tree can carry. Compared against
+ * `schema/hold-v1.json`'s `held_for` enum by `bot/tests/holds.test.mjs`: a kind
+ * in one and not the other is either a hold nothing knows how to end or an end
+ * for a hold nothing can write. The schema keeps the two leftover kinds valid
+ * so that an entry from before 6.6.0 is read, and released, rather than
+ * refused as unsound and left on the tree for ever.
  */
-export const HOLD_KINDS = [
-  "unbound_yank",
-  "unbound_removal",
-  "reversal",
-  "disable_confirmation",
-  "bound",
-];
+export const HOLD_KINDS = [...WRITTEN_KINDS, ...LEFTOVER_KINDS];
 
 /**
- * `M_RELIST`, `M_UNREVOKE` and `M_IDENTITY_RESET`: the three codes MOD-9 calls
- * reversals, released only on a MOD-52 confirmation after the 24-hour period.
- * The reset joined in contract 2.5.0: it gives back a repository name that
- * `B_REPOSITORY_RECYCLED` had closed for good (OPEN-OWNER-15).
+ * The kinds TRUST-26's window releases by itself (`boundAdmits`): a `bound`
+ * hold, and a leftover `disable_confirmation`, which is a takedown the old rule
+ * may have recorded over the bound.
+ */
+export const BOUND_GATED_KINDS = ["bound", "disable_confirmation"];
+
+/**
+ * `M_RELIST`, `M_UNREVOKE` and `M_IDENTITY_RESET`: the three codes MOD-9 called
+ * reversals and held until contract 6.6.0. Now they apply in the run that
+ * compiles them, and this list is what a leftover `reversal` entry may carry.
  */
 export const REVERSAL_CODES = ["M_RELIST", "M_UNREVOKE", "M_IDENTITY_RESET"];
 
@@ -242,6 +233,15 @@ export const holdRecordSchema = (root = REPO_ROOT) =>
  * next run.
  */
 export function holdEntry(decision, { held_for, held_at, run, root = REPO_ROOT } = {}) {
+  if (LEFTOVER_KINDS.includes(held_for)) {
+    // Read and ended, never written (contract 6.6.0). A caller asking for one
+    // is a compile that still believes the old rule, and the entry it wrote
+    // would be released by the next run with no hold having meant anything.
+    throw new Error(
+      `refusing to write a \`${held_for}\` hold: MOD-9 holds no reversal and no disable since contract 6.6.0, ` +
+      "and this kind is only read, for an entry left from before",
+    );
+  }
   const schema = holdSchema(root);
   const allowed = Object.keys(schema.properties.decision.properties).filter((k) => k !== "$comment");
   const copied = {};
@@ -261,7 +261,6 @@ export function holdEntry(decision, { held_for, held_at, run, root = REPO_ROOT }
     held_for,
     service_decision_id: decision?.service_decision_id,
     held_at,
-    ...(held_for === "reversal" ? { release_after: releaseAfter(held_at) } : {}),
     ...(run ? { run } : {}),
     decision: copied,
   };
@@ -276,6 +275,13 @@ export function holdEntry(decision, { held_for, held_at, run, root = REPO_ROOT }
 
 /**
  * What MOD-9 holds this decision for, or `null` when it applies at once.
+ *
+ * Since contract 6.6.0 nothing is held for a person's confirmation: a reversal
+ * (`M_RELIST`, `M_UNREVOKE`, `M_IDENTITY_RESET`) and an `M_REVOKE` with action
+ * `disable` apply in the run that compiles them, like any other decision. The
+ * moderator's own step-up in the console is the one confirmation (the owner,
+ * 2026-10-29). What is left is TRUST-26's bound and the two unbound author
+ * actions.
  *
  * @param {object} decision   BOT-80's members for the code.
  * @param {object} ctx
@@ -293,20 +299,12 @@ export function holdKindFor(decision, { overBound = false, listingBound = true }
   // be a way to apply a yank the service should never have sent.
   if (code === "A_YANK" && !listingBound) return "unbound_yank";
   if (code === "A_REMOVAL_REQUEST" && !listingBound) return "unbound_removal";
-  if (REVERSAL_CODES.includes(code)) return "reversal";
 
-  // OPEN-OWNER-14, and the half of it that is not conditional: `disable` stops
-  // software that is already running on somebody's machine, so it waits for a
-  // second person whatever the bound says. There is no flag on this — the
-  // 0.11.1 plan's `disable_confirmation` flag is gone, because MOD-9 requires
-  // the hold from the first commit.
-  if (code === "M_REVOKE" && decision.action === "disable") return "disable_confirmation";
-
-  // The other half: `block_install` refuses only NEW installs, so a moderator
-  // may stop the spread at once — *while the bound is not already full*.
-  // Above the bound it waits like every other takedown, which is the limit
-  // OPEN-OWNER-45 was shown and kept on 2026-09-17 («Оставить как есть»).
-  // Exempting it here is the mutation bot/tests/holds.test.mjs watches.
+  // Every takedown, `disable` and `block_install` alike, waits only when the
+  // bound is full — the limit OPEN-OWNER-45 was shown and kept on 2026-09-17
+  // («Оставить как есть»), and the registry's one guard against a compromised
+  // service withdrawing the catalogue. Exempting any takedown here is the
+  // mutation bot/tests/holds.test.mjs watches.
   if (overBound && isTakedown(decision)) return "bound";
 
   return null;
@@ -323,60 +321,6 @@ export function isTakedown(decision) {
 }
 
 // ── reading the directory ───────────────────────────────────────────────────
-
-const isoPlusMinutes = (iso, minutes) =>
-  new Date(new Date(iso).getTime() + minutes * 60_000).toISOString().replace(/\.\d{3}Z$/, "Z");
-const isoPlusHours = (iso, hours) => isoPlusMinutes(iso, hours * 60);
-
-/**
- * `held_at` + HOLD_PERIOD_HOURS, to the second, as the entry records it. The
- * EARLIEST a reversal can be due, and not when it is: MOD-9 counts the 24 hours
- * from the commit that added the entry, which lands after `held_at`
- * (`reversalDue`).
- */
-export const releaseAfter = (heldAt) => isoPlusHours(heldAt, HOLD_PERIOD_HOURS);
-
-const later = (a, b) => (Date.parse(a) >= Date.parse(b) ? a : b);
-
-/**
- * When a reversal's 24 hours end, and what they were counted from (see "WHEN A
- * REVERSAL'S 24 HOURS START" in the header, and ops entry 101).
- *
- * @param {object} entry   a sound `astra.registry.hold/1` entry.
- * @param {object} [landed] `bot/moderation-run.mjs`'s `entryLanding` for it:
- *   `{sha, at}` — the first-parent commit that added it, at its committer time;
- *   `{sha: null, uncommitted: true, why}` — in no commit yet;
- *   `{sha: null, why}` or nothing at all — the history could not be read.
- * @returns {{due: string|null, from: "commit"|"not_started"|"fallback", why: string}}
- *   `due` null means the period has not started.
- */
-export function reversalDue(entry, landed) {
-  const floor = entry.release_after ?? releaseAfter(entry.held_at);
-  if (landed?.uncommitted) {
-    return {
-      due: null,
-      from: "not_started",
-      why: `no commit has added the entry yet, so its ${HOLD_PERIOD_HOURS} hours have not started (MOD-9: from that commit)` +
-        (landed.why ? `: ${landed.why}` : ""),
-    };
-  }
-  if (landed?.sha && typeof landed.at === "string" && Number.isFinite(Date.parse(landed.at))) {
-    return {
-      due: later(floor, isoPlusHours(landed.at, HOLD_PERIOD_HOURS)),
-      from: "commit",
-      why: `counted from ${landed.sha}, the commit that added the entry, at ${landed.at} (MOD-9)`,
-    };
-  }
-  // The history could not be read. Counting from `held_at` alone is the
-  // defect this replaced; the commit job's timeout is the most the commit can
-  // trail it by.
-  return {
-    due: later(floor, isoPlusMinutes(entry.held_at, HOLD_PERIOD_HOURS * 60 + HOLD_COMMIT_SLACK_MINUTES)),
-    from: "fallback",
-    why: `the commit that added the entry could not be read (${landed?.why ?? "no commit was read for it"}), so it is ` +
-      `counted from held_at ${entry.held_at} plus the commit job's ${HOLD_COMMIT_SLACK_MINUTES} minutes, the latest that commit can land`,
-  };
-}
 
 /**
  * Everything `schema/hold-v1.json` cannot say, said here with a message that
@@ -412,14 +356,12 @@ export function checkHoldEntry(entry, { file = "", schema = holdSchema() } = {})
     if (!REVERSAL_CODES.includes(entry.decision.code)) {
       problems.push(`${where}held as a reversal but the code is ${entry.decision.code}`);
     }
-    const want = releaseAfter(entry.held_at);
-    if (entry.release_after === undefined) {
-      problems.push(`${where}a reversal records no release_after; it should be ${want}`);
-    } else if (entry.release_after !== want) {
-      problems.push(`${where}release_after is ${entry.release_after} and ${HOLD_PERIOD_HOURS} hours after held_at is ${want}; a hand edit cannot shorten a hold`);
-    }
+    // A leftover from before contract 6.6.0 carries the `release_after` the
+    // old rule wrote. It is read and decides nothing — the leftover releases
+    // at once — so its value is not checked against a period that no longer
+    // exists.
   } else if (entry.release_after !== undefined) {
-    problems.push(`${where}${entry.held_for} records a release_after, and only a reversal waits out a period`);
+    problems.push(`${where}${entry.held_for} records a release_after, and only a leftover reversal carries one`);
   }
 
   if (entry.held_for === "unbound_yank" && entry.decision.code !== "A_YANK") {
@@ -504,7 +446,12 @@ export function readHolds(root = REPO_ROOT, { schemaRoot = REPO_ROOT } = {}) {
     };
     out.push({ id, file: rel, entry, confirm: pick("confirm"), cancel: pick("cancel"), problems });
   }
-  return out.sort((a, b) => ((a.entry?.held_at ?? "") < (b.entry?.held_at ?? "") ? -1 : 1));
+  // Oldest first, and the same order every run: TRUST-26's window releases
+  // `bound` holds in this order (`admitHeldTakedowns`), so two entries held in
+  // one run — the same `held_at` — are told apart by id rather than left to a
+  // comparator that answers "after" both ways.
+  return out.sort((a, b) =>
+    String(a.entry?.held_at ?? "").localeCompare(String(b.entry?.held_at ?? "")) || a.id.localeCompare(b.id));
 }
 
 // ── what to do with one ─────────────────────────────────────────────────────
@@ -513,9 +460,9 @@ export function readHolds(root = REPO_ROOT, { schemaRoot = REPO_ROOT } = {}) {
  * `wait`, `release` or `cancel`, and whether this run may post the result.
  *
  * Whether a hold is due is NOT conditional on `post`: the release is driven by
- * a record in git, so it is due in a shadow run too, and only the posting
- * waits. (The commit job's `releaseHolds` and `cancelHolds` act on the answer;
- * see the header.)
+ * git — a record, or TRUST-26's window counted from the tree — so it is due in
+ * a shadow run too, and only the posting waits. (The commit job's
+ * `releaseHolds` and `cancelHolds` act on the answer; see the header.)
  *
  * `shadow` defaults to TRUE here for the same reason it does in
  * `resultsToPost`, and the two defaults have to be the same one: a caller that
@@ -527,31 +474,37 @@ export function readHolds(root = REPO_ROOT, { schemaRoot = REPO_ROOT } = {}) {
  * string `"false"` are all not-false, and each of them is an answer this run
  * did not understand.
  *
+ * `boundAdmits` defaults to FALSE for the same reason: it is the one input
+ * that releases a takedown with nobody's record, so a caller that did not
+ * count the window must get the direction that keeps it held.
+ *
  * @param {object} hold          one element of `readHolds`.
  * @param {object} ctx
- * @param {Date}    ctx.now
  * @param {boolean} ctx.shadow          the list answer's `shadow` member.
  * @param {string[]} ctx.delistedPlugins listings with an applied `author_request`
  *                                       delist on `main` (MOD-9's cancellation
  *                                       for a removal request).
  * @param {boolean} ctx.coverageRed     MOD-46's check is failing.
- * @param {object}  [ctx.landed]        where the entry landed on `main`
- *                                       (`entryLanding`), which a reversal's
- *                                       24 hours run from (`reversalDue`).
- *                                       Omitted, it is read as a history that
- *                                       could not be read — the later answer,
- *                                       for `shadow`'s reason.
+ * @param {boolean} ctx.boundAdmits     TRUST-26's trailing 24 h, counted from the
+ *                                       tree at this run, has room for THIS hold
+ *                                       after every older one and every
+ *                                       confirmed takedown released this run
+ *                                       (`bot/moderation-run.mjs`'s
+ *                                       `admitHeldTakedowns`, which spends the
+ *                                       run's ledger for it).
+ * @returns {{act: "wait"|"release"|"cancel", result: string|null, post: boolean, reason: string,
+ *   gate?: "bound"}} `gate: "bound"` marks a release the window admitted rather
+ *   than a record.
  */
 export function resolveHold(hold, {
-  now = new Date(),
   shadow = true,
   delistedPlugins = [],
   coverageRed = false,
-  landed = null,
+  boundAdmits = false,
 } = {}) {
   const { entry, confirm, cancel } = hold;
   const stay = (reason) => ({ act: "wait", result: null, post: false, reason });
-  const done = (act, result, reason) => ({ act, result, post: shadow === false, reason });
+  const done = (act, result, reason, extra = {}) => ({ act, result, post: shadow === false, reason, ...extra });
 
   if (!entry) return stay("no readable hold entry");
   if (hold.problems?.length) return stay(`the hold entry is not sound: ${hold.problems[0]}`);
@@ -588,36 +541,41 @@ export function resolveHold(hold, {
         return done("cancel", "cancelled", `an applied author_request delist of ${entry.decision.plugin_id} settles the removal request (MOD-9)`);
       }
       if (confirm) return done("release", "applied", "an operator confirmed it (MOD-52)");
-      return stay("an unbound removal request waits for an operator's confirmation, a delist, or a cancel record");
+      return stay("an unbound removal request waits for a moderator's author_request delist in the console, or a cancel record");
 
-    case "reversal": {
+    case "reversal":
+      // A leftover from before contract 6.6.0, released at once: the codes it
+      // can carry apply in the run that compiles them now, so a leftover waits
+      // for nothing a fresh one would not — no period, no confirm record.
       if (coverageRed) {
-        // MOD-46, and ONLY here. A red coverage report says the registry cannot
-        // currently account for every withdrawal it has published; giving
-        // something back in that state would be publishing a claim it cannot
-        // back. Blocking a takedown on it would be the opposite mistake.
-        return stay("MOD-46's coverage check is failing, and a reversal is the one thing it blocks");
+        // MOD-46, and ONLY here: it blocks the release of a held relist or
+        // unrevoke, and a leftover is the one such hold that can still exist.
+        // A red coverage report says the registry cannot currently account for
+        // every withdrawal it has published; giving something back from a hold
+        // in that state would be publishing a claim it cannot back. It holds
+        // the leftover a run, which costs time and nothing else.
+        return stay("MOD-46's coverage check is failing, and the release of a held reversal is the one thing it blocks");
       }
-      const { due, why } = reversalDue(entry, landed);
-      if (due === null) return stay(why);
-      if (now.getTime() < new Date(due).getTime()) {
-        return stay(`the ${HOLD_PERIOD_HOURS}-hour period ends at ${due}, ${why}`);
-      }
-      if (!confirm) return stay(`the ${HOLD_PERIOD_HOURS}-hour period has passed and no operator has confirmed it`);
-      return done("release", "applied", `the period ended at ${due}, ${why}, and an operator confirmed it (MOD-52, OPEN-OWNER-4)`);
-    }
+      return done("release", "applied",
+        "a reversal held under the rule before contract 6.6.0, which MOD-9 no longer holds, so it is released at once " +
+        "with no period and no confirmation");
 
     case "disable_confirmation":
     case "bound":
-      // At once on the confirmation, with no period: the period exists to give
-      // an operator time to object to something the registry is about to do on
-      // its own, and these two are already waiting on that same operator.
-      if (!confirm) {
-        return stay(entry.held_for === "bound"
-          ? "the estate is at TRUST-26's takedown bound and no operator has confirmed it"
-          : "an M_REVOKE with action disable waits for an operator's confirmation (OPEN-OWNER-14)");
+      // A confirm record releases it at once, over the bound: MOD-52 is the
+      // break-glass path, and the one way to apply a takedown the window would
+      // not yet admit. Otherwise TRUST-26's window decides, counted from the
+      // tree at this run; nothing waits for a person.
+      if (confirm) return done("release", "applied", "an operator confirmed it (MOD-52), which releases it at once over the bound");
+      if (boundAdmits) {
+        return done("release", "applied",
+          "TRUST-26's trailing 24 hours, counted from the tree at this run, now admit it, so it releases by itself " +
+          `(MOD-9 since contract 6.6.0)${entry.held_for === "disable_confirmation" ? "; a disable held for a confirmation before 6.6.0 is released as a bound hold" : ""}`,
+          { gate: "bound" });
       }
-      return done("release", "applied", "an operator confirmed it (MOD-52)");
+      return stay(
+        "the estate is at TRUST-26's takedown bound: it releases by itself in the first run whose trailing 24 hours " +
+        "admit it, oldest held first, or at once on an operator's MOD-52 confirmation");
 
     default:
       return stay(`unknown hold kind ${entry.held_for}`);

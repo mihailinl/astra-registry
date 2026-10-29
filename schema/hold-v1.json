@@ -10,7 +10,7 @@
     "$comment": { "type": "string" },
     "schema": { "const": "astra.registry.hold/1" },
     "held_for": {
-      "description": "WHY it is held, and therefore what ends it. The five kinds are not interchangeable: `reversal` needs the 24-hour period AND an operator's confirmation (OPEN-OWNER-4, MOD-52); `bound` and `disable_confirmation` release on the confirmation alone, at once (OPEN-OWNER-14); `unbound_removal` is cancelled by an applied `author_request` delist or a cancel record; and `unbound_yank` is NEVER applied — no confirmation reaches it, because FLOW-79 lets only a bound account yank and an unbound one means the service erred. bot/lib/holds.mjs owns the rules; this enum and its HOLD_KINDS are compared by bot/tests/holds.test.mjs, because a kind added to one and not the other is a hold nothing knows how to end.",
+      "description": "WHY it is held, and therefore what ends it. Since contract 6.6.0 (the owner, 2026-10-29: the console's step-up is the only confirmation) the bot writes three kinds: `bound` releases by itself in the first moderation run whose trailing 24 hours, re-counted from the tree, admit it, oldest held first, or at once on an operator's MOD-52 confirmation; `unbound_removal` is cancelled by an applied `author_request` delist or a cancel record, or released on a confirmation; and `unbound_yank` is NEVER applied — no confirmation reaches it, because FLOW-79 lets only a bound account yank and an unbound one means the service erred. `reversal` and `disable_confirmation` are the kinds the rule before 6.6.0 wrote: they stay valid so that an entry left from then is read and ended rather than refused, and the bot never writes them again — a leftover `reversal` releases at once, a leftover `disable_confirmation` as a `bound` hold. bot/lib/holds.mjs owns the rules; this enum and its HOLD_KINDS are compared by bot/tests/holds.test.mjs, because a kind added to one and not the other is a hold nothing knows how to end.",
       "enum": ["reversal", "bound", "unbound_removal", "unbound_yank", "disable_confirmation"]
     },
     "service_decision_id": {
@@ -20,12 +20,12 @@
       "maxLength": 200
     },
     "held_at": {
-      "$comment": "The commit job's clock when it compiled the hold, to the second — NOT when the commit that adds this file landed, which is made after the job's gates and push, up to the job's timeout later. `reversal`'s 24 hours run from that commit (MOD-9: \"from that commit\"): bot/lib/holds.mjs `reversalDue` counts them from the commit on main's first-parent line that added this file, at its committer time, and never ends them before `release_after`; when that history cannot be read, from here plus 24 h plus the commit job's timeout and a minute (ops entry 101). Never from `decision.decided_at`: the period is the operator's window to object to what the registry is about to do, and it cannot start before the registry knew.",
+      "$comment": "The commit job's clock when it compiled the hold, to the second — NOT when the commit that adds this file landed, which is made after the job's gates and push. It orders `bound` holds for TRUST-26's window: the oldest `held_at` is released first (ties by id), so an entry listed again is never rewritten and never loses its place. Never from `decision.decided_at`: the registry cannot hold a decision before it knew of it.",
       "type": "string",
       "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z$"
     },
     "release_after": {
-      "$comment": "Written for `reversal` only, as `held_at` + 24 h, and written out rather than recomputed so that the directory answers `not before when?` to a person with no tooling. A floor and not the release time: the 24 hours run from the commit that added the entry, which lands after `held_at`, so the release is at this instant or later (ops entry 101). bot/lib/holds.mjs recomputes it from `held_at` anyway and refuses an entry whose two disagree — a hand-edited `release_after` must not be able to shorten a hold.",
+      "$comment": "Written, until contract 6.6.0, for `reversal` only, as `held_at` + 24 h: the floor of the 24-hour period MOD-9 then imposed. Nothing writes it now and nothing decides on it — a leftover reversal releases at once — but an entry from before 6.6.0 still carries it, so it stays valid, and bot/lib/holds.mjs refuses it on any other kind.",
       "type": "string",
       "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z$"
     },
@@ -43,7 +43,7 @@
         "$comment": { "type": "string" },
         "service_decision_id": { "type": "string", "minLength": 1, "maxLength": 200 },
         "code": {
-          "$comment": "The codes that can be held. `M_RELIST`, `M_UNREVOKE` and `M_IDENTITY_RESET` are the reversals (MOD-9 names all three; the reset since contract 2.5.0, registry plan B-T4.2); `M_YANK`, `M_DELIST`, `M_DEPRECATE` and `M_REVOKE` are the takedowns the bound can hold; `A_REMOVAL_REQUEST` and `A_YANK` are the author actions. A code outside this list is not a thing MOD-9 holds.",
+          "$comment": "The codes that can be held. `M_YANK`, `M_DELIST`, `M_DEPRECATE` and `M_REVOKE` are the takedowns the bound can hold; `A_REMOVAL_REQUEST` and `A_YANK` are the author actions. `M_RELIST`, `M_UNREVOKE` and `M_IDENTITY_RESET` are the reversals MOD-9 held until contract 6.6.0 (the reset since 2.5.0, registry plan B-T4.2): no new entry carries one, and they stay here so that a leftover `reversal` entry is read and released. A code outside this list is not a thing MOD-9 holds.",
           "enum": [
             "M_RELIST",
             "M_UNREVOKE",
@@ -77,7 +77,7 @@
         },
         "severity": { "type": "string", "minLength": 1, "maxLength": 32 },
         "action": {
-          "$comment": "`M_REVOKE` only. `disable` is what stops software already running on somebody's machine, so it is the one action MOD-9 holds unconditionally for an operator's confirmation; `block_install` refuses only new installs and is held only over the bound (OPEN-OWNER-14, and OPEN-OWNER-45's limit on its reason).",
+          "$comment": "`M_REVOKE` only. Since contract 6.6.0 `disable` and `block_install` are held alike, only over the bound (OPEN-OWNER-45's limit on its reason); until then `disable` was held for an operator's confirmation whatever the bound said (OPEN-OWNER-14, superseded).",
           "enum": ["warn", "block_install", "disable"]
         },
         "moderator": {

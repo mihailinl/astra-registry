@@ -394,13 +394,21 @@ test("M_REVOKE with block_install applies under the bound and is held above it",
     "OPEN-OWNER-45, kept on 2026-09-17: above the bound every takedown waits, `block_install` included");
 });
 
-test("M_REVOKE with disable is held for a second person whatever the bound says", () => {
+test("M_REVOKE with disable applies in the run that compiles it under the bound, and is held `bound` above it (6.6.0)", () => {
   const root = estate();
-  const r = compileDecision(entry({
+  const e = entry({
     code: "M_REVOKE", category: "malicious", severity: "critical", action: "disable",
     versions: ["1.2.0"], moderator: "knice",
-  }), { root, overBound: false });
-  assert.equal(r.held_for, "disable_confirmation");
+  });
+  const under = compileDecision(e, { root, overBound: false });
+  assert.equal(under.outcome, "compiled",
+    "a disable under the bound was not compiled. Since contract 6.6.0 the moderator's step-up in the console is " +
+    `the only confirmation, and nothing waits for a second one on GitHub: ${under.held_for ?? under.refusal ?? ""}`);
+  assert.equal(under.advisories[0].action, "disable");
+  assert.equal(under.log[0].doc.action, "revoke", "the applied disable writes no moderation-log `revoke` entry");
+  const over = compileDecision(e, { root, overBound: true });
+  assert.equal(`${over.outcome} ${over.held_for}`, "held bound",
+    "a disable above the bound applied: TRUST-26's bound is kept as the guard against a compromised service");
 });
 
 test("M_APPEAL logs an appeal; `reversed` adds FLOW-18's Recheck and names the record it cannot write", () => {
@@ -437,11 +445,15 @@ test("an appeal of an M_REJECT is logged even though its listing does not exist"
   assert.equal(r.recheck?.plugin_id, "never-listed");
 });
 
-test("M_RELIST with nothing against it is held `reversal`, not compiled", () => {
+test("M_RELIST with nothing against it compiles at once, under the bound and over it (6.6.0)", () => {
   const root = estate({ extra: { "plugins/widgets/plugin.json": plugin("widgets", { unlisted: true }) } });
-  const r = compileDecision(entry({ code: "M_RELIST", category: "error", moderator: "knice" }), { root });
-  assert.equal(r.outcome, "held");
-  assert.equal(r.held_for, "reversal");
+  for (const overBound of [false, true]) {
+    const r = compileDecision(entry({ code: "M_RELIST", category: "error", moderator: "knice", reverses: SDI2 }), { root, overBound });
+    assert.equal(r.outcome, "compiled",
+      `a relist was ${r.outcome} ${r.held_for ?? r.refusal ?? ""} (overBound ${overBound}); MOD-9 holds no reversal since 6.6.0`);
+    assert.deepEqual(r.edits, [{ op: "unset", file: "plugins/widgets/plugin.json", member: "unlisted" }]);
+    assert.deepEqual([r.log[0].doc.action, r.log[0].doc.reverses], ["relist", SDI2]);
+  }
 });
 
 test("M_BINDING_REVOKE compiles to nothing at all (§7.2)", () => {
@@ -636,8 +648,7 @@ test("relist_contained refuses astra-chess at R′, and the post-M-T6.3 fixture 
     },
   }]);
   const after = compileDecision(entry({ code: "M_RELIST", plugin_id: id, category: "error", moderator: "knice" }), { root: moved });
-  assert.equal(after.outcome, "held", "nothing contains it any more, so MOD-9's ordinary reversal hold is all that is left");
-  assert.equal(after.held_for, "reversal");
+  assert.equal(after.outcome, "compiled", "nothing contains it any more, so it relists (MOD-9 holds no relist since 6.6.0)");
 });
 
 // ── MOD-4, MOD-13, MOD-19 ───────────────────────────────────────────────────
@@ -719,13 +730,13 @@ test("MOD-19's identity entries cover a historic source.repo and reach two sibli
     },
   ]);
 
-  const r = compileDecision(entry({
+  // A `disable` compiles to the same entries as a `block_install` (MOD-19's
+  // question is which identities, not which action): read both.
+  const disabled = compileDecision(entry({
     code: "M_REVOKE", category: "account_compromise", severity: "critical", action: "disable",
     moderator: "knice",
   }), { root, overBound: false });
-  // `disable` is held, so read the compile through a `block_install` instead:
-  // the entries are the same and the hold is MOD-9's, not MOD-19's.
-  assert.equal(r.held_for, "disable_confirmation");
+  assert.equal(disabled.outcome, "compiled");
 
   const applied = compileDecision(entry({
     code: "M_REVOKE", category: "account_compromise", severity: "critical", action: "block_install",
@@ -909,10 +920,12 @@ test("a yank naming no version is refused rather than passing a count of zero ag
 // reset", and until contract 2.5.0 no code carried the reset, so ID-41's
 // refusal stood for good. These are the compile's half: MOD-10's refusal
 // (`target_changed` for an id with no newer `B_REPOSITORY_RECYCLED` record),
-// MOD-9's hold (a reversal), and the release `compileIdentityReset` composes —
-// DEC-7's voiding record, ID-40's one deletion of an identity record, and the
-// log entry `reset`. The walk through the commit job to `main` is
-// `bot/tests/moderation-run.test.mjs`'s.
+// and what the compile composes in the run that reads it since contract 6.6.0
+// (MOD-9 held it as a reversal until then) — DEC-7's voiding record, ID-40's
+// one deletion of an identity record, and the log entry `reset`.
+// `compileIdentityReset` is the same compile with the code asserted, which a
+// leftover hold's release reaches. The walk through the commit job to `main`
+// is `bot/tests/moderation-run.test.mjs`'s.
 
 const RESET_REASON = "The repository name was re-registered by its new owner after the old one deleted it.";
 const reset = (over = {}) => entry({
@@ -935,15 +948,17 @@ const voiding = (at, id = "widgets") => ({
   state: "identity_reset", reasons: ["M_IDENTITY_RESET"], category: "identity_reset",
 });
 
-test("M_IDENTITY_RESET against a B_REPOSITORY_RECYCLED refusal is held `reversal`, and writes nothing yet (MOD-9)", () => {
+test("M_IDENTITY_RESET against a B_REPOSITORY_RECYCLED refusal compiles in the run that reads it, held by nothing (6.6.0)", () => {
   for (const bound of [true, false]) {
-    const root = estate({ bound, extra: onMain("a", recycledRefusal("2026-09-19T10:00:00Z")) });
-    const r = compileDecision(reset(), { root });
-    assert.equal(r.outcome, "held", `bound ${bound}: ${r.outcome} ${r.refusal ?? ""} ${r.why ?? ""}`);
-    assert.equal(r.held_for, "reversal", "MOD-9 names M_IDENTITY_RESET a reversal: 24 hours and a confirmation");
-    assert.deepEqual([r.edits, r.log, r.advisories, r.records], [[], [], [], []],
-      "a held reset wrote an artefact; the reset is its release commit and nothing before it");
-    assert.ok(HOLD_KINDS.includes(r.held_for));
+    for (const overBound of [false, true]) {
+      const root = estate({ bound, extra: onMain("a", recycledRefusal("2026-09-19T10:00:00Z")) });
+      const r = compileDecision(reset(), { root, overBound });
+      assert.equal(r.outcome, "compiled",
+        `bound ${bound}, overBound ${overBound}: ${r.outcome} ${r.held_for ?? ""} ${r.refusal ?? ""} ${r.why ?? ""}. ` +
+        "MOD-9 holds no reversal since contract 6.6.0; the moderator's step-up is the reset's confirmation");
+      assert.deepEqual(r.edits, bound ? [{ op: "delete", file: "plugins/widgets/identity.json" }] : []);
+      assert.deepEqual([r.log.length, r.records.length, r.log[0].doc.action], [1, 1, "reset"]);
+    }
   }
 });
 
@@ -968,7 +983,7 @@ test("MOD-10: a reset with no B_REPOSITORY_RECYCLED record newer than the newest
   const again = compileDecision(reset(), {
     root: estate({ extra: { ...onMain("2", voiding("2026-09-19T11:00:00Z")), ...onMain("3", recycledRefusal("2026-09-19T12:00:00Z")) } }),
   });
-  assert.equal(again.outcome, "held", `a refusal after the last reset was not resettable: ${again.why}`);
+  assert.equal(again.outcome, "compiled", `a refusal after the last reset was not resettable: ${again.why}`);
 });
 
 test("kind_refused: a reset under another category, or with no moderator for its record", () => {
@@ -1028,9 +1043,10 @@ test("the release, case (i): no identity record, so the voiding record and the l
 });
 
 test("a release the tree has moved under is not composed: another reset voided the id first", () => {
-  // The hold waited 24 hours. A second reset of the same refusal, released in
-  // between, voided the id: this one now lifts nothing, and the release asks
-  // MOD-10 again rather than trusting what it was told a day earlier.
+  // A leftover hold from before 6.6.0 waited. A second reset of the same
+  // refusal, applied in between, voided the id: this one now lifts nothing,
+  // and the release asks MOD-10 again rather than trusting what it was told
+  // when it was held.
   const root = estate({
     extra: { ...onMain("a", recycledRefusal("2026-09-19T10:00:00Z")), ...onMain("b", voiding("2026-09-20T11:00:00Z")) },
   });

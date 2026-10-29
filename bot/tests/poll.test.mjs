@@ -152,6 +152,7 @@ const POLL_SURFACE = [
   "stateKey",
   "sweepListing",
   "tagVerdict",
+  "tagVersion",
 ];
 
 // What `bot/lib/notify.mjs` exported at 8e4c0a1, the commit before B-T2.6,
@@ -1069,7 +1070,7 @@ test("the bounds keep told tags over untold waits and drop without retiring; rem
   const listings = quietListings();
   const memory = poll.newMemory("2026-09-01T00:00:00Z");
   const deferred = { "v1.1.0": W("2026-09-10T00:00:00Z", "author", { told: "2026-09-23T00:00:00Z", checked: "2026-09-24T00:20:00Z" }) };
-  for (let n = 0; n < 20; n++) deferred[`v0.1.${n}`] = W(`2026-09-1${n % 9}T00:00:00Z`, "author", { checked: "2026-09-24T00:20:00Z" });
+  for (let n = 0; n < 20; n++) deferred[`v0.3.${n}`] = W(`2026-09-1${n % 9}T00:00:00Z`, "author", { checked: "2026-09-24T00:20:00Z" });
   memory.repos[KEY] = { etag: 'W/"x"', last_success_at: null, registered: [], deferred };
   const out = await poll.runPoll({ listings, memory, now: new Date(T0), fetchImpl: queueFetch(NOT_MODIFIED).fetchImpl, checkRelease: unpublishedCheck });
   assert.ok(Object.hasOwn(out.repos[KEY].deferred, "v1.1.0"), "the told tag keeps its place: only the waiting set remembers it is owed a second registration");
@@ -1493,10 +1494,10 @@ const quietListing = () => ({
 
 test("B-T5.0's canary: a shadow run registers no tag releases-seen records, and an emptied copy would", async () => {
   const listings = [quietListing()];
-  // `v0.1.9` is a tag the legacy backstop saw and no version records — a
+  // `v0.2.1` is a tag the legacy backstop saw and no version records — a
   // refused or never-finished release, exactly the case MIG-23's seed is for.
-  const seen = { repos: { [REPO]: { checked_tags: ["v0.1.9"], last_seen_tag: "v0.1.9" } } };
-  const xml = feed(entry(tagUrl("v0.1.9")), entry(tagUrl("v0.2.0")), entry(tagUrl("cli-v1.0.0")));
+  const seen = { repos: { [REPO]: { checked_tags: ["v0.2.1"], last_seen_tag: "v0.2.1" } } };
+  const xml = feed(entry(tagUrl("v0.2.1")), entry(tagUrl("v0.2.0")), entry(tagUrl("cli-v1.0.0")));
 
   // The whole path the shadow run takes, through the REAL claim job: load's
   // seeded rows, the poll, the tags it hands on, and claim's register half in
@@ -1518,7 +1519,7 @@ test("B-T5.0's canary: a shadow run registers no tag releases-seen records, and 
   assert.deepEqual(seeded.registered, [], "and in shadow nothing is registered, whatever the poll offered");
 
   const emptied = await shadowRun({ repos: {} });
-  assert.deepEqual(emptied.lines, [`would register ${REPO}@v0.1.9`],
+  assert.deepEqual(emptied.lines, [`would register ${REPO}@v0.2.1`],
     "the same run seeded from an emptied copy offers the recorded tag — which is the line the canary watches for");
   assert.deepEqual(emptied.registered, []);
 });
@@ -2024,4 +2025,26 @@ test("a release whose legacy listing request was withdrawn is not offered by the
     // same tag. Cutover commit D deleted the backstop, which commit B paused,
     // so the poll is the only reader of the seed left to hold to it.
   }
+});
+
+// A4 (2026-10-29): the poll registered every OLD tag a feed still carried —
+// about thirty refusals on 2026-10-25 — because BOT-74's verdict compared a
+// tag with the recorded tags and never with the listing's newest version.
+test("A4: a repository with seven old tags registers none; a newer one registers; one with no listed version offers only its newest", () => {
+  const listing = quietListing();
+  assert.equal(listing.prefix_from.version, "0.2.0", "the fixture's newest listed version moved; the old tags below are older than it");
+  const old = ["v0.1.0", "v0.1.1", "v0.1.2", "v0.1.5", "v0.1.9", "v0.2.0-rc.1", "v0.0.1"];
+  const feedOf = (tags) => ({ changed: true, etag: null, entries: tags.map((tag) => ({ tag })) });
+  const none = poll.pollListing({ listing, row: undefined, feed: feedOf(old) });
+  assert.deepEqual(none.candidates, [], `seven tags older than the listing's newest version registered ${none.candidates.join(", ")}`);
+  assert.ok(none.skipped.every((s) => /not newer than the listing's newest version 0\.2\.0/.test(s.why)), none.skipped.map((s) => s.why).join(" | "));
+  // The newest version's own tag, when no version record names it (a re-tag): equal is not newer.
+  const same = poll.pollListing({ listing: { ...listing, recorded_tags: [] }, row: undefined, feed: feedOf(["v0.2.0"]) });
+  assert.deepEqual(same.candidates, [], "a tag naming the listing's newest version itself registered again");
+  const newer = poll.pollListing({ listing, row: undefined, feed: feedOf(["v0.3.0", ...old]) });
+  assert.deepEqual(newer.candidates, ["v0.3.0"], "a tag newer than the newest listed version is no longer registered");
+
+  const unlisted = { ...listing, prefix: null, prefix_from: null, recorded_tags: [] };
+  const only = poll.pollListing({ listing: unlisted, row: undefined, feed: feedOf(["v1.0.0", "v1.2.0", "v1.1.0", "v0.9.0"]) });
+  assert.deepEqual(only.candidates, ["v1.2.0"], `a repository with no listed version offered ${only.candidates.join(", ")}; only its newest tag may register`);
 });
