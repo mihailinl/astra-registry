@@ -3014,6 +3014,67 @@
         "version": "0.7.1"
       },
       {
+        "added_at": "2026-10-29",
+        "author": "Voltur",
+        "capabilities": [
+          "ui_contributions"
+        ],
+        "description": "A resizable photo frame on the Astra desktop: shows a photo folder as an animated slideshow with frame styles, captions and timed slides.",
+        "download_url": "https://github.com/Voltur792/photo-frame/releases/download/v0.1.0/photo-frame-0.1.0-noarch.astraplugin",
+        "downloads": 0,
+        "i18n": {
+          "ru": {
+            "description": "Фоторамка на рабочем столе Astra: показываю папку с фото как анимированное слайдшоу со сменой кадров, стилями рамки и подписями — размер плитки меняется на сетке.",
+            "name": "Фоторамка"
+          }
+        },
+        "icon_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAADvElEQVR42u2aO04jQRCGZ0qdQ4IQCQmCYNNNiZEQ4R5iL7FH2AtwCC6wwUabErKBkRMnyCKxT8BGltCsPZ5HP6q6vj8Eax71f/V3udtNgxBCCCGPanPe7Ozi+oOSD9P722trHgAM1w9Ei/G+QWgx3jcILcb7BkEw37bm1l8w3zcELcb7XhIE832ngWC+bwiEcvmW0P2+U0Aw3zcEgvm+IWAGYAag+z2nAAlAAtD9nlMg5Lj5arnAgYm6vLppsv8iKFb3Y7w+ELpnBULX21Cqegrm+4Yg5HrI1GuZF8NXy0XUWrYx1/99D4zxaUCYU9fPc4BYnmAZABXNAKz7NueBUIrak9NzXOxou1n31jNFkxXZCsZ8PXURzPcNgWC+bwgE831DwHFww3EwAgDkVYESxNXfp9v//vbl2x8A8Gh8938aQWAJSGz+lM8BQIXma4UAADKarxECAOBrICrRxVpSAABIAAQACAAQAKARmrurp2VXEABIAJS7izWdCQBAZgi0HQgBQEYINJ4GchwcGQJ+DwAIDIEIABAAIABAAIAAAAFAOX3/+guXvQKwMx8IHAKA6SQAQHgFALMdA9BnPmBUDsAQg4GAfQBUIwBjOjtnCtz++A0AXoe+nfmaIRCv5qeGRnvnMwNkNl8rEOI5+lOkgJXONw9ALPNiQnDMfI1wCEOfz85nBuBroU0A6H7HAKQ0f+q1p5ivCRjB/On3sNz5pgCoMfa1wMMQOAG2GjrfDADauj+m+RpAEswfft8UhpWGQDB/2P1rin1mAGVdWhKuQPf3P8fLfeAXQV6Hvpzml0oBwfzy5pMAqFgKCN3vt/vVAID55VJAMN9n5zMDKDY/ZwpkA2C7Wavtfo2dv69e5hPg80thfr8efr40Ve4Ebjfr5uT0vHl8vtNR6WefnV90Bsj9klZUoi7JEmC1XDSXVzdAELGeqhOgz2wUX7HqLRappfsTJsD722sbk8rVchHlBYZeoyboDtVuTvd3/d1r9tnF9QedX2f0dwEQzesTSl9XsfSwmB9fB9f7ucsAS4I+4/fNd6H0S4yBY0gxYl+vdoU+WmKmgMZU2D2DBxAOfbsLpaOtJAgkwBEAUqdAKRC8Gd+3txO0DTspQaDjJwCQIwVSg+DZ+GM7u2HoRXJCEAsE7x0/ZFs/jLlYbgimgkDUDz/TGXXwUwIAlBYASXFRZMP8SWcBQFCP+aOXAJaEeoyPchpIGtg2P8pxMBDYNX/2EsCSYNf4JAAAgh3jkwIACPqNzwIAQDBbIYQQUqt/FxSyZ4RQqFUAAAAASUVORK5CYII=",
+        "id": "photo-frame",
+        "license": "MIT",
+        "name": "Photo Frame",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/Voltur792/photo-frame/releases/download/v0.1.0/photo-frame-0.1.0-noarch.astraplugin",
+          "noarch": "https://github.com/Voltur792/photo-frame/releases/download/v0.1.0/photo-frame-0.1.0-noarch.astraplugin",
+          "windows-x64": "https://github.com/Voltur792/photo-frame/releases/download/v0.1.0/photo-frame-0.1.0-noarch.astraplugin"
+        },
+        "readme": "Плагин к Astra от Voltur: живая фоторамка на рабочем столе, работающая без сети. Показывает папки с фото и видео как слайд-шоу на домашнем экране. Поддерживает форматы: фото — jpg, png, webp, gif, bmp; видео — mp4, webm, mov. Работает на Astra 0.2.7 и новее, требуется 64-разрядный Python 3.10 или новее.\n\nНастройка\n\n1. Установка рамки: на домашнем экране Astra → «Панель виджетов» → «Фоторамка». Размер меняется перетаскиванием.\n2. Выбор папок: «Настройки рамки» → «📁 Выбор папки…». Можно добавить до 12 папок.\n3. Настройка показа: интервал смены, порядок, переходы, фон, подписи, поведение видео.\n\n* Папки и подпапки настраиваются отдельно.\n* Кадры предзагружаются заранее, тяжёлые — кэшируются.\n* Настройки сохраняются внутри плитки Astra.\n\nВне сети\n\nПлагин работает локально через поток 127.0.0.1. При блокировке — через мост Astra.\n\nЛицензия и поддержка\n\nMIT © Voltur. \n[Поддержать разработку на Boosty](https://boosty.to/voltur/donate).\n",
+        "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "photo-frame-0.1.0-noarch.astraplugin",
+                "sha256": "962209d1193bed2d79f3115f0bec05beb57318f1501f8c4f62c8a6527b416746",
+                "size": 29007,
+                "url": "https://github.com/Voltur792/photo-frame/releases/download/v0.1.0/photo-frame-0.1.0-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "ui_contributions"
+            ],
+            "min_astra_version": "0.2.7",
+            "permissions": {},
+            "protocol": 1,
+            "published_at": "2026-10-29T23:21:05Z",
+            "release": {
+              "commit": "de114632b25d00045f597b72449922414abf26cc",
+              "kind": "github_release",
+              "repo": "Voltur792/photo-frame",
+              "tag": "v0.1.0"
+            },
+            "review": "unreviewed",
+            "version": "0.1.0"
+          }
+        ],
+        "repository_url": "https://github.com/Voltur792/photo-frame",
+        "source": {
+          "kind": "github",
+          "repo": "Voltur792/photo-frame"
+        },
+        "stars": 0,
+        "updated_at": "2026-10-29T23:21:05Z",
+        "version": "0.1.0"
+      },
+      {
         "added_at": "2026-10-25",
         "author": "Voltur",
         "capabilities": [
@@ -4641,6 +4702,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 117
+    "serial": 118
   }
 }

@@ -1,0 +1,25 @@
+{
+  "$comment": "Derived from Voltur792/photo-frame@v0.1.0 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "schema": "astra.registry.plugin/1",
+  "id": "photo-frame",
+  "name": "Photo Frame",
+  "summary": "A resizable photo frame on the Astra desktop: shows a photo folder as an animated slideshow with frame styles, captions and timed slides.",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "Voltur792/photo-frame"
+  },
+  "added_at": "2026-10-29",
+  "description": "A resizable photo frame on the Astra desktop: shows a photo folder as an animated slideshow with frame styles, captions and timed slides.",
+  "author": {
+    "name": "Voltur"
+  },
+  "icon": "icon.png",
+  "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "Фоторамка",
+      "summary": "Фоторамка на рабочем столе Astra: показываю папку с фото как анимированное слайдшоу со сменой кадров, стилями рамки и подписями — размер плитки меняется на сетке."
+    }
+  }
+}
