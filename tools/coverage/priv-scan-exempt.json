@@ -37,6 +37,30 @@
       "where": "commit-message",
       "code": "E_PRIV_HANDLE",
       "reason": "Fifth and sixth entries, one root event: the coordinator's commit that retired the baseline marker in bot/baseline.mjs (registry #443, 2026-10-15) named absent-scan's marker keyword bare in its message, and the merge commit carried the same PR text. It is the repository's own annotation keyword, not an identity, so it is cleared by ENTRY, as the fourth entry argues and for its reason: a rule would make that spelling writable unscanned. It is also the 'second commit message carrying the marker bare' the fourth entry named as the trigger to reconsider a rule; reconsidered, and the entry stands, because the fix is the convention it already states: write the keyword in backticks outside a marker line. moderation-coverage.yml was red on these from d0fd16b (2026-10-16) until this entry."
+    },
+    {
+      "commit": "89c3a66",
+      "where": "commit-message",
+      "code": "E_PRIV_UUID",
+      "reason": "The bot's own commit message, cleared by ENTRY: on 2026-10-29 the moderation commit composer listed every path it touched in the body, and a hold entry's path is named by its service_decision_id, a UUID; the operator's confirm subject named the id too. PRIV-2 exempts a UUID only in the `Service-Decision:` trailer, so the coverage canary was red from 02:59Z on these four commits (89c3a66, 7f1e682, 8bd29d5, abec3f9). The id is a decision id, not a person's, and it is already in the commit's own trailer. Fixed at the composer the same day: the body writes `<Service-Decision>` in its place and the operator's subject drops it (bot/moderation-run.mjs composeCommit; tools/operator.mjs answerHold), and bot/tests/moderation-run.test.mjs scans every message the bot and the operator compose with the canary's own rules."
+    },
+    {
+      "commit": "7f1e682",
+      "where": "commit-message",
+      "code": "E_PRIV_UUID",
+      "reason": "The bot's own commit message, cleared by ENTRY: on 2026-10-29 the moderation commit composer listed every path it touched in the body, and a hold entry's path is named by its service_decision_id, a UUID; the operator's confirm subject named the id too. PRIV-2 exempts a UUID only in the `Service-Decision:` trailer, so the coverage canary was red from 02:59Z on these four commits (89c3a66, 7f1e682, 8bd29d5, abec3f9). The id is a decision id, not a person's, and it is already in the commit's own trailer. Fixed at the composer the same day: the body writes `<Service-Decision>` in its place and the operator's subject drops it (bot/moderation-run.mjs composeCommit; tools/operator.mjs answerHold), and bot/tests/moderation-run.test.mjs scans every message the bot and the operator compose with the canary's own rules."
+    },
+    {
+      "commit": "8bd29d5",
+      "where": "commit-message",
+      "code": "E_PRIV_UUID",
+      "reason": "The bot's own commit message, cleared by ENTRY: on 2026-10-29 the moderation commit composer listed every path it touched in the body, and a hold entry's path is named by its service_decision_id, a UUID; the operator's confirm subject named the id too. PRIV-2 exempts a UUID only in the `Service-Decision:` trailer, so the coverage canary was red from 02:59Z on these four commits (89c3a66, 7f1e682, 8bd29d5, abec3f9). The id is a decision id, not a person's, and it is already in the commit's own trailer. Fixed at the composer the same day: the body writes `<Service-Decision>` in its place and the operator's subject drops it (bot/moderation-run.mjs composeCommit; tools/operator.mjs answerHold), and bot/tests/moderation-run.test.mjs scans every message the bot and the operator compose with the canary's own rules."
+    },
+    {
+      "commit": "abec3f9",
+      "where": "commit-message",
+      "code": "E_PRIV_UUID",
+      "reason": "The bot's own commit message, cleared by ENTRY: on 2026-10-29 the moderation commit composer listed every path it touched in the body, and a hold entry's path is named by its service_decision_id, a UUID; the operator's confirm subject named the id too. PRIV-2 exempts a UUID only in the `Service-Decision:` trailer, so the coverage canary was red from 02:59Z on these four commits (89c3a66, 7f1e682, 8bd29d5, abec3f9). The id is a decision id, not a person's, and it is already in the commit's own trailer. Fixed at the composer the same day: the body writes `<Service-Decision>` in its place and the operator's subject drops it (bot/moderation-run.mjs composeCommit; tools/operator.mjs answerHold), and bot/tests/moderation-run.test.mjs scans every message the bot and the operator compose with the canary's own rules."
     }
   ]
 }

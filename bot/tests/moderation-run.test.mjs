@@ -96,6 +96,7 @@ import { loadRecords } from "../../tools/lib/sources.mjs";
 import * as holdsModule from "../lib/holds.mjs";
 import * as moderationRun from "../moderation-run.mjs";
 import { operatorAct } from "../../tools/operator.mjs";
+import { shapeFindings, withoutAuthorship, withoutUuidTrailers } from "../../tools/priv-scan.mjs";
 // Contract 3.0.0's (MOD-56), off the namespaces for the same reason.
 import * as compiler from "../lib/compile-decision.mjs";
 import { countWindow } from "../lib/takedown-bound.mjs";
@@ -3484,6 +3485,56 @@ test("R1: the push runs only after green gates, and `report` runs whenever a pus
   const report = /^ {2}report:\n(?:.*\n)*? {4}if: (.*)$/m.exec(yaml)?.[1] ?? "";
   assert.match(report, /needs\.commit\.outputs\.main_commit != ''/,
     "report does not run after a push the commit job then failed on; the service then lists an applied decision again");
+});
+// R3 (2026-10-29): the coverage canary went red on the bot's own commits —
+// 89c3a66, 7f1e682, 8bd29d5, abec3f9 — because the moderation body listed hold
+// paths named by a UUID and the operator's subject named it too. PRIV-2
+// exempts a UUID only in the `Service-Decision:` trailer. This runs the
+// canary's own message rule over every commit a moderation run and the
+// operator compose on a fixture: a hold entered, confirmed, released, a hold
+// cancelled, a stray removed, a revert.
+test("R3: every commit message the bot and the operator compose passes priv-scan's own message rule", async () => {
+  const root = withDocuments(estate({ bound: false }));
+  withRemote(root);
+  const run = async (entries, now) => {
+    const job = await commitJob(root, { entries, now: new Date(now) });
+    assert.equal(job.code, 0, job.logs.join("\n"));
+    if (job.paths.length) {
+      const step = runApply(root, dated(now));
+      assert.equal(step.status, 0, `${now}: ${step.stderr} ${step.stdout}`);
+    }
+  };
+  const operator = (act, sdi, now) => {
+    const done = operatorAct({ root, act, serviceDecisionId: sdi, now: new Date(now), runId: "7" });
+    sh(["add", "--", ...done.paths], root);
+    sh(["commit", "-q", "-m", done.message], root, dated(now));
+    sh(["push", "-q", "origin", "HEAD:main"], root);
+  };
+  await run([removalOf(SDI)], "2026-09-20T12:00:00Z");                 // a hold entered
+  operator("confirm", SDI, "2026-09-20T12:10:00Z");                    // the operator's confirm
+  await run([], "2026-09-20T12:20:00Z");                               // the release
+  operator("revert", SDI, "2026-09-20T12:30:00Z");                     // a revert of what it applied
+  await run([removalOf(SDI2)], "2026-09-21T12:40:00Z");                // a second hold, a day later …
+  operator("cancel", SDI2, "2026-09-21T12:50:00Z");                    // … cancelled by the operator
+  await run([], "2026-09-21T13:00:00Z");                               // the cancel commit
+  // A stray: an entry for a decision the log already carries.
+  writeAll(root, { [holdEntryPath(SDI)]: removalEntry(SDI) });
+  commitAt(root, "2026-09-21T13:10:00Z", "fixture: a stray hold entry");
+  sh(["push", "-q", "origin", "HEAD:main"], root);
+  await run([], "2026-09-21T13:20:00Z");                               // the stray's removal
+
+  const shas = sh(["log", "--format=%H %s", "HEAD"], root).split("\n").filter(Boolean)
+    .filter((l) => !/ (fixture|hand )/.test(l)).map((l) => l.split(" ")[0]);
+  assert.ok(shas.length >= 8, `the fixture composed ${shas.length} commit(s); the walk above makes at least 8`);
+  const findings = [];
+  for (const sha of shas) {
+    const message = sh(["log", "-1", "--format=%B", sha], root);
+    for (const f of shapeFindings(withoutUuidTrailers(withoutAuthorship(message)), { roles: new Set() })) {
+      findings.push(`${sha.slice(0, 8)} ${message.split("\n")[0]}: ${f.code}`);
+    }
+  }
+  assert.deepEqual(findings, [],
+    "a composed commit message carries a value PRIV-2's canary reports; a UUID belongs only in the `Service-Decision:` trailer");
 });
 
 

@@ -169,7 +169,10 @@ function answerHold(root, act, sdi, { at, run }) {
   if (problems.length) throw new Error(`refusing to write a hold record the directory would refuse: ${problems.join("; ")}`);
   const touched = [];
   write(root, `${HOLDS}/${sdi}.${act}.json`, record, touched);
-  return { touched, subject: `operator: ${act} the moderation hold ${sdi}`, service_decision: null };
+  // The id rides in the `Service-Decision:` trailer and nowhere else: PRIV-2's
+  // scan exempts a UUID only there (tools/priv-scan.mjs), and until 2026-10-29
+  // this subject carried it, which turned the coverage canary red (7f1e682).
+  return { touched, subject: `operator: ${act} a moderation hold (MOD-52)`, service_decision: sdi };
 }
 
 // ── revert ──────────────────────────────────────────────────────────────────

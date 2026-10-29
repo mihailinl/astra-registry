@@ -855,6 +855,9 @@ export function composeTrailers({ run, decisions = [] }) {
   return lines;
 }
 
+/** A UUID inside a path, which a commit body must not quote (PRIV-2). */
+const UUID_IN_PATH = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g;
+
 /**
  * One commit for the whole run (BOT-73), or none at all.
  *
@@ -929,9 +932,15 @@ export function composeCommit({ compiled, held = [], submissions = [], documents
     settled.length ? `${settled.length} settled result(s) recorded` : null,
   ].filter(Boolean).join(", ");
 
+  // The body lists the paths with every UUID in them — a hold entry's and its
+  // records' names are the decision's id — written as `<Service-Decision>`.
+  // PRIV-2's scan exempts a UUID only in the `Service-Decision:` trailers below
+  // (tools/priv-scan.mjs), and until 2026-10-29 this body quoted each one,
+  // which turned the coverage canary red on every commit that touched a hold
+  // (89c3a66, 8bd29d5, abec3f9).
   const message = decisionCommitMessage({
     subject: subject ?? `registry: moderation (${what})`,
-    body: [...paths].sort().map((p) => `- ${p}`).join("\n"),
+    body: [...paths].sort().map((p) => `- ${p.replace(UUID_IN_PATH, "<Service-Decision>")}`).join("\n"),
     run,
   });
   // `decisionCommitMessage` renders one of each of BOT-37's five; the
