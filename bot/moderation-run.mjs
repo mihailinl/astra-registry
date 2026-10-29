@@ -1017,6 +1017,30 @@ export function regenerateDocuments({ root = REPO_ROOT, paths = [] } = {}) {
 
 // ── holds: entering one ─────────────────────────────────────────────────────
 
+/**
+ * The generated documents at HEAD, compared with what the generators produce
+ * for HEAD's tree — the list at `resolveSerial` of HEAD, which counts HEAD
+ * itself. Empty when both agree. Read by `--job documents-at-head`.
+ */
+export function documentsAtHead({ root = REPO_ROOT } = {}) {
+  const problems = [];
+  const want = [
+    [INDEX_FILE, buildIndex({ root })],
+    [REVOCATIONS_FILE, buildRevocations({ root, serial: listSerialAtHead({ root, pending: false }) })],
+  ];
+  for (const [rel, doc] of want) {
+    const full = path.join(root, ...rel.split("/"));
+    const have = fs.existsSync(full) ? fs.readFileSync(full, "utf8") : null;
+    if (have === null) continue;
+    if (have !== stableStringify(doc)) {
+      problems.push(`${rel} at HEAD is not what the generator produces there` +
+        (rel === REVOCATIONS_FILE ? ` at serial ${doc.signed.serial}` : "") +
+        "; the commit was made against a `main` that has since moved, and pushing it would publish a document the signer disagrees with");
+    }
+  }
+  return problems;
+}
+
 /** `state/holds`, repository-relative with `/`, whatever the platform joins with. */
 export const HOLDS_PREFIX = HOLDS_DIR.split(path.sep).join("/");
 
@@ -2604,6 +2628,22 @@ export async function main(argv = [], {
     });
     fs.writeFileSync(arg(argv, "--out") ?? "verdict.json", `${JSON.stringify(verdict, null, 2)}\n`);
     log.log(`ok    ${alarms.length} MOD-8 alarm(s) for ${entries.length} entr(ies)`);
+    return 0;
+  }
+
+  if (job === "documents-at-head") {
+    // R6 (2026-10-29): the `apply` step's retry after a rejected push rebases
+    // this run's commit onto the `main` that moved under it, and then asks
+    // this: are the two generated documents at the REBASED commit exactly what
+    // the generators produce there, the withdrawal list at the serial that
+    // commit gets? A rebase over a commit that touched `tools/revocations`
+    // moves the list's serial (`resolveSerial`), and the committed list would
+    // then claim a serial the signer does not give it — so the push is refused
+    // and the next run, idempotent by `service_decision_id`, does the work.
+    const problems = documentsAtHead({ root });
+    for (const p of problems) log.error(`::error::${p}`);
+    if (problems.length) return 1;
+    log.log("ok    both generated documents are the generators' own at HEAD, the list at HEAD's serial");
     return 0;
   }
 

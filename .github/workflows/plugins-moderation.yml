@@ -499,8 +499,37 @@ jobs:
               echo "::warning::DRY_RUN is '${DRY_RUN:-}', not exactly \"false\": this commit stays on the runner and nothing is pushed"
               git show --stat --format='would push %H' HEAD
             else
-              git push origin HEAD:main
-              main_commit=$(git rev-parse HEAD)
+              # R6 (2026-10-29): another writer of `main` (ingest, the
+              # operator) can land between this job's checkout and its push;
+              # run 40274912876 lost a decision for a cycle on a non-fast-
+              # forward. So a rejected push fetches, rebases this one commit
+              # onto the new `main`, re-checks the rebased commit — the tree
+              # rule, and both generated documents at the serial it now gets
+              # (`--job documents-at-head`) — and pushes again, three times at
+              # most. A conflict or a failed re-check pushes nothing: the next
+              # run does the work again, and applies nothing twice (R1). Not
+              # one shared `concurrency` group across the writers: GitHub keeps
+              # one PENDING run per group and cancels the older, so an
+              # operator's dispatch could be cancelled by a moderation tick.
+              for attempt in 1 2 3; do
+                if git push origin HEAD:main; then
+                  main_commit=$(git rev-parse HEAD)
+                  break
+                fi
+                if [ "$attempt" = 3 ]; then
+                  echo "::error::main moved under this run three times; nothing is pushed, and the next run does the work again"
+                  exit 1
+                fi
+                echo "::warning::the push was rejected (attempt ${attempt}); rebasing this commit onto the main that moved"
+                git fetch origin main
+                if ! git rebase origin/main; then
+                  git rebase --abort || true
+                  echo "::error::this commit does not rebase cleanly onto the new main; nothing is pushed, and the next run does the work again"
+                  exit 1
+                fi
+                node tools/lib/tree-modes.mjs HEAD
+                node "${ASTRA_BOT_DIR:-.}/bot/moderation-run.mjs" --job documents-at-head --registry-dir .
+              done
             fi
           fi
           {

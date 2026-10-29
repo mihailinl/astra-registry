@@ -1672,7 +1672,7 @@ function applyStep() {
     body.push(lines[j].slice(indent + 2));
   }
   const script = `${body.join("\n").trimEnd()}\n`;
-  assert.match(script, /^\s*git push origin HEAD:main$/m, "the extracted step does not push; the anchor found something else");
+  assert.match(script, /\bgit push origin HEAD:main\b/m, "the extracted step does not push; the anchor found something else");
   return script;
 }
 
@@ -1752,7 +1752,10 @@ function runApply(root, env = {}) {
   // `DRY_RUN` is the workflow's, and the live value is the default here so
   // that every case below pushes as the committed file does; a case that
   // passes `DRY_RUN: undefined` runs the step with it unset.
-  const stepEnv = { ...fixtureEnv(root), DRY_RUN: "false", ...env, GITHUB_OUTPUT: output };
+  // `ASTRA_BOT_DIR`: where the step finds this repository's bot when it is run
+  // inside a fixture, for the retry's re-check (R6). Unset on a runner, where
+  // the checkout is the bot.
+  const stepEnv = { ...fixtureEnv(root), DRY_RUN: "false", ASTRA_BOT_DIR: REPO, ...env, GITHUB_OUTPUT: output };
   for (const [k, v] of Object.entries(stepEnv)) if (v === undefined) delete stepEnv[k];
   const step = spawnSync("bash", ["-e", file], { cwd: root, encoding: "utf8", env: stepEnv });
   return { ...step, outputs: readOutputs(output) };
@@ -1768,6 +1771,62 @@ function runApply(root, env = {}) {
 // `origin` to push to, in both directions: nothing is a clean no-op, and
 // something is still committed and pushed. It also covers the two states that
 // must NOT read as nothing.
+// R6 (2026-10-29): two writers race on `main`. Run 40274912876's push was
+// rejected as a non-fast-forward and its decision waited a cycle. The step now
+// fetches, rebases its one commit, re-checks it and pushes again; a conflict,
+// or a rebased commit whose withdrawal list no longer carries the serial it
+// lands at, pushes nothing.
+function concurrentPush(origin, files, message, when) {
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-other-"));
+  tmpRoots.push(other);
+  sh(["clone", "-q", origin, other], os.tmpdir());
+  sh(["config", "user.email", "fixture@example.invalid"], other);
+  sh(["config", "user.name", "fixture"], other);
+  writeAll(other, files);
+  sh(["add", "-A"], other);
+  sh(["commit", "-q", "-m", message], other, dated(when));
+  sh(["push", "-q", "origin", "HEAD:main"], other);
+  return headOf(origin);
+}
+
+test("R6: a push rejected because main moved is rebased, re-checked and pushed; a conflict or a moved serial pushes nothing", async () => {
+  // Main moves on a file this commit does not touch: rebased and pushed.
+  const root = withDocuments(estate());
+  const origin = withRemote(root);
+  const job = await commitJob(root, { entries: [delistOf(SDI)] });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  const theirs = concurrentPush(origin, { "README.md": "an ingest landed first\n" }, "registry: publish (plugins ingest)", "2026-09-20T12:31:00Z");
+  const step = runApply(root);
+  assert.equal(step.status, 0, `the rebased retry did not push: ${step.stderr} ${step.stdout}`);
+  const landed = headOf(origin);
+  assert.notEqual(landed, theirs, "the moderation commit never landed");
+  assert.equal(step.outputs.main_commit, landed, "`main_commit` is not the rebased commit that landed");
+  assert.equal(sh(["rev-parse", `${landed}^`], root).trim(), theirs, "the moderation commit was not rebased onto the commit that beat it");
+  assert.match(sh(["log", "-1", "--format=%B", landed], root), new RegExp(`^Service-Decision: ${SDI}$`, "m"));
+
+  // Main moved on the same document: the rebase conflicts, nothing is pushed.
+  const clash = withDocuments(estate());
+  const clashOrigin = withRemote(clash);
+  assert.equal((await commitJob(clash, { entries: [delistOf(SDI)] })).code, 0);
+  const index = JSON.parse(fs.readFileSync(path.join(clash, INDEX_FILE), "utf8"));
+  const moved = concurrentPush(clashOrigin, { [INDEX_FILE]: { ...index, $comment: "another writer" } }, "registry: publish", "2026-09-20T12:31:00Z");
+  const refused = runApply(clash);
+  assert.notEqual(refused.status, 0, "a commit that does not rebase cleanly was pushed");
+  assert.equal(headOf(clashOrigin), moved, "something was pushed over the conflicting commit");
+
+  // Main moved under the withdrawal list's serial: rebased cleanly, refused by the re-check.
+  const serial = withDocuments(estate());
+  const serialOrigin = withRemote(serial);
+  const revoke = decision({ code: "M_REVOKE", category: "security_defect", severity: "high", action: "block_install", moderator: "amoderator", versions: ["1.0.0"] });
+  assert.equal((await commitJob(serial, { entries: [revoke] })).code, 0);
+  const advanced = concurrentPush(serialOrigin, { "tools/revocations/README.md": "a note beside the advisories\n" }, "docs", "2026-09-20T12:31:00Z");
+  const stale = runApply(serial);
+  assert.notEqual(stale.status, 0,
+    "a rebased commit whose withdrawal list claims a serial the landing commit does not get was pushed");
+  assert.match(`${stale.stdout}${stale.stderr}`, /revocations\.json at HEAD is not what the generator produces/);
+  assert.equal(headOf(serialOrigin), advanced);
+});
+
 test("a run with nothing to commit leaves the commit step nothing to fail on", async () => {
   for (const shadow of [false, true]) {
     const root = estate();
