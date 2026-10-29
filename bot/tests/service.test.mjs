@@ -2838,6 +2838,21 @@ test("6.7.0 (MIG-10): a second tag under a binding a moderator approved is not h
     const after = second({ alerts: alertFor(), records: [baseline(), held, ended] });
     assert.ok(heldCodesOf(after).includes("R_FIRST_BINDING"), `an approval whose release was then ${state} (${reasons}) covered the next tag: ${after.kind} ${after.state} ${after.why ?? ""} ${after.wait?.code ?? ""}`);
   }
+  // Re-review of #480: the rejection or stop names ANOTHER fingerprint of the
+  // approved release's submission (assets re-uploaded under the same tag),
+  // or none at all. Matched by submission, and by repository id and tag.
+  for (const [what, ended] of [
+    ["an M_REJECT naming the submission's other fingerprint", { submission_id: P.sid2, fingerprint: "6".repeat(16), state: "refused", reasons: ["M_REJECT"] }],
+    ["a stop of the submission naming no fingerprint", { submission_id: P.sid2, state: "stopped", reasons: ["A_STOP"] }],
+    ["a stop of the same tag of the same repository id", { submission_id: "0192f1c2-3b4a-7c5d-8e6f-1a2b3c4d5e99", tag: P.tag, repository_id: P.rid, state: "stopped", reasons: ["A_STOP"] }],
+  ]) {
+    const rec = { decision_id: "7".repeat(32), decided_at: hoursBefore(P.now, 20), plugin_id: P.id, ...ended };
+    const after = second({ alerts: alertFor(), records: [baseline(), held, rec] });
+    assert.ok(heldCodesOf(after).includes("R_FIRST_BINDING"), `${what} left the cover standing: ${after.kind} ${after.state ?? ""}`);
+  }
+  // The control: a bot refusal of another submission's bytes ends nothing.
+  const unrelated = second({ alerts: alertFor(), records: [baseline(), held, { decision_id: "8".repeat(32), submission_id: "0192f1c2-3b4a-7c5d-8e6f-1a2b3c4d5e98", tag: "v9.9.9", repository_id: P.rid, fingerprint: "9".repeat(16), state: "refused", reasons: ["E_DERIVED_LISTING_INVALID"], decided_at: hoursBefore(P.now, 20) }] });
+  assert.equal(unrelated.state, "published", `an unrelated refusal ended the cover: ${unrelated.kind}`);
   const otherToken = second({ alerts: alertFor({ token_hash: "4".repeat(16) }) });
   assert.ok(heldCodesOf(otherToken).includes("R_FIRST_BINDING"), "an approval of another binding token covered this one");
   const oldAlert = second({ alerts: alertFor({ token_hash: undefined }) });

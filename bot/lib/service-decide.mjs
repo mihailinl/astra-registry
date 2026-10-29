@@ -575,6 +575,17 @@ export function firstBindingCleared({ actor, verdict, lineHash, records = [], al
     const held = records.find((r) => r?.decision_id === alert.held_decision_id && r?.state === "held");
     if (!held || held.fingerprint !== fp || !(held.reasons ?? []).includes("R_FIRST_BINDING")) continue;
     if (held.plugin_id !== pluginId || held.repository_id !== ids.repository_id || held.repository_owner_id !== ids.repository_owner_id) continue;
+    // The same rule for the SUBMISSION, not only the fingerprint (re-review of
+    // #480): a stop or an `M_REJECT` record names one fingerprint of its
+    // submission (`terminalSubmissionRecord` records the first, and a stop
+    // may carry none), so re-uploading assets under the same tag leaves the
+    // approved fingerprint unnamed. A `stopped` record, or a `refused` one
+    // carrying `M_REJECT`, of the held record's submission — or, as
+    // `terminalOnMain` matches, a stop of the same tag of the same repository
+    // id — ends the cover.
+    const sameRelease = (r) => (isStr(held.submission_id) && r?.submission_id === held.submission_id)
+      || (isStr(held.tag) && r?.tag === held.tag && r?.repository_id === held.repository_id);
+    if (records.some((r) => sameRelease(r) && (r.state === "stopped" || (r.state === "refused" && (r.reasons ?? []).includes("M_REJECT"))))) continue;
     if (!isTime(alert.delivered_at)) continue;
     const okd = oks?.get(fp) && okAnswers({ ok: oks.get(fp), record: alert, fingerprint: fp, digest: alert.digest, heldDecisionId: alert.held_decision_id });
     const windowEndsAt = okd ? alert.delivered_at : iso(new Date(new Date(alert.delivered_at).getTime() + OPERATOR_WINDOW_HOURS * HOUR_MS));
