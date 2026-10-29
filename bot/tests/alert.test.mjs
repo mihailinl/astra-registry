@@ -33,6 +33,7 @@ import {
   alertDecision,
   rfc3339,
   runAlert,
+  signState,
   stepOutputs,
 } from "../alert.mjs";
 import { postHeartbeat } from "../heartbeat.mjs";
@@ -1154,6 +1155,9 @@ await test("the workflow maps exactly the table's credentials, on the reach step
 // message daily for nine days. Keyed by (check, code, id): at once on turning
 // red or on a new code or id, then at most once a day, and "resolved" once.
 
+/** The channel, and the state's signing key (review of #480): what a state alert job holds. */
+const KEYED = { ...ONE_GROUP, ASTRA_ALERT_STATE_HMAC_KEY: "k".repeat(40) };
+
 function counting() {
   const texts = [];
   const fetchImpl = async (url, init) => {
@@ -1170,7 +1174,7 @@ await test("R4: ten reds in a row page once; a new code pages once more; green s
     const api = counting();
     const at = (min) => new Date(Date.parse("2026-10-29T03:00:00Z") + min * 60_000);
     const send = (verdict, min) =>
-      runAlert({ verdict, env: ONE_GROUP, ifRed: true, fetchImpl: api.fetchImpl, log: quiet, stateFile, now: at(min) });
+      runAlert({ verdict, env: KEYED, ifRed: true, fetchImpl: api.fetchImpl, log: quiet, stateFile, now: at(min) });
     for (let i = 0; i < 10; i++) {
       const out = await send(VERDICT, i * 6);
       assert.equal(out.code, 0);
@@ -1250,7 +1254,7 @@ function compositeLine(dir, line, env = {}) {
   return outputsOf(fs.readFileSync(out, "utf8"));
 }
 
-async function wiredRun({ cache, verdict, api, now }) {
+async function wiredRun({ cache, verdict, api, now, keyEnv = KEYED }) {
   // `<alert job>-state`: a fresh runner, the cache restored into it (or not).
   const pre = fs.mkdtempSync(path.join(REPO, ".alert-wired-pre-"));
   const post = fs.mkdtempSync(path.join(REPO, ".alert-wired-post-"));
@@ -1265,7 +1269,7 @@ async function wiredRun({ cache, verdict, api, now }) {
     // The alert job: the action's step, `printf '%s' "$ASTRA_ALERT_STATE" > file`.
     const stateFile = path.join(job, "astra-alert-state.json");
     fs.writeFileSync(stateFile, state);
-    const out = await runAlert({ verdict, env: ONE_GROUP, ifRed: true, fetchImpl: api.fetchImpl, log: quiet, stateFile, now });
+    const out = await runAlert({ verdict, env: keyEnv, ifRed: true, fetchImpl: api.fetchImpl, log: quiet, stateFile, now });
     assert.equal(out.code, 0, out.problems.join("; "));
     const outputs = outputsOf(stepOutputs(out, stateFile));
     // `<alert job>-save`, only when the alert job says the state moved.
@@ -1352,9 +1356,41 @@ await test("R4 wired: no cache, an unreadable one, a forged handoff or a state f
       pairs: alertDecision(VERDICT, { checks: {} }, { now }).state.checks[VERDICT.check].pairs,
       first_red: "9999-01-01T00:00:00Z", last_sent: "9999-01-01T00:00:00Z",
     } } };
-    fs.writeFileSync(path.join(cache, "state.json"), JSON.stringify(future));
+    fs.writeFileSync(path.join(cache, "state.json"), JSON.stringify(signState(future, KEYED.ASTRA_ALERT_STATE_HMAC_KEY)));
     await wiredRun({ cache, verdict: VERDICT, api, now: new Date(now.getTime() + 120_000) });
     assert.equal(api.texts.length, 3, "a state that says it paged in the future quieted a red verdict");
+    // Review of #480: a state planted in the cache by a job without the key.
+    // It names this check as paged a minute ago, which would quiet the page.
+    const planted = { schema: "astra.registry.alert-state/1", checks: { [VERDICT.check]: {
+      pairs: future.checks[VERDICT.check].pairs, first_red: "2026-10-29T03:00:00Z", last_sent: "2026-10-29T03:02:00Z",
+    } } };
+    for (const [what, doc] of [
+      ["unsigned", planted],
+      ["signed with another key", signState(planted, "x".repeat(40))],
+      ["signed, then edited", { ...signState(planted, KEYED.ASTRA_ALERT_STATE_HMAC_KEY), checks: { ...planted.checks, extra: { pairs: [], first_red: "2026-10-29T03:00:00Z", last_sent: "2026-10-29T03:00:00Z" } } }],
+    ]) {
+      const before = api.texts.length;
+      fs.writeFileSync(path.join(cache, "state.json"), JSON.stringify(doc));
+      await wiredRun({ cache, verdict: VERDICT, api, now: new Date(now.getTime() + 180_000) });
+      assert.equal(api.texts.length, before + 1, `a forged state (${what}) quieted a red verdict`);
+    }
+    // The genuine state of the same moment does quiet it: the control.
+    fs.writeFileSync(path.join(cache, "state.json"), JSON.stringify(signState(planted, KEYED.ASTRA_ALERT_STATE_HMAC_KEY)));
+    const quietBefore = api.texts.length;
+    await wiredRun({ cache, verdict: VERDICT, api, now: new Date(Date.parse("2026-10-29T03:05:00Z")) });
+    assert.equal(api.texts.length, quietBefore, "a genuinely signed state did not dedupe");
+    // With no key in the alert job every red pages, and nothing is saved.
+    const noKey = fs.mkdtempSync(path.join(REPO, ".alert-wired-cache-"));
+    try {
+      const n0 = api.texts.length;
+      for (let i = 0; i < 3; i++) await wiredRun({ cache: noKey, verdict: VERDICT, api, now: new Date(now.getTime() + i * 60_000), keyEnv: ONE_GROUP });
+      assert.equal(api.texts.length, n0 + 3, "with no signing key a red state was deduplicated");
+      assert.equal(fs.existsSync(path.join(noKey, "state.json")), false, "a state was saved with no key to sign it");
+      for (let i = 0; i < 2; i++) await wiredRun({ cache: noKey, verdict: VERDICT, api, now: new Date(now.getTime() + i * 60_000), keyEnv: { ...ONE_GROUP, ASTRA_ALERT_STATE_HMAC_KEY: "short" } });
+      assert.equal(api.texts.length, n0 + 5, "a key too short to be one deduplicated");
+    } finally {
+      fs.rmSync(noKey, { recursive: true, force: true });
+    }
     // The save job refuses anything but a state document, and keeps the entry it had.
     const post = fs.mkdtempSync(path.join(REPO, ".alert-wired-post-"));
     try {

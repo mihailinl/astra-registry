@@ -21,7 +21,7 @@ import test from "node:test";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 
 import { OPTIONAL_SECRETS, REQUIRED_SECRETS } from "../alert.mjs";
-import { CHECKS, alertsEnvironmentSecrets, optionalAlertsSecrets, secretName } from "../lib/alert-checks.mjs";
+import { CHECKS, alertsEnvironmentSecrets, optionalAlertsSecrets, secretName, stateAlertsSecrets } from "../lib/alert-checks.mjs";
 import { cleanEnv, fixtureEnv } from "../../tools/lib/git-env.mjs";
 
 /**
@@ -595,6 +595,21 @@ test("R4: every alert job but the events takes its state only from a secret-less
   assert.equal(problems.join("\n"), "", "R4's memory is not wired as the guard above allows");
 });
 
+// Review of #480: the key that signs the state is mapped nowhere but the
+// alert jobs that take one — not into the secret-less state/save jobs, not
+// into any job outside environment `alerts`, not into the composite actions.
+test("R4: the alert state's signing key reaches only the alert jobs that take a state", () => {
+  const key = stateAlertsSecrets()[0];
+  const holders = allJobs().filter((j) => code(j).some((l) => new RegExp(`secrets\\.${key}\\b`, "i").test(l)));
+  assert.ok(holders.length >= 14, `${holders.length} jobs map ${key}; 14 state alert jobs did on 2026-10-29`);
+  const wrong = holders.filter((j) => !inAlerts(j) || /-(state|save)$/.test(j.job) || ALERT_EVENTS.has(`${j.file}/${j.job}`));
+  assert.deepEqual(wrong.map(where), [], `${key} is mapped into a job that takes no state or holds no alarm credential`);
+  for (const rel of [".github/actions/alert/action.yml", ".github/actions/alert-state/action.yml"]) {
+    const lines = fs.readFileSync(path.join(REPO, rel), "utf8").split("\n").filter((l) => !l.trim().startsWith("#"));
+    assert.deepEqual(lines.filter((l) => /\$\{\{[^}]*secrets\./.test(l)), [], `${rel} reads a secret itself`);
+  }
+});
+
 test("the alert-state action holds no secret and sends nothing", () => {
   const src = fs.readFileSync(path.join(REPO, ".github", "actions", "alert-state", "action.yml"), "utf8");
   const lines = src.split("\n").filter((l) => !l.trim().startsWith("#"));
@@ -770,8 +785,15 @@ test("an `alerts` job maps the channel's secrets and no ping URL that is not its
         );
       }
     }
+    // R4's signing key: only in an alert job that takes a state, which the
+    // R4 test below names by its `state:` input. Anywhere else it is reach.
+    const takesState = code(job).some((l) => /^\s+state:\s*\$\{\{\s*needs\.[A-Za-z0-9_-]+-state\.outputs\.state\s*\}\}/.test(l));
+    for (const secret of stateAlertsSecrets()) {
+      if (named.has(secret) && !takesState) problems.push(`${where(job)} maps ${secret} and takes no alert state; the key signs a state, and holding it without one is reach`);
+      if (!named.has(secret) && takesState) problems.push(`${where(job)} takes an alert state and does not map ${secret}, so the state is never trusted and every red pages`);
+    }
     for (const secret of named) {
-      if (!known.has(secret)) {
+      if (!known.has(secret) && !stateAlertsSecrets().includes(secret)) {
         problems.push(`${where(job)} maps ${secret}, which is not a secret environment \`alerts\` holds`);
       }
     }

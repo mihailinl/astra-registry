@@ -238,6 +238,9 @@ jobs:
       ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
       ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
       ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      # R4: signs and verifies the once-per-state memory (review of #480);
+      # absent, every red pages and nothing is saved.
+      ASTRA_ALERT_STATE_HMAC_KEY: ${{ secrets.ASTRA_ALERT_STATE_HMAC_KEY }}
       ASTRA_DEADMAN_URL_DETECTORS: ${{ secrets.ASTRA_DEADMAN_URL_DETECTORS }}
     steps:
       - uses: actions/checkout@v4

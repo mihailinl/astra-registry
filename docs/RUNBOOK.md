@@ -69,7 +69,10 @@ the same state; green after a page sends "resolved". Approval alerts, the
 moderation and ingest alarms, the weekly drill and a refused operator act
 page every time. A page you expected and did not get: the state is in the
 Actions cache under `astra-alert-state-<workflow>-<job>-*`; deleting those
-entries makes the next red page. It still publishes marked not reviewed: an approval is not a
+entries makes the next red page. The state is signed with
+`ASTRA_ALERT_STATE_HMAC_KEY`, a secret of environment `alerts` (at least 32
+characters, created by the owner); without it, or with a state that does not
+verify, every red pages and nothing is remembered. It still publishes marked not reviewed: an approval is not a
 review.
 
 **What only an operator can do, and where.** Nothing in the normal course.

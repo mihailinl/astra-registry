@@ -46,6 +46,7 @@
 // check RC-R1-0 puts in ops.7 asserts that `ASTRA_ALERT_TELEGRAM_TOKEN` is
 // neither of those two.
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -209,6 +210,19 @@ async function sendMessage({ token, chatId, text, apiBase, fetchImpl }) {
 // operator's refused act (each refusal is somebody trying). A state can only
 // QUIET a red verdict whose every (code, id) was paged in the last 24 hours,
 // at a time not in the future; a state from the future pages.
+//
+// **The state is signed** (review of #480, MEDIUM). Any job on the default
+// branch can save an Actions cache entry under any key, ingest's `check` —
+// "the job to assume exploited" — included, so an unsigned state could be
+// planted to silence a new alarm for a day. The state carries an HMAC-SHA256
+// (`mac`) under `ASTRA_ALERT_STATE_HMAC_KEY`, a secret held only in
+// environment `alerts` and mapped only into the alert jobs that take a state
+// (bot/tests/workflows.test.mjs). The secret-less jobs either side carry the
+// signed blob and cannot check it; only the alert job verifies it. A missing
+// key, a key under 32 characters, a missing or wrong `mac`: the state is
+// "never paged", the alarm goes out, and nothing is saved. What a signature
+// cannot stop is a REPLAY of an older genuine state of the same check, which
+// can quiet only pairs it shows paged within the last 24 hours.
 
 /** How long the same red state goes without a repeat page. */
 export const REPEAT_HOURS = 24;
@@ -218,6 +232,49 @@ const pairsOf = (verdict) => {
   const ids = [...(verdict.ids ?? []), ...(verdict.hexes ?? [])];
   return codes.flatMap((c) => (ids.length ? ids : [""]).map((i) => `${c}|${i}`)).sort();
 };
+
+/** The signing key, or null when it is absent or too short to be one: then nothing is trusted or saved. */
+export function stateKey(env = process.env) {
+  const key = env.ASTRA_ALERT_STATE_HMAC_KEY;
+  return typeof key === "string" && key.trim().length >= 32 ? key : null;
+}
+
+const STATE_SCHEMA = "astra.registry.alert-state/1";
+const macOf = (doc, key) => crypto.createHmac("sha256", key)
+  .update(`${STATE_SCHEMA}\n${JSON.stringify({ schema: doc.schema, checks: doc.checks })}`).digest("hex");
+
+/** The state, signed: what the alert job writes and the save job stores. */
+export function signState(doc, key) {
+  const body = { schema: STATE_SCHEMA, checks: doc?.checks ?? {} };
+  return { ...body, mac: macOf(body, key) };
+}
+
+/** Does `doc` carry the shape of a signed state (what a secret-less job can check)? */
+export function signedShape(doc) {
+  return doc?.schema === STATE_SCHEMA && doc.checks && typeof doc.checks === "object" && !Array.isArray(doc.checks)
+    && typeof doc.mac === "string" && /^[0-9a-f]{64}$/.test(doc.mac);
+}
+
+/**
+ * The state the alert job may act on: the file's, when its `mac` verifies
+ * under `key`, and otherwise an empty one ("never paged"), so a forged, a
+ * replayed-from-elsewhere-shaped or an unsigned state pages.
+ */
+export function readSignedState(file, key) {
+  const empty = { schema: STATE_SCHEMA, checks: {} };
+  if (!key) return empty;
+  let doc;
+  try {
+    doc = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return empty;
+  }
+  if (!signedShape(doc)) return empty;
+  const want = Buffer.from(macOf(doc, key), "hex");
+  const have = Buffer.from(doc.mac, "hex");
+  if (want.length !== have.length || !crypto.timingSafeEqual(want, have)) return empty;
+  return { schema: STATE_SCHEMA, checks: doc.checks };
+}
 
 /** The state file: `{schema, checks: {<check>: {pairs, first_red, last_sent}}}`, or an empty one. */
 export function readAlertState(file) {
@@ -230,7 +287,14 @@ export function readAlertState(file) {
 
 /** The state as the one line a job output carries (`--emit-state`): always a whole, valid document. */
 export function stateLine(file) {
-  return JSON.stringify(readAlertState(file));
+  // The secret-less restore job cannot verify the signature, so it hands on
+  // what the cache held when it has a signed state's shape, and an empty
+  // (unsigned) state otherwise; the alert job decides whether to trust it.
+  try {
+    const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (signedShape(doc)) return JSON.stringify(doc);
+  } catch { /* absent or unreadable */ }
+  return JSON.stringify({ schema: STATE_SCHEMA, checks: {} });
 }
 
 /**
@@ -245,7 +309,9 @@ export function saveStateLine(text, file) {
   } catch {
     return false;
   }
-  if (doc?.schema !== "astra.registry.alert-state/1" || !doc.checks || typeof doc.checks !== "object" || Array.isArray(doc.checks)) return false;
+  // Signed or not saved: an unsigned document would be "never paged" when
+  // read back anyway, and saving it would only displace a signed one.
+  if (!signedShape(doc)) return false;
   fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`);
   return true;
@@ -350,11 +416,17 @@ export async function runAlert({
   // that had nothing to say is the difference between a red CI job and an
   // alarm that could not be rendered on the night it mattered.
   // R4: with a state file, the same state pages once (`alertDecision`).
-  const decided = stateFile ? alertDecision(verdict, readAlertState(stateFile), { now }) : null;
+  // Signed (review of #480): with no key nothing is trusted and nothing is
+  // saved, so every red pages — the failure is the safe one.
+  const key = stateKey(env);
+  if (stateFile && !key) log.error("::warning::ASTRA_ALERT_STATE_HMAC_KEY is not in this job, so the alert state is not trusted or saved and every red pages");
+  const decided = stateFile ? alertDecision(verdict, readSignedState(stateFile, key), { now }) : null;
+  let saved = false;
   const save = () => {
-    if (!decided?.changed) return;
+    if (!decided?.changed || !key) return;
     fs.mkdirSync(path.dirname(path.resolve(stateFile)), { recursive: true });
-    fs.writeFileSync(stateFile, `${JSON.stringify(decided.state, null, 2)}\n`);
+    fs.writeFileSync(stateFile, `${JSON.stringify(signState(decided.state, key), null, 2)}\n`);
+    saved = true;
   };
   if (decided?.act === "resolve") {
     try {
@@ -367,7 +439,7 @@ export async function runAlert({
     }
     save();
     log.log(`ok    ${verdict.check} is green again; "resolved" sent once`);
-    return { code: 0, delivered_at: null, copy_delivered: null, alerted: false, resolved: true, state_changed: true, problems: [] };
+    return { code: 0, delivered_at: null, copy_delivered: null, alerted: false, resolved: true, state_changed: saved, problems: [] };
   }
   if (ifRed && verdict.status !== "red") {
     log.log(`ok    verdict for ${verdict.check} is green; its grammar is sound and there is nothing to send`);
@@ -436,7 +508,7 @@ export async function runAlert({
   log.log(`ok    alarm delivered to the alarm chat at ${deliveredAt}; ${copySentence(env)}` +
     (decided ? ` (${decided.why})` : ""));
   if (copyDelivered === false) log.log("warn  the separate copy did not send; delivered_at stands");
-  return { code: 0, delivered_at: deliveredAt, copy_delivered: copyDelivered, alerted: true, state_changed: Boolean(decided), problems: [] };
+  return { code: 0, delivered_at: deliveredAt, copy_delivered: copyDelivered, alerted: true, state_changed: saved, problems: [] };
 }
 
 function parseArgs(argv) {
