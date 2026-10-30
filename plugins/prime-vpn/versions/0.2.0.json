@@ -1,0 +1,35 @@
+{
+  "$comment": "Derived from dwertyfa288/PrimeBoostVPN@v0.2.0. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "prime-vpn",
+  "version": "0.2.0",
+  "published_at": "2026-10-30T09:08:41Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "dwertyfa288/PrimeBoostVPN",
+    "tag": "v0.2.0",
+    "commit": "e0666b400f773eaa5a829ea490dba167dec17e95"
+  },
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://github.com/dwertyfa288/PrimeBoostVPN/releases/download/v0.2.0/prime-vpn-0.2.0-linux-x64.astraplugin",
+      "filename": "prime-vpn-0.2.0-linux-x64.astraplugin",
+      "sha256": "8f355bc59e5a076340579a9e41913c9ff240a327dd8b8fa084dd7d0b6142a51c",
+      "size": 37915542
+    },
+    "windows-x64": {
+      "url": "https://github.com/dwertyfa288/PrimeBoostVPN/releases/download/v0.2.0/prime-vpn-0.2.0-windows-x64.astraplugin",
+      "filename": "prime-vpn-0.2.0-windows-x64.astraplugin",
+      "sha256": "0608ff2af6c458a701e54b2e4546f0bea56e8993fcd96ecdadb3a36cf71ecafc",
+      "size": 34323451
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "actions",
+    "tools",
+    "ui_contributions"
+  ],
+  "permissions": {}
+}

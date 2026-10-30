@@ -3231,11 +3231,43 @@
         "license": "MIT",
         "name": "PrimeBoost VPN",
         "platform_downloads": {
-          "linux-x64": "https://github.com/dwertyfa288/PrimeBoostVPN/releases/download/v0.1.0/prime-vpn-0.1.0-linux-x64.astraplugin",
-          "windows-x64": "https://github.com/dwertyfa288/PrimeBoostVPN/releases/download/v0.1.0/prime-vpn-0.1.0-windows-x64.astraplugin"
+          "linux-x64": "https://github.com/dwertyfa288/PrimeBoostVPN/releases/download/v0.2.0/prime-vpn-0.2.0-linux-x64.astraplugin",
+          "windows-x64": "https://github.com/dwertyfa288/PrimeBoostVPN/releases/download/v0.2.0/prime-vpn-0.2.0-windows-x64.astraplugin"
         },
-        "readme": "# PrimeBoost VPN\n\nPrimeBoost VPN for Astra.\n\n## Features\n\n- Sign in with Google or Telegram; a new account is created automatically.\n- One-click connect: the fastest server is picked automatically.\n- Smart routing (local sites direct) or all traffic through the VPN.\n- Proxy mode by default; TUN mode and split tunneling for other apps.\n- Plans and payment inside the tab, free trial for new users.\n- Assistant tools and command steps to turn the VPN on and off.\n- Russian and English interface.\n\n## Build\n\nRequirements: Rust (stable), `astra-plugin` CLI.\n\n1. The VPN core (sing-box), `wintun.dll` and rule sets live in `core/` and are embedded into the plugin binary; on first connect they are unpacked into `data/core/`. `scripts/sync-core.ps1 -Source <path>` refreshes them from a desktop build.\n2. Server addresses are stored sealed in `endpoints.dat`. To change them, copy `endpoints.example.json` to `endpoints.local.json` (ignored by git), fill it in and run `python scripts/seal-endpoints.py`.\n3. Build and check:\n\n```\ncargo build --release\nastra-plugin check . --strict\nastra-plugin test .\n```\n\n## Layout\n\n| Path | Purpose |\n|------|---------|\n| `src/api.rs` | Account, subscription and key API |\n| `src/auth.rs` | Google and Telegram sign-in |\n| `src/trial.rs`, `src/device.rs` | Free trial bound to the device |\n| `src/billing.rs`, `src/billing_api.rs` | Plans and payment |\n| `src/commands.rs` | Assistant tools and command steps |\n| `src/vpn.rs` | Server selection, connection, monitoring |\n| `src/singbox_config.rs`, `src/split.rs` | sing-box configuration and split tunneling |\n| `src/runner.rs` | Elevated core launcher (Windows TUN), started as `prime_vpn --prime-runner` |\n| `src/core_assets.rs`, `core/` | Embedded VPN core and rule sets |\n| `src/endpoints.rs`, `endpoints.dat` | Sealed server addresses |\n| `ui/` | Astra tab |\n\n## Third-party\n\nThe VPN core is sing-box (GPL-3.0, https://github.com/SagerNet/sing-box). Windows TUN uses Wintun (https://www.wintun.net/). Their licences are in `core/`.\n\n## License\n\nMIT\n",
+        "readme": "# PrimeBoost VPN\n\nPrimeBoost VPN for Astra.\n\n## Features\n\n- Sign in with Google or Telegram; a new account is created automatically.\n- One-click connect: all servers are pinged in parallel within 3 s, the fastest is used, and the next one is tried if traffic does not pass within 4 s.\n- VLESS over TCP/RAW, WebSocket (early data), gRPC (gun/multi), HTTP/2, HTTPUpgrade and XHTTP with TLS or Reality.\n- Smart routing (local sites direct) or all traffic through the VPN.\n- Proxy mode by default; TUN mode and split tunneling for other apps.\n- Plans and payment inside the tab, free trial for new users.\n- Assistant tools and command steps to turn the VPN on and off.\n- Russian and English interface.\n\n## Build\n\nRequirements: Rust (stable), `astra-plugin` CLI.\n\n1. The VPN cores (sing-box, and Xray for XHTTP, gRPC multi, Reality over RAW/TCP/gRPC and TLS certificate pins), `wintun.dll` and rule sets live in `core/` and are embedded into the plugin binary; on first connect they are unpacked into `data/core/`. `scripts/sync-core.ps1 -Source <path>` refreshes them from a desktop build.\n2. Server addresses are stored sealed in `endpoints.dat`. To change them, copy `endpoints.example.json` to `endpoints.local.json` (ignored by git), fill it in and run `python scripts/seal-endpoints.py`.\n3. Build and check:\n\n```\ncargo build --release\nastra-plugin check . --strict\nastra-plugin test .\n```\n\n## Layout\n\n| Path | Purpose |\n|------|---------|\n| `src/api.rs` | Account, subscription and key API |\n| `src/auth.rs` | Google and Telegram sign-in |\n| `src/trial.rs`, `src/device.rs` | Free trial bound to the device |\n| `src/billing.rs`, `src/billing_api.rs` | Plans and payment |\n| `src/commands.rs` | Assistant tools and command steps |\n| `src/vpn.rs` | Server selection, connection, monitoring |\n| `src/singbox_config.rs`, `src/split.rs` | sing-box configuration and split tunneling |\n| `src/xray.rs` | Local Xray SOCKS bridge |\n| `src/runner.rs` | Elevated core launcher (Windows TUN), started as `prime_vpn --prime-runner` |\n| `src/core_assets.rs`, `core/` | Embedded VPN core and rule sets |\n| `src/endpoints.rs`, `endpoints.dat` | Sealed server addresses |\n| `ui/` | Astra tab |\n\n## Third-party\n\nThe VPN core is sing-box (GPL-3.0, https://github.com/SagerNet/sing-box). Windows TUN uses Wintun (https://www.wintun.net/). Their licences are in `core/`.\n\n## License\n\nMIT\n",
         "releases": [
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "prime-vpn-0.2.0-linux-x64.astraplugin",
+                "sha256": "8f355bc59e5a076340579a9e41913c9ff240a327dd8b8fa084dd7d0b6142a51c",
+                "size": 37915542,
+                "url": "https://github.com/dwertyfa288/PrimeBoostVPN/releases/download/v0.2.0/prime-vpn-0.2.0-linux-x64.astraplugin"
+              },
+              "windows-x64": {
+                "filename": "prime-vpn-0.2.0-windows-x64.astraplugin",
+                "sha256": "0608ff2af6c458a701e54b2e4546f0bea56e8993fcd96ecdadb3a36cf71ecafc",
+                "size": 34323451,
+                "url": "https://github.com/dwertyfa288/PrimeBoostVPN/releases/download/v0.2.0/prime-vpn-0.2.0-windows-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "actions",
+              "tools",
+              "ui_contributions"
+            ],
+            "permissions": {},
+            "protocol": 1,
+            "published_at": "2026-10-30T09:08:41Z",
+            "release": {
+              "commit": "e0666b400f773eaa5a829ea490dba167dec17e95",
+              "kind": "github_release",
+              "repo": "dwertyfa288/PrimeBoostVPN",
+              "tag": "v0.2.0"
+            },
+            "review": "unreviewed",
+            "version": "0.2.0"
+          },
           {
             "artifacts": {
               "linux-x64": {
@@ -3275,8 +3307,8 @@
           "repo": "dwertyfa288/PrimeBoostVPN"
         },
         "stars": 0,
-        "updated_at": "2026-10-28T07:58:23Z",
-        "version": "0.1.0"
+        "updated_at": "2026-10-30T09:08:41Z",
+        "version": "0.2.0"
       },
       {
         "added_at": "2026-10-27",
@@ -4702,6 +4734,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 118
+    "serial": 119
   }
 }
