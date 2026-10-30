@@ -154,7 +154,12 @@ permissions: {}
 # expires. Replacing a run that has not started yet is harmless, because it has
 # claimed nothing.
 concurrency:
-  group: plugins-ingest
+  # Renamed 2026-10-30 (was `plugins-ingest`): after GitHub's 14:31Z incident a run's environment job sat
+  # `waiting` with no reviewer and no timer, and GitHub refused cancel, force-cancel and delete,
+  # so the orphan held this group for good and every later run queued behind it. A new name is
+  # the only way past a run GitHub will not end; BOT-5's rule (one workflow-level group,
+  # cancel-in-progress: false) is unchanged.
+  group: plugins-ingest-2
   cancel-in-progress: false
 
 # Committed as `"true"` through R3's shadow, and read by every job that could
