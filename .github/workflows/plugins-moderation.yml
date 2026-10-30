@@ -141,7 +141,12 @@ permissions: {}
 # another ten minutes. Never killing a started run is what keeps that to ten
 # minutes rather than to an operator noticing.
 concurrency:
-  group: registry-moderation
+  # Renamed 2026-10-30 (was `registry-moderation`): after GitHub's 14:31Z incident a run's environment job sat
+  # `waiting` with no reviewer and no timer, and GitHub refused cancel, force-cancel and delete,
+  # so the orphan held this group for good and every later run queued behind it. A new name is
+  # the only way past a run GitHub will not end; BOT-5's rule (one workflow-level group,
+  # cancel-in-progress: false) is unchanged.
+  group: registry-moderation-2
   cancel-in-progress: false
 
 # Committed "false" since B-T5.1 (2026-10-14), as `plugins-ingest.yml`'s was
