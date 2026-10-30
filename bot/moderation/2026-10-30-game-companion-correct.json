@@ -1,0 +1,11 @@
+{
+  "date": "2026-10-30",
+  "action": "correct",
+  "plugin": "game-companion",
+  "reason": "It used up users' AI limits by sending a request every minute. That harms users' resources; there is no sign of malice.",
+  "category": "harmful_behaviour",
+  "corrects": "3f996cae-45c5-43a2-a24a-fd56ee1fcca0",
+  "previous_category": "malicious",
+  "service_decision_id": "a4b84be7-7caf-4dcb-b307-0a882dba0149",
+  "declared_interest": false
+}
