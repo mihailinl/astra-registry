@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "linux-x64:d957de01ec1f3de3bba51abf6ab0c3df53748899eab5104b2da887c5f3bb9e1b",
+    "windows-x64:dd5a8855880cd640f12951856ba8ae0d7ad4282e70dd701ca394b0e3f2492f40"
+  ],
+  "commit": "381e4d945f15d8a5f59353c7f4a2c076b14aa947",
+  "decided_at": "2026-10-30T19:06:29Z",
+  "decision_id": "ad136e551cf637e36848809ab2be7ad1",
+  "fingerprint": "a833f43a9a53f38c",
+  "plugin_id": "prime-vpn",
+  "reasons": [
+    "P_PUBLISHED"
+  ],
+  "repo": "dwertyfa288/PrimeBoostVPN",
+  "repository_id": "1436738957",
+  "repository_owner_id": "296277844",
+  "run": "41111539428/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "36f00d09-ce15-40fa-b329-ae8bad1ab7a6",
+  "tag": "v0.3.0",
+  "trigger": "ci",
+  "version": "0.3.0"
+}
