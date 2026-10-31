@@ -5389,3 +5389,18 @@ test("passkey acts (review 8): under a pin that fails its own rules every act is
   // The same act under a sound pin is applied: the refusal is the pin's.
   assert.deepEqual(checkActs([confirm], { pin: ACT_PIN, now: ACT_NOW, root }).refused, []);
 });
+
+test("passkey acts (review 9): many acts' plugin ids are cut and said, and MOD-8's alarms still go out whole", async () => {
+  const entries = Array.from({ length: 30 }, (_, i) => decision({ service_decision_id: `0192f3a4-5b6c-7d8e-9f01-2345678920${String(i).padStart(2, "0")}`, plugin_id: `p${i}`, code: "M_REVOKE", category: "malicious", severity: "high", action: "warn", moderator: "amoderator", versions: ["1.0.0"] }));
+  const acts = Array.from({ length: 20 }, (_, i) => Auth.act(ACT_KEY, Auth.body({ act: "deny", target: { held_decision_id: "1".repeat(32), digest: `${"a".repeat(16)}${"b".repeat(48)}`, fingerprint: "a".repeat(16), plugin_id: `q${i}`, version: "1.0.0", tag: "v1.0.0", repo: "acme/widgets", repository_id: "12", commit: "c".repeat(40) }, now: Date.now() })));
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-alarms-"));
+  tmpRoots.push(out);
+  const code = await main(["--job", "alarms", "--entries", JSON.stringify(entries), "--out", path.join(out, "v.json"), "--announced", path.join(out, "a.json")],
+    { env: { ...actEnv, ASTRA_ACTS: JSON.stringify(acts) }, log: { log() {}, error() {} }, pin: ACT_PIN });
+  assert.equal(code, 0);
+  const v = JSON.parse(fs.readFileSync(path.join(out, "v.json"), "utf8"));
+  assert.equal(v.ids.length, 40);
+  for (let i = 0; i < 30; i++) assert.ok(v.ids.includes(`p${i}`), `MOD-8's id p${i} was cut for an act's`);
+  assert.ok(v.codes.includes("OPERATOR_ACT_IDS_ELIDED") && v.codes.includes("OPERATOR_ACT_DENY"));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(out, "a.json"), "utf8")).length, 20, "every act is still announced by its code");
+});

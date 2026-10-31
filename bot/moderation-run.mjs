@@ -2986,15 +2986,23 @@ export async function main(argv = [], {
     // step 6): `commit` applies them only when this message was delivered.
     const acts = JSON.parse(env.ASTRA_ACTS || "[]");
     const announced = actAlarms(acts, { pin: keys() });
+    // The channel carries at most 40 ids and 40 hexes (alert-verdict.mjs).
+    // MOD-8's own ids come first and are never cut; the acts' plugin ids fill
+    // what room is left, and a cut is said by a code (review of PR #484,
+    // finding 9: 40 or more ids made composeVerdict throw, which took MOD-8's
+    // alarms down with the announcement).
+    const LIMIT = 40;
+    const modIds = [...new Set(alarms.map((a) => a.id).filter(Boolean))];
+    const actIds = [...new Set(announced.ids)].filter((id) => !modIds.includes(id));
+    const room = Math.max(0, LIMIT - modIds.length);
     const hexes = [...new Set(announced.hexes)];
+    const elided = actIds.length > room || hexes.length > LIMIT;
     const verdict = composeVerdict({
       check: arg(argv, "--check") ?? "moderation-run",
       status: alarms.length || announced.codes.length ? "red" : "green",
-      codes: [...alarms.map((a) => a.code), ...announced.codes],
-      ids: [...alarms.map((a) => a.id), ...announced.ids].filter(Boolean),
-      // The channel carries at most 40; an act announced without its hexes is
-      // still announced, by its code and plugin.
-      hexes: hexes.length <= 40 ? hexes : [],
+      codes: [...alarms.map((a) => a.code), ...announced.codes, ...(elided ? ["OPERATOR_ACT_IDS_ELIDED"] : [])],
+      ids: [...modIds, ...actIds.slice(0, room)],
+      hexes: hexes.slice(0, LIMIT),
       run: runUrl(env),
     });
     fs.writeFileSync(arg(argv, "--out") ?? "verdict.json", `${JSON.stringify(verdict, null, 2)}\n`);
