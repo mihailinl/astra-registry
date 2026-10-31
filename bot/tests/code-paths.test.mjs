@@ -560,7 +560,7 @@ test("every entry resolves, or carries an excuse that expires", () => {
 // without the bot returning to shadow — and every other leg of this file would
 // stay green. So the paths are asserted, each tracked and inside only through
 // `bot/lib/`.
-const OPERATOR_ACT_FILES = ["bot/lib/operator-act.mjs"];
+const OPERATOR_ACT_FILES = ["bot/lib/operator-act.mjs", "bot/lib/operator-passkeys.json"];
 
 test("the passkey verifier, its apply module and its pin are tracked inside the set through `bot/lib/`", () => {
   const files = new Set(tracked());
@@ -569,6 +569,18 @@ test("the passkey verifier, its apply module and its pin are tracked inside the 
     assert.ok(inSet(f), `${f} is outside TRUST-31's set`);
     assert.ok(!ENTRIES.includes(f) && ENTRIES.includes("bot/lib/"), `${f} is inside by an entry of its own, not \`bot/lib/\``);
   }
+});
+
+test("the pin loads by literal path from this checkout, never from a tree under test", async () => {
+  // Design §2.2: as the schemas are (TRUST-31's schema paragraph). A pin read
+  // through `--registry-dir` would let the tree being judged name the keys it
+  // is judged by.
+  const { PIN_FILE, loadPin } = await import("../lib/operator-act.mjs");
+  assert.equal(PIN_FILE.pathname, path.join(REPO, "bot", "lib", "operator-passkeys.json"));
+  assert.deepEqual(loadPin(), JSON.parse(fs.readFileSync(path.join(REPO, "bot", "lib", "operator-passkeys.json"), "utf8")));
+  const validate = fs.readFileSync(path.join(REPO, "tools", "validate.mjs"), "utf8");
+  assert.match(validate, /checkOperatorPasskeys\(ctx, \{ pinRoot = REPO_ROOT \} = \{\}\)/,
+    "tools/validate.mjs reads the pin from somewhere other than REPO_ROOT");
 });
 
 test("an unresolved entry with no excuse is not a near-miss of a path that exists", () => {

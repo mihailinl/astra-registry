@@ -540,3 +540,164 @@ test("a key's fingerprint is four groups of the first 16 hex of SHA-256(SPKI)", 
   assert.match(fp, /^[0-9a-f]{4}( [0-9a-f]{4}){3}$/);
   assert.equal(fp.replace(/ /g, ""), crypto.createHash("sha256").update(Buffer.from(owner.pinKey.public_key, "base64url")).digest("hex").slice(0, 16));
 });
+
+// ── the pin (design §2.2–§2.3, §4.6; review findings 4, 5 and 10) ───────────
+
+import { loadPin, pinProblems, revokedRecordProblems } from "../lib/operator-act.mjs";
+import { checkOperatorPasskeys } from "../../tools/validate.mjs";
+
+/** A key enrolled as the act page enrols one: self-signed, and endorsed when `by` is given. */
+function enrolled(alg, opts = {}, by = null) {
+  const key = A.makeKey(alg, { status: "active", ...opts });
+  key.pinKey.enrolment = A.enrol(key);
+  if (by) {
+    key.pinKey.endorsed_by = by.pinKey.kid;
+    key.pinKey.endorsement = { assertion: A.assertion(by, key.pinKey.enrolment.body) };
+  }
+  return key;
+}
+const pinWith = (...keys) => A.pinOf(keys.map((k) => ({ ...(k.pinKey ?? k) })));
+const withStatus = (k, status) => ({ ...k.pinKey, status });
+
+test("the committed pin is the empty one, and it passes alone", () => {
+  const pin = loadPin();
+  assert.deepEqual(pin.keys, []);
+  assert.equal(pin.aud, "astra-registry:1331176498");
+  assert.deepEqual(pinProblems(pin, { base: undefined }), []);
+});
+
+test("a genesis key alone passes; a second genesis passes only when every key before it is revoked", () => {
+  const phone = enrolled("ES256", { kid: "owner-phone" });
+  assert.deepEqual(pinProblems(pinWith(phone), { base: undefined }), []);
+  const fresh = enrolled("EdDSA", { kid: "owner-new" });
+  assert.match(pinProblems(pinWith(phone, fresh), { base: undefined }).join(" "), /second genesis key/);
+  assert.deepEqual(pinProblems(pinWith(withStatus(phone, "revoked"), fresh), { base: undefined }), []);
+  assert.deepEqual(pinProblems(pinWith(phone, fresh), { base: undefined, revokedNow: (kid) => kid === "owner-phone" }), []);
+});
+
+test("a later key needs an endorsement, by a key listed before it, over its own enrol body", () => {
+  const phone = enrolled("ES256", { kid: "owner-phone" });
+  const pc = enrolled("RS256", { kid: "owner-pc" }, phone);
+  assert.deepEqual(pinProblems(pinWith(phone, pc), { base: undefined }), []);
+
+  const unendorsed = { ...pc.pinKey, endorsed_by: "nobody" };
+  assert.match(pinProblems(pinWith(phone, unendorsed), { base: undefined }).join(" "), /not a key listed before it/);
+  // Listed after the key it endorses.
+  const late = enrolled("EdDSA", { kid: "late" });
+  const early = enrolled("ES256", { kid: "early" }, late);
+  assert.match(pinProblems(pinWith(phone, early, { ...late.pinKey, endorsed_by: "owner-phone", endorsement: { assertion: A.assertion(phone, late.pinKey.enrolment.body) } }), { base: undefined }).join(" "), /not a key listed before it/);
+  // Signed by another key than the one it names, or over another body.
+  const stranger = enrolled("ES256", { kid: "stranger" });
+  const forged = { ...pc.pinKey, endorsement: { assertion: { ...A.assertion(stranger, pc.pinKey.enrolment.body), credential_id: phone.pinKey.credential_id } } };
+  assert.match(pinProblems(pinWith(phone, forged), { base: undefined }).join(" "), /endorsement does not verify/);
+  const otherBody = { ...pc.pinKey, endorsement: { assertion: A.assertion(phone, stranger.pinKey.enrolment.body) } };
+  assert.match(pinProblems(pinWith(phone, otherBody), { base: undefined }).join(" "), /endorsement does not verify/);
+});
+
+test("an enrolment that is not the key's own, or not signed by it, is refused", () => {
+  const phone = enrolled("ES256", { kid: "owner-phone" });
+  const other = enrolled("ES256", { kid: "other" });
+  const notSelf = { ...phone.pinKey, enrolment: { body: phone.pinKey.enrolment.body, assertion: { ...A.assertion(other, phone.pinKey.enrolment.body), credential_id: phone.pinKey.credential_id } } };
+  assert.match(pinProblems(pinWith(notSelf), { base: undefined }).join(" "), /enrolment does not verify/);
+  const wrongBody = { ...phone.pinKey, enrolment: other.pinKey.enrolment };
+  assert.match(pinProblems(pinWith(wrongBody), { base: undefined }).join(" "), /not this key's canonical enrol body/);
+  const wrongActs = { ...phone.pinKey, acts: ["deny"] };
+  assert.match(pinProblems(pinWith(wrongActs), { base: undefined }).join(" "), /not this key's canonical enrol body/);
+  assert.match(pinProblems({ ...pinWith(phone), rp_id: "" }, { base: undefined }).join(" "), /names its rp_id/);
+});
+
+test("against the pin it replaces: nothing deleted, only status moves forward, an added key is pending, its endorser was active", () => {
+  const phone = enrolled("ES256", { kid: "owner-phone" });
+  const pc = enrolled("RS256", { kid: "owner-pc" }, phone);
+  const base = pinWith(phone);
+  const ok = (pin, opts = {}) => pinProblems(pin, { base, ...opts });
+
+  assert.deepEqual(ok(pinWith(phone, withStatus(pc, "pending"))), []);
+  assert.match(ok(pinWith(phone, pc)).join(" "), /added as active/);
+  assert.match(ok(pinWith(withStatus(pc, "pending"))).join(" "), /removed or moved|not a key listed before it/, "the genesis key deleted");
+  assert.match(pinProblems(pinWith(phone), { base: pinWith(phone, withStatus(pc, "pending")) }).join(" "), /owner-pc was removed/);
+  assert.match(ok(pinWith({ ...phone.pinKey, acts: ["deny"] })).join(" "), /enrol body|more than its status/);
+  assert.match(ok(pinWith({ ...phone.pinKey, device_bound: "yes" })).join(" "), /more than its status/);
+  assert.deepEqual(ok(pinWith(withStatus(phone, "revoked"))), [], "active → revoked");
+  assert.match(pinProblems(pinWith(phone), { base: pinWith(withStatus(phone, "revoked")) }).join(" "), /from revoked to active/);
+  assert.deepEqual(pinProblems(pinWith(phone), { base: pinWith(withStatus(phone, "pending")) }), [], "pending → active");
+  assert.match(pinProblems(pinWith(withStatus(phone, "pending")), { base: pinWith(phone) }).join(" "), /from active to pending/);
+
+  // The endorser must have been active BEFORE this change (review finding 5).
+  assert.match(pinProblems(pinWith(phone, withStatus(pc, "pending")), { base: pinWith(withStatus(phone, "pending")) }).join(" "), /not an active key before this change/);
+  assert.match(pinProblems(pinWith(phone, withStatus(pc, "pending")), { base, revokedAtBase: (k) => k === "owner-phone" }).join(" "), /not an active key before this change/);
+  assert.match(pinProblems(pinWith(phone, withStatus(pc, "pending")), { base: pinWith() }).join(" "), /added as active|not an active key before this change/, "an endorser added in the same change");
+
+  assert.match(ok({ ...pinWith(phone, withStatus(pc, "pending")), rp_id: "other-acts.github.io", origins: ["https://other-acts.github.io"] }).join(" "), /rp_id changed|does not verify/);
+});
+
+test("a revocation record names a pinned key, by its own name", () => {
+  const phone = enrolled("ES256", { kid: "owner-phone" });
+  const pin = pinWith(phone);
+  const rec = { schema: "astra.registry.passkey-revoked/1", kid: "owner-phone", at: "2026-10-31T12:00:00Z", run: "https://github.com/o/r/actions/runs/1" };
+  assert.deepEqual(revokedRecordProblems(rec, { file: "state/passkeys/revoked/owner-phone.json", pin }), []);
+  assert.notDeepEqual(revokedRecordProblems(rec, { file: "state/passkeys/revoked/other.json", pin }), []);
+  assert.notDeepEqual(revokedRecordProblems({ ...rec, kid: "ghost" }, { file: "state/passkeys/revoked/ghost.json", pin }), []);
+  assert.notDeepEqual(revokedRecordProblems({ ...rec, account: "1" }, { file: "state/passkeys/revoked/owner-phone.json", pin }), []);
+});
+
+/** A registry root of its own, with a pin committed at each step. */
+function pinRepo(...steps) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-pin-"));
+  roots.push(root);
+  git(root, "init", "-q", "-b", "main");
+  for (const pin of steps) {
+    writeJson(root, "bot/lib/operator-passkeys.json", pin);
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "pin");
+  }
+  return root;
+}
+const errorsOf = (root, pinRoot = root) => {
+  const errors = [];
+  checkOperatorPasskeys({ root, report: { error: (w, m) => errors.push(`${w}: ${m}`), note() {}, warn() {} } }, { pinRoot });
+  return errors;
+};
+
+test("validate judges the pin against the commit it replaces: the working tree against HEAD, else HEAD against its parent", () => {
+  const phone = enrolled("ES256", { kid: "owner-phone" });
+  const pc = enrolled("RS256", { kid: "owner-pc" }, phone);
+  const genesis = pinWith(withStatus(phone, "pending"));
+  const root = pinRepo(genesis, pinWith(phone));
+  assert.deepEqual(errorsOf(root), [], "pending → active on the last commit");
+
+  // Uncommitted: an endorsed key added active.
+  writeJson(root, "bot/lib/operator-passkeys.json", pinWith(phone, pc));
+  assert.match(errorsOf(root).join(" "), /added as active/);
+  writeJson(root, "bot/lib/operator-passkeys.json", pinWith(phone, withStatus(pc, "pending")));
+  assert.deepEqual(errorsOf(root), []);
+
+  // Committed: HEAD is judged against HEAD^1, as a pull request's merge commit is.
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "add pc");
+  assert.deepEqual(errorsOf(root), []);
+  writeJson(root, "bot/lib/operator-passkeys.json", pinWith(phone));
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "drop the pc");
+  assert.match(errorsOf(root).join(" "), /owner-pc was removed or moved/);
+
+  // An endorser revoked by its record before the change does not endorse.
+  const r2 = pinRepo(pinWith(withStatus(phone, "pending")), pinWith(phone));
+  writeJson(r2, "state/passkeys/revoked/owner-phone.json", { schema: "astra.registry.passkey-revoked/1", kid: "owner-phone", at: "2026-10-31T12:00:00Z", run: "https://github.com/o/r/actions/runs/1" });
+  git(r2, "add", "-A");
+  git(r2, "commit", "-q", "-m", "revoke the phone");
+  writeJson(r2, "bot/lib/operator-passkeys.json", pinWith(phone, withStatus(pc, "pending")));
+  assert.match(errorsOf(r2).join(" "), /not an active key before this change/);
+});
+
+test("validate re-verifies every act record under its key, and refuses one that does not", () => {
+  const phone = enrolled("ES256", { kid: "owner-phone" });
+  const pinRoot = pinRepo(pinWith(withStatus(phone, "pending")), pinWith(phone));
+  const item = A.act(phone, A.body({ act: "deny", target: releaseTarget(), now: NOW }));
+  writeJson(pinRoot, `state/acts/${item.jti}.json`, actRecord(item, { run: "https://github.com/o/r/actions/runs/1", at: "2026-10-31T12:00:00Z" }));
+  assert.deepEqual(errorsOf(pinRoot), []);
+  writeJson(pinRoot, `state/acts/${item.jti}.json`, actRecord({ ...item, body: item.body.replace("1.2.1", "1.2.0") }, { run: "https://github.com/o/r/actions/runs/1", at: "2026-10-31T12:00:00Z" }));
+  assert.match(errorsOf(pinRoot).join(" "), /challenge is not SHA-256 of this body/);
+  writeJson(pinRoot, "state/passkeys/revoked/ghost.json", { schema: "astra.registry.passkey-revoked/1", kid: "ghost", at: "2026-10-31T12:00:00Z", run: "https://github.com/o/r/actions/runs/1" });
+  assert.match(errorsOf(pinRoot).join(" "), /not a pinned key/);
+});

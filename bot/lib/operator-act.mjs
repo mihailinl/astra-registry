@@ -111,7 +111,7 @@ export const CAPS = Object.freeze({
 /** The algorithms a pinned key may name, and what each must be. */
 export const ALGS = Object.freeze(["ES256", "RS256", "EdDSA"]);
 
-export const KID_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
+export const KID_RE = /^(?!-)(?!.*-$)[a-z0-9-]{1,32}$/;
 const HEX32 = /^[0-9a-f]{32}$/;
 const HEX40 = /^[0-9a-f]{40}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -729,3 +729,169 @@ export function actRecordProblems(doc, { file, pin }) {
 }
 
 export const RECORD_RUN_RE = RUN_RE;
+
+// ── the pin's own rules (design §2.2–§2.3, §4.6; review findings 4, 5, 10) ──
+
+export const PIN_MEMBERS = Object.freeze(["aud", "keys", "origins", "rp_id", "schema"]);
+export const KEY_MEMBERS = Object.freeze([
+  "acts", "added", "alg", "credential_id", "device_bound", "endorsed_by", "endorsement", "enrolment", "kid", "public_key", "status",
+]);
+export const KEY_STATUSES = Object.freeze(["pending", "active", "revoked"]);
+export const ENROL_MEMBERS = Object.freeze(["acts", "alg", "aud", "credential_id", "iat", "kid", "public_key", "schema"]);
+const STATUS_MOVES = new Set(["pending>pending", "active>active", "revoked>revoked", "pending>active", "pending>revoked", "active>revoked"]);
+const HOST_RE = /^(?=.{1,253}$)(?:(?!-)[a-z0-9-]{1,63}(?<!-)\.)+[a-z]{2,63}$/;
+
+/** The enrol body a pinned key must carry, as text, from the key itself. */
+export function enrolBodyOf(key, aud, iat) {
+  return canonical({ schema: ENROL_SCHEMA, aud, kid: key.kid, credential_id: key.credential_id, alg: key.alg, public_key: key.public_key, acts: key.acts, iat });
+}
+
+/**
+ * Everything wrong with a pin, alone and against the pin it replaces.
+ *
+ *   * alone: its shape; each key's members, grammar and loadable key; an
+ *     enrolment that is the key's own canonical enrol body, self-signed by
+ *     the key (possession); a genesis key (`endorsed_by: ""`) only first, or
+ *     after every key listed before it is revoked (review finding 10); every
+ *     other key endorsed by a key listed before it, whose assertion over the
+ *     same enrol body verifies.
+ *   * against `base` (the pin at the commit this one replaces): nothing
+ *     removed or reordered, and nothing of a kept key changed but its status,
+ *     which only moves pending → active → revoked; `aud` and `rp_id` fixed
+ *     once a key exists, and no origin dropped, so old act records keep
+ *     verifying; a key ADDED here is `pending` (review finding 4), and its
+ *     endorser, if any, was `active` at `base` (review finding 5).
+ *
+ * `revokedNow(kid)` and `revokedAtBase(kid)` answer whether a revocation
+ * record `state/passkeys/revoked/<kid>.json` stands in the tree and at the
+ * base. `base` undefined means the base could not be read: the relative rules
+ * are not asked, and the caller says so.
+ */
+export function pinProblems(pin, { base, revokedNow = () => false, revokedAtBase = () => false } = {}) {
+  const p = [];
+  if (!exact(pin, PIN_MEMBERS)) return [`the pin carries ${Object.keys(pin ?? {}).sort().join(",")}, not ${[...PIN_MEMBERS].join(",")}`];
+  if (pin.schema !== PIN_SCHEMA) p.push(`schema ${JSON.stringify(pin.schema)}`);
+  if (typeof pin.aud !== "string" || !/^astra-registry:[0-9]{1,20}$/.test(pin.aud)) p.push("aud is not `astra-registry:<repository_id>`");
+  if (typeof pin.rp_id !== "string" || (pin.rp_id !== "" && !HOST_RE.test(pin.rp_id))) p.push("rp_id is not a host name");
+  if (!Array.isArray(pin.origins) || new Set(pin.origins).size !== pin.origins.length) p.push("origins is not a list of distinct origins");
+  else {
+    for (const o of pin.origins) {
+      const host = typeof o === "string" && /^https:\/\/([^/:?#]+)$/.exec(o)?.[1];
+      if (!host || !(host === pin.rp_id || host.endsWith(`.${pin.rp_id}`))) p.push(`origin ${JSON.stringify(o)} is not https on rp_id ${pin.rp_id || "(none)"}`);
+    }
+  }
+  if (!Array.isArray(pin.keys)) return [...p, "keys is not a list"];
+  if (pin.keys.length > 0 && (pin.rp_id === "" || !pin.origins?.length)) p.push("a pin with a key names its rp_id and its origins");
+  if (p.length) return p;
+
+  const kids = new Set();
+  const creds = new Set();
+  pin.keys.forEach((key, i) => {
+    const at = `keys[${i}]${key?.kid ? ` (${key.kid})` : ""}`;
+    if (!exact(key, KEY_MEMBERS)) {
+      p.push(`${at} carries ${Object.keys(key ?? {}).sort().join(",")}, not ${KEY_MEMBERS.join(",")}`);
+      return;
+    }
+    if (!KID_RE.test(String(key.kid)) || kids.has(key.kid)) p.push(`${at}: kid is not a distinct kid`);
+    kids.add(key.kid);
+    if (!b64urlBytes(key.credential_id, CAPS.credential_id) || creds.has(key.credential_id)) p.push(`${at}: credential_id is not a distinct strict base64url id`);
+    creds.add(key.credential_id);
+    if (!KEY_STATUSES.includes(key.status)) p.push(`${at}: status ${JSON.stringify(key.status)}`);
+    if (!Array.isArray(key.acts) || key.acts.length === 0 || new Set(key.acts).size !== key.acts.length || !key.acts.every((a) => ACTS.includes(a))) {
+      p.push(`${at}: acts is not a list of distinct acts`);
+    }
+    if (!["yes", "no"].includes(key.device_bound)) p.push(`${at}: device_bound is "yes" or "no"`);
+    if (typeof key.added !== "string" || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(key.added)) p.push(`${at}: added is a YYYY-MM-DD date`);
+    try {
+      publicKeyOf(key);
+    } catch (err) {
+      p.push(`${at}: ${err.message}`);
+      return;
+    }
+
+    // Possession: the key's own enrol body, signed by the key.
+    const enrolment = key.enrolment;
+    const body = canonicalBody(enrolment?.body);
+    if (!exact(enrolment, ["assertion", "body"]) || !body || !exact(body, ENROL_MEMBERS) || !isTime(body.iat) ||
+        enrolment.body !== enrolBodyOf(key, pin.aud, body.iat)) {
+      p.push(`${at}: enrolment is not this key's canonical enrol body`);
+      return;
+    }
+    if (!exact(enrolment.assertion, ASSERTION_MEMBERS) || enrolment.assertion.credential_id !== key.credential_id) {
+      p.push(`${at}: the enrolment is not signed by this credential`);
+    } else {
+      const v = verifyAssertion({ key, bodyText: enrolment.body, assertion: enrolment.assertion, pin });
+      if (!v.ok) p.push(`${at}: the enrolment does not verify under this key: ${v.why}`);
+    }
+
+    if (key.endorsed_by === "") {
+      if (key.endorsement !== null) p.push(`${at}: a genesis key carries no endorsement`);
+      const live = pin.keys.slice(0, i).filter((k) => !(k?.status === "revoked" || revokedNow(k?.kid)));
+      if (live.length) {
+        p.push(`${at}: a second genesis key is admitted only when every key listed before it is revoked; ${live.map((k) => k.kid).join(", ")} is not`);
+      }
+      return;
+    }
+    const j = pin.keys.findIndex((k) => k?.kid === key.endorsed_by);
+    if (j < 0 || j >= i) {
+      p.push(`${at}: endorsed_by ${JSON.stringify(key.endorsed_by)} is not a key listed before it`);
+      return;
+    }
+    const endorser = pin.keys[j];
+    const e = key.endorsement;
+    if (!exact(e, ["assertion"]) || !exact(e.assertion, ASSERTION_MEMBERS) || e.assertion.credential_id !== endorser.credential_id) {
+      p.push(`${at}: the endorsement is not an assertion by ${endorser.kid}`);
+      return;
+    }
+    const v = verifyAssertion({ key: endorser, bodyText: enrolment.body, assertion: e.assertion, pin });
+    if (!v.ok) p.push(`${at}: the endorsement does not verify under ${endorser.kid}: ${v.why}`);
+  });
+  if (p.length || base === undefined) return p;
+
+  // Against the pin this one replaces.
+  const before = base && Array.isArray(base.keys) ? base.keys : [];
+  if (before.length) {
+    if (base.aud !== pin.aud) p.push("aud changed after a key was pinned");
+    if (base.rp_id !== pin.rp_id) p.push("rp_id changed after a key was pinned; every act record would stop verifying");
+    for (const o of base.origins ?? []) if (!pin.origins.includes(o)) p.push(`origin ${o} was dropped; act records made there would stop verifying`);
+  }
+  before.forEach((old, i) => {
+    const now = pin.keys[i];
+    if (!now || now.kid !== old?.kid) {
+      p.push(`key ${old?.kid} was removed or moved; a key is never deleted, only revoked`);
+      return;
+    }
+    const strip = ({ status, ...rest }) => canonicalish(rest);
+    if (strip(now) !== strip(old)) p.push(`key ${old.kid} changed in more than its status`);
+    if (!STATUS_MOVES.has(`${old.status}>${now.status}`)) p.push(`key ${old.kid} moved from ${old.status} to ${now.status}`);
+  });
+  for (const key of pin.keys.slice(before.length)) {
+    if (key.status !== "pending") p.push(`key ${key.kid} is added as ${key.status}; a new key is pinned pending, and made active by a second change after its fingerprint is compared`);
+    if (key.endorsed_by !== "") {
+      const endorser = before.find((k) => k?.kid === key.endorsed_by);
+      if (!endorser || endorser.status !== "active" || revokedAtBase(endorser.kid)) {
+        p.push(`key ${key.kid} is endorsed by ${key.endorsed_by}, which was not an active key before this change`);
+      }
+    }
+  }
+  return p;
+}
+
+/** A stable text of any JSON value, for "changed in nothing but" comparisons. */
+function canonicalish(v) {
+  if (Array.isArray(v)) return `[${v.map(canonicalish).join(",")}]`;
+  if (v && typeof v === "object") return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonicalish(v[k])}`).join(",")}}`;
+  return JSON.stringify(v);
+}
+
+/** Why a revocation record is not one, or `[]`. */
+export function revokedRecordProblems(doc, { file, pin }) {
+  if (!exact(doc, ["at", "kid", "run", "schema"])) return [`${file}: carries ${Object.keys(doc ?? {}).sort().join(",")}, not at,kid,run,schema`];
+  const p = [];
+  if (doc.schema !== REVOKED_SCHEMA) p.push(`${file}: schema ${JSON.stringify(doc.schema)}`);
+  if (!KID_RE.test(String(doc.kid)) || path.posix.basename(file) !== `${doc.kid}.json`) p.push(`${file}: is not named by its kid`);
+  else if (!keyByKid(pin, doc.kid)) p.push(`${file}: revokes ${doc.kid}, which is not a pinned key`);
+  if (!isTime(doc.at)) p.push(`${file}: at is not a §0.7 time`);
+  if (!RUN_RE.test(String(doc.run))) p.push(`${file}: run is not a workflow run URL`);
+  return p;
+}

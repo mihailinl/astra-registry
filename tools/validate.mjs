@@ -99,6 +99,16 @@ import { RESERVED_KEYS, SUPPORTED_KEYS } from "./lib/platform.mjs";
 import { isTime } from "./lib/time.mjs";
 import { reviewMarkFindings } from "./lib/review-mark.mjs";
 import { readTree, treeProblems, unaskableRoot } from "./lib/tree-modes.mjs";
+import {
+  ACTS_DIR,
+  PIN_REL,
+  REVOKED_DIR,
+  actRecordProblems,
+  pinProblems,
+  revokedRecordProblems,
+} from "../bot/lib/operator-act.mjs";
+import { cleanEnv } from "./lib/git-env.mjs";
+import { execFileSync } from "node:child_process";
 
 // `tools/lib/platform.mjs`'s table, not a copy of it. Until 2026-09-22 these
 // were two literals of this file's own, and platform.mjs's RESERVED_KEYS was
@@ -2825,6 +2835,9 @@ export const RECORD_ROOTS = Object.freeze([
   "schema",
   "site",
   "tools/codes-table.json",
+  // The owner's passkeys (operator-acts design §2.2): the act page reads it
+  // from GitHub, so it is a document the registry serves.
+  "bot/lib/operator-passkeys.json",
 ]);
 
 /** Every `*.json` under `root` that `checkRecordStrings` holds, repository-relative, sorted. */
@@ -2969,6 +2982,121 @@ export function checkTreeModes(ctx) {
   for (const p of problems) report.error(p.path, p.message, p.hint);
 }
 
+// ── the owner's passkeys, and what they signed ──────────────────────────────
+//
+// `bot/lib/operator-passkeys.json` is the list of keys the bot accepts an
+// operator act from (astra-plugins-ops `dev/operator-acts-by-passkey-design.md`
+// §2.2, §4.6, and the adversarial review of 2026-10-31). It is a rule, so it is
+// read from THIS repository (`pinRoot`, never `--registry-dir`), and it is
+// judged twice: alone (every key self-signed, a genesis key first or after
+// every earlier key is revoked, every other key endorsed by one listed before
+// it) and against the pin it replaces — the working tree's against HEAD when
+// they differ, else HEAD's against its first parent, which is a pull request's
+// base on its merge commit and the previous `main` on a push. Nothing is ever
+// removed, a kept key changes only its status, an added key is `pending`, and
+// its endorser was `active` before the change.
+//
+// Then the records the keys made, in the tree under test: every
+// `state/acts/<jti>.json` named by its jti, with a canonical body, verifying
+// under its key whatever that key's status is now; every
+// `state/passkeys/revoked/<kid>.json` naming a pinned key.
+
+const gitAt = (root, args) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: cleanEnv() });
+
+/** The pin this one replaces, and how to ask that commit about revocations; `undefined` when git cannot say. */
+export function pinBase(pinRoot) {
+  if (unaskableRoot(pinRoot)) return undefined;
+  const showAt = (ref, rel) => {
+    try {
+      return gitAt(pinRoot, ["show", `${ref}:${rel}`]);
+    } catch {
+      return null;
+    }
+  };
+  let current = null;
+  try {
+    current = fs.readFileSync(path.join(pinRoot, ...PIN_REL.split("/")), "utf8");
+  } catch {
+    current = null;
+  }
+  const atHead = showAt("HEAD", PIN_REL);
+  let ref = "HEAD";
+  if (atHead === current) {
+    try {
+      gitAt(pinRoot, ["rev-parse", "--verify", "--quiet", "HEAD^1^{commit}"]);
+      ref = "HEAD^1";
+    } catch {
+      return { ref: null, pin: null, revoked: () => false };
+    }
+  }
+  const text = ref === "HEAD" ? atHead : showAt(ref, PIN_REL);
+  let pin = null;
+  try {
+    pin = text === null ? null : JSON.parse(text);
+  } catch {
+    pin = null;
+  }
+  const revoked = (kid) => {
+    try {
+      gitAt(pinRoot, ["cat-file", "-e", `${ref}:${REVOKED_DIR}/${kid}.json`]);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  return { ref, pin, revoked };
+}
+
+export function checkOperatorPasskeys(ctx, { pinRoot = REPO_ROOT } = {}) {
+  const { report, root } = ctx;
+  let pin;
+  try {
+    pin = JSON.parse(fs.readFileSync(path.join(pinRoot, ...PIN_REL.split("/")), "utf8"));
+  } catch (e) {
+    report.error(PIN_REL, `the operator passkey pin does not read: ${e.message}`);
+    return;
+  }
+  const exists = (rel) => fs.existsSync(path.join(root, ...rel.split("/")));
+  const base = pinBase(pinRoot);
+  if (base === undefined) report.note(PIN_REL, "not compared with the pin it replaces: this is not the top of a git work tree with a commit");
+  const problems = pinProblems(pin, {
+    base: base === undefined ? undefined : base.pin,
+    revokedNow: (kid) => exists(`${REVOKED_DIR}/${kid}.json`),
+    revokedAtBase: (kid) => base?.revoked(kid) ?? false,
+  });
+  for (const m of problems) report.error(PIN_REL, m);
+
+  const listed = (dir) => {
+    try {
+      return fs.readdirSync(path.join(root, ...dir.split("/")));
+    } catch {
+      return [];
+    }
+  };
+  for (const name of listed(ACTS_DIR)) {
+    const file = `${ACTS_DIR}/${name}`;
+    let doc;
+    try {
+      doc = JSON.parse(fs.readFileSync(path.join(root, ...file.split("/")), "utf8"));
+    } catch (e) {
+      report.error(file, `not readable JSON (${e.message})`);
+      continue;
+    }
+    for (const m of actRecordProblems(doc, { file, pin })) report.error(file, m);
+  }
+  for (const name of listed(REVOKED_DIR)) {
+    const file = `${REVOKED_DIR}/${name}`;
+    let doc;
+    try {
+      doc = JSON.parse(fs.readFileSync(path.join(root, ...file.split("/")), "utf8"));
+    } catch (e) {
+      report.error(file, `not readable JSON (${e.message})`);
+      continue;
+    }
+    for (const m of revokedRecordProblems(doc, { file, pin })) report.error(file, m);
+  }
+}
+
 // ── driver ──────────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
@@ -3039,6 +3167,7 @@ export async function runValidation(opts) {
   checkNoticeMarkers(ctx);
   checkTreeModes(ctx);
   checkRecordStrings(ctx);
+  checkOperatorPasskeys(ctx);
 
   // B.4's other record trees, walked once and handed to both checks: the
   // second one counts author-action records against the yanks a moderation
