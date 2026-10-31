@@ -1,0 +1,121 @@
+# Every key a pull request adds to, or moves in, the owner's passkey pin
+# (`bot/lib/operator-passkeys.json`), named on the registry's own Telegram by
+# its kid and its fingerprint (operator-acts-by-passkey design §2.3, review
+# finding 4).
+#
+# The owner compares that fingerprint with the one his act page showed him at
+# enrolment — two surfaces neither of which minice writes — and only then
+# acknowledges the tree. A key is pinned `pending` and made `active` by a
+# second change, which this workflow announces too.
+#
+# ── why `pull_request_target`, and why that is safe here ──────────────────
+#
+# Environment `alerts`, which holds the channel's credentials, admits `main`
+# alone (`.github/actions/alert/action.yml`). A `pull_request` run is on the
+# pull request's ref, so it could never send. `pull_request_target` runs THIS
+# file as `main` has it, on `main`'s ref, with the base repository's secrets
+# — which is exactly why it must never run the head's code. So:
+#
+#   * every checkout is `ref: ${{ github.sha }}`, which on this event is the
+#     base branch's commit; the head is never checked out, fetched as a ref,
+#     or installed;
+#   * the head's pin is fetched through the contents API as raw bytes into a
+#     file, and `tools/passkey-pins.mjs` — main's copy — parses it as data;
+#   * the head's coordinates reach the shell only through `env:`, never
+#     interpolated into a script.
+#
+# `bot/tests/workflows.test.mjs` holds each of those to this file.
+#
+# It is not a bot workflow: no bot token, no `id-token`, no write anywhere,
+# and outside TRUST-31's set like `operator.yml`.
+
+name: Passkey pins
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    paths:
+      - bot/lib/operator-passkeys.json
+
+permissions: {}
+
+concurrency:
+  group: passkey-pins-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  read:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      verdict: ${{ steps.verdict.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The head's pin as bytes, through the API, capped. A fork's head is
+      # read from the fork; the file is data to the next step and nothing
+      # else ever opens it.
+      - name: The head's pin, as data
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASTRA_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          ASTRA_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$ASTRA_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || ! [[ "$ASTRA_HEAD_REPO" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::the pull request's head is not a repository and a commit"
+            exit 1
+          fi
+          gh api -H "Accept: application/vnd.github.raw" \
+            "repos/${ASTRA_HEAD_REPO}/contents/bot/lib/operator-passkeys.json?ref=${ASTRA_HEAD_SHA}" \
+            | head -c 262145 > head-pin.json || : > head-pin.json
+
+      - name: Each key added or moved, by kid and fingerprint
+        id: verdict
+        run: |
+          set -euo pipefail
+          node tools/passkey-pins.mjs --base bot/lib/operator-passkeys.json --head head-pin.json --out verdict.json
+          echo "verdict=$(cat verdict.json)" >> "$GITHUB_OUTPUT"
+
+  alert:
+    needs: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: alerts
+    permissions:
+      contents: read
+      id-token: none
+    env:
+      ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+      ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+      ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: The verdict the read job composed
+        env:
+          ASTRA_VERDICT: ${{ needs.read.outputs.verdict }}
+        run: printf '%s\n' "$ASTRA_VERDICT" > verdict.json
+
+      - uses: ./.github/actions/alert
+        id: alert
+        with:
+          verdict: verdict.json
+          no-heartbeat-because: >-
+            This workflow runs only when a pull request changes the passkey
+            pin, so it has no interval for a dead-man receiver to be silent
+            about; every key it names pages through the verdict above.

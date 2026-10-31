@@ -847,3 +847,31 @@ test("alert announces each act by kind, plugin, release fingerprint and key fing
   assert.deepEqual(a.ids, ["voice-text-input"]);
   assert.deepEqual(a.hexes, [DIGEST.slice(0, 16), keyFingerprint(owner.pinKey.public_key).replace(/ /g, "")]);
 });
+
+// ── passkey-pins.yml's reader (review finding 4) ────────────────────────────
+
+import { pinVerdict } from "../../tools/passkey-pins.mjs";
+
+test("the pin reader names each added or moved key by kid and fingerprint, and refuses what the pin rules refuse", () => {
+  const phone = enrolled("ES256", { kid: "owner-phone" });
+  const pc = enrolled("RS256", { kid: "owner-pc" }, phone);
+  const base = pinWith(phone);
+  const fp = (k) => keyFingerprint(k.pinKey.public_key).replace(/ /g, "");
+  const added = pinVerdict({ base, headText: JSON.stringify(pinWith(phone, withStatus(pc, "pending"))) }).verdict;
+  assert.equal(added.status, "red");
+  assert.deepEqual(added.codes, ["PASSKEY_PIN_KEY_ADDED"]);
+  assert.deepEqual(added.ids, ["owner-pc"]);
+  assert.deepEqual(added.hexes, [fp(pc)]);
+  const live = pinVerdict({ base, headText: JSON.stringify(pinWith(phone, pc)) }).verdict;
+  assert.deepEqual(live.codes, ["PASSKEY_PIN_KEY_ADDED", "PASSKEY_PIN_REFUSED"], "a key added active is announced AND refused");
+  const moved = pinVerdict({ base, headText: JSON.stringify(pinWith(withStatus(phone, "revoked"))) }).verdict;
+  assert.deepEqual([moved.codes, moved.ids], [["PASSKEY_PIN_KEY_STATUS"], ["owner-phone"]]);
+  assert.equal(pinVerdict({ base, headText: JSON.stringify(base) }).verdict.status, "green");
+  for (const bad of ["{not json", "", "x".repeat(256 * 1024 + 1), null]) {
+    assert.deepEqual(pinVerdict({ base, headText: bad }).verdict.codes, ["PASSKEY_PIN_UNREADABLE"]);
+  }
+  // Hostile data stays data: a `__proto__` key, a script-looking kid.
+  const odd = pinVerdict({ base, headText: '{"__proto__":{"x":1},"keys":[{"kid":"$(rm -rf /)","public_key":"AA"}]}' }).verdict;
+  assert.equal(odd.status, "red");
+  assert.ok(!(odd.ids ?? []).some((i) => i.includes("$")), "a kid that is not an id reached the channel");
+});
