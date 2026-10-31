@@ -1,0 +1,33 @@
+{
+  "$comment": "Derived from FluffyTaill/astra-anim-studio@v1.4.0. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "anim-studio",
+  "version": "1.4.0",
+  "published_at": "2026-10-31T12:51:56Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "FluffyTaill/astra-anim-studio",
+    "tag": "v1.4.0",
+    "commit": "9fa28ffc8d52d0546661a4205a075cb851ba918e"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/FluffyTaill/astra-anim-studio/releases/download/v1.4.0/anim-studio-1.4.0-noarch.astraplugin",
+      "filename": "anim-studio-1.4.0-noarch.astraplugin",
+      "sha256": "f34ba427ef5234ce5ec88deaf5daf1ccee12d9d8565ef69dc7a917288d18a838",
+      "size": 638296
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "tools",
+    "triggers",
+    "ui_contributions"
+  ],
+  "permissions": {
+    "fire_trigger": {
+      "reason": "Plays her morning stretch, wave, yawn, walks and peeks and says her phrases through the two Astra commands the plugin page creates."
+    }
+  }
+}
