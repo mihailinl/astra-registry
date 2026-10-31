@@ -875,3 +875,21 @@ test("the pin reader names each added or moved key by kid and fingerprint, and r
   assert.equal(odd.status, "red");
   assert.ok(!(odd.ids ?? []).some((i) => i.includes("$")), "a kid that is not an id reached the channel");
 });
+
+test("validate refuses removing an act record, a revocation or a deny, uncommitted or in the commit at HEAD (review finding 3)", () => {
+  const phone = enrolled("ES256", { kid: "owner-phone" });
+  for (const rel of [`state/acts/${"a".repeat(32)}.json`, "state/passkeys/revoked/owner-phone.json", `state/deny/${"b".repeat(16)}.json`]) {
+    const root = pinRepo(pinWith(withStatus(phone, "pending")), pinWith(phone));
+    writeJson(root, rel, { placeholder: true });
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "a record");
+    git(root, "commit", "-q", "--allow-empty", "-m", "something else");
+    const removals = () => errorsOf(root).filter((e) => /are permanent/.test(e));
+    assert.deepEqual(removals(), []);
+    fs.rmSync(path.join(root, rel));
+    assert.match(removals().join("\n"), new RegExp(`${rel.replace(/[./]/g, "\\$&")}: the working tree removes it`), rel);
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "remove it");
+    assert.match(removals().join("\n"), /the commit at HEAD removes it/, rel);
+  }
+});

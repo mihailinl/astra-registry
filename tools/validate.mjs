@@ -3047,6 +3047,32 @@ export function pinBase(pinRoot) {
   return { ref, pin, revoked };
 }
 
+/** The directories whose files are written once and never removed. */
+export const PERMANENT_DIRS = Object.freeze(["state/acts/", "state/passkeys/revoked/", "state/deny/"]);
+
+/** Every removal of a permanent record: in the working tree against HEAD, and in HEAD against HEAD^1. */
+export function permanentRemovals(root) {
+  if (unaskableRoot(root)) return [];
+  const out = [];
+  const removed = (args, where) => {
+    let names;
+    try {
+      names = gitAt(root, ["diff", "--no-renames", "--name-only", "--diff-filter=D", "-z", ...args, "--", ...PERMANENT_DIRS]);
+    } catch {
+      return;
+    }
+    for (const file of names.split("\0").filter(Boolean)) out.push({ file, where });
+  };
+  removed(["HEAD"], "the working tree");
+  try {
+    gitAt(root, ["rev-parse", "--verify", "--quiet", "HEAD^1^{commit}"]);
+    removed(["HEAD^1", "HEAD"], "the commit at HEAD");
+  } catch {
+    /* no first parent: nothing for HEAD to have removed */
+  }
+  return out;
+}
+
 export function checkOperatorPasskeys(ctx, { pinRoot = REPO_ROOT } = {}) {
   const { report, root } = ctx;
   let pin;
@@ -3065,6 +3091,13 @@ export function checkOperatorPasskeys(ctx, { pinRoot = REPO_ROOT } = {}) {
     revokedAtBase: (kid) => base?.revoked(kid) ?? false,
   });
   for (const m of problems) report.error(PIN_REL, m);
+
+  // Nothing under these three is ever removed (review of PR #484, finding 3):
+  // deleting a revocation un-revokes a key, deleting an act record reopens
+  // its jti and its target, deleting a deny lets the release it stopped
+  // publish. Asked of the working tree against HEAD and of HEAD against its
+  // first parent, so a commit that removed one is red wherever it is judged.
+  for (const m of permanentRemovals(root)) report.error(m.file, `${m.where} removes it; an operator act's record, a deny and a passkey revocation are permanent`);
 
   const listed = (dir) => {
     try {
