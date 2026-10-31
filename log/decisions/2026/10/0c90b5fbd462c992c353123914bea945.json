@@ -1,0 +1,24 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:86bc1c72d8100e2783edc5b3833be3584dc1408b849d3005237fe0f2a65cbc48"
+  ],
+  "commit": "89d05ff74090d38f7d0dcd9d7eb22049dd222ae5",
+  "decided_at": "2026-10-31T13:06:45Z",
+  "decision_id": "0c90b5fbd462c992c353123914bea945",
+  "fingerprint": "550ee8cc186397d7",
+  "plugin_id": "anim-studio",
+  "reasons": [
+    "E_VERSION_NOT_NEW"
+  ],
+  "repo": "FluffyTaill/astra-anim-studio",
+  "repository_id": "1432942738",
+  "repository_owner_id": "195410205",
+  "run": "41203910816/1",
+  "schema": "astra.registry.decision/1",
+  "state": "refused",
+  "submission_id": "37d3639f-1c96-46cd-9a6b-328d46ec5390",
+  "tag": "v1.1.5",
+  "trigger": "ci",
+  "version": "1.1.5"
+}
