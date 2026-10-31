@@ -60,6 +60,7 @@ import path from "node:path";
 import { compareSemver, parseSemver } from "../tools/lib/semver.mjs";
 import { invalidId, unsafePathComponent } from "../tools/lib/ids.mjs";
 import { readTree, treeProblems } from "../tools/lib/tree-modes.mjs";
+import { PIN_REL, REVOKED_DIR, canonicalBody, keyByCredential, loadPin } from "./lib/operator-act.mjs";
 
 export const EXIT = { ok: 0, refused: 1, broke: 2, conflict: 3 };
 
@@ -617,9 +618,10 @@ const FINGERPRINT_RE = /^[0-9a-f]{16}$/;
 /**
  * The fingerprints a report PUBLISHES: those of its `published` decision
  * records. A held, refused or stopped record publishes nothing, so a deny has
- * nothing to withdraw from it.
+ * nothing to withdraw from it. `ownerApproved` holds the ones published on
+ * the owner's passkey approval (`actor: "operator"`, `trigger: "approval"`).
  */
-export function publishedFingerprints(reportDir) {
+export function publishedFingerprints(reportDir, { ownerApproved = null } = {}) {
   const fps = new Set();
   for (const r of filesUnder(path.join(reportDir, "log"))) {
     if (!DECISION_RECORD_FILE.test(`log/${r}`)) continue;
@@ -629,9 +631,54 @@ export function publishedFingerprints(reportDir) {
     } catch {
       continue;
     }
-    if (doc?.state === "published" && FINGERPRINT_RE.test(String(doc.fingerprint ?? ""))) fps.add(doc.fingerprint);
+    if (doc?.state === "published" && FINGERPRINT_RE.test(String(doc.fingerprint ?? ""))) {
+      fps.add(doc.fingerprint);
+      if (ownerApproved && doc.actor === "operator" && doc.trigger === "approval") ownerApproved.add(doc.fingerprint);
+    }
   }
   return fps;
+}
+
+/**
+ * The fingerprints at `ref` with an owner's approve act whose key is still
+ * the owner's there: no `state/passkeys/revoked/<kid>.json` and no `revoked`
+ * status in the pin at `ref` (operator-acts design §4.7, review finding 1).
+ * The key is named by THIS checkout's pin, which is the one the ingest
+ * honoured the act under.
+ */
+export function ownerApprovedAt(root, ref, { pin = loadPin() } = {}) {
+  const out = new Set();
+  const show = (rel) => {
+    try {
+      return git(root, ["show", `${ref}:${rel}`], { stdio: "pipe" });
+    } catch {
+      return null;
+    }
+  };
+  let pinAtRef = null;
+  try {
+    pinAtRef = JSON.parse(show(PIN_REL) ?? "null");
+  } catch {
+    pinAtRef = null;
+  }
+  const revoked = new Set(git(root, ["ls-tree", "-r", "--name-only", ref, "--", REVOKED_DIR]).split("\n").filter(Boolean)
+    .map((rel) => rel.slice(REVOKED_DIR.length + 1, -".json".length)));
+  for (const rel of git(root, ["ls-tree", "-r", "--name-only", ref, "--", "state/acts"]).split("\n").filter(Boolean)) {
+    let doc;
+    try {
+      doc = JSON.parse(show(rel) ?? "null");
+    } catch {
+      continue;
+    }
+    const body = canonicalBody(doc?.body);
+    if (body?.act !== "approve" || !FINGERPRINT_RE.test(String(body.target?.fingerprint ?? ""))) continue;
+    const key = keyByCredential(pin, doc?.assertion?.credential_id);
+    if (!key || revoked.has(key.kid)) continue;
+    const there = (Array.isArray(pinAtRef?.keys) ? pinAtRef.keys : []).find((k) => k?.kid === key.kid);
+    if (key.status !== "active" || there?.status === "revoked") continue;
+    out.add(body.target.fingerprint);
+  }
+  return out;
 }
 
 /**
@@ -668,17 +715,29 @@ export function deniedAt(root, ref) {
  * stop the publication it named, on the first push or on any redo, and nothing
  * said so. This is asked of the fetched main before EVERY push.
  */
-export function withdrawnAt(root, ref, reports, names) {
+export function withdrawnAt(root, ref, reports, names, { pin = null } = {}) {
   const out = new Map();
   if (!reports || !fs.existsSync(reports)) return out;
   const denied = deniedAt(root, ref);
+  let stillOwner = null;
   for (const name of names) {
     const dir = path.join(reports, name);
     if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) continue;
-    for (const fp of publishedFingerprints(dir)) {
+    const owner = new Set();
+    for (const fp of publishedFingerprints(dir, { ownerApproved: owner })) {
       if (denied.has(fp)) {
         out.set(name, `an operator deny record on main names fingerprint ${fp} (TRUST-33); this publication is dropped and not pushed`);
         break;
+      }
+      // Published on the owner's passkey approval: only while the key that
+      // gave it is still his at main. A revocation that landed while this run
+      // held the report stops it as a deny does (§4.7; review finding 1).
+      if (owner.has(fp)) {
+        stillOwner ??= ownerApprovedAt(root, ref, { pin: pin ?? loadPin() });
+        if (!stillOwner.has(fp)) {
+          out.set(name, `the owner's approval of fingerprint ${fp} is signed by a passkey revoked on main, or no longer on main; this publication is dropped and not pushed`);
+          break;
+        }
       }
     }
   }
@@ -799,6 +858,7 @@ export function run({
   push = true,
   dryRun = false,
   servicePath = false,
+  pin = null,
   log = console.log,
 } = {}) {
   const abs = (p) => (path.isAbsolute(p) ? p : path.resolve(root, p));
@@ -936,7 +996,7 @@ export function run({
       const live = fs.existsSync(abs(reports))
         ? fs.readdirSync(abs(reports)).filter((n) => !withdrawn.has(n))
         : [];
-      withdrawnNow = withdrawnAt(root, fetched, abs(reports), live);
+      withdrawnNow = withdrawnAt(root, fetched, abs(reports), live, { pin });
     } catch (err) {
       // Not knowing what main says is not leave to push: a fetch that fails
       // here would also fail the redo, and the push it guards is the one

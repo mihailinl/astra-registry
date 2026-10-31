@@ -1395,6 +1395,75 @@ test("a deny of another fingerprint withdraws nothing", () => {
   assert.ok(git(bare, "ls-tree", "-r", "--name-only", "main").includes("plugins/alpha/versions/0.1.0.json"));
 });
 
+// ── a passkey revoked while the ingest runs (design §4.7, review finding 1) ──
+//
+// A release published on the owner's passkey approval has no operator window,
+// so the revocation of a stolen key is the one stop left. It is read at main
+// before every push, as a deny is: an approval whose key main now holds
+// revoked publishes nothing.
+
+const REVOKE_KEY = { kid: "owner-phone", status: "active", acts: ["approve"], credential_id: "AAECAwQFBgcICQoLDA0ODw", alg: "ES256", public_key: "x", device_bound: "no", added: "2026-10-31", endorsed_by: "", enrolment: null, endorsement: null };
+const REVOKE_PIN = { schema: "astra.registry.operator-passkeys/1", aud: "astra-registry:1", rp_id: "acts.example.github.io", origins: ["https://acts.example.github.io"], keys: [REVOKE_KEY] };
+const approveOnMain = (clone) => {
+  const body = JSON.stringify({ act: "approve", aud: "astra-registry:1", exp: "2026-10-31T13:00:00Z", iat: "2026-10-31T12:00:00Z", jti: "9".repeat(32), main: "a".repeat(40), schema: "astra.registry.operator-act-body/1", target: { fingerprint: DENIED_FP } });
+  write(clone, `state/acts/${"9".repeat(32)}.json`, `${JSON.stringify({ schema: "astra.registry.operator-act/1", jti: "9".repeat(32), body, assertion: { credential_id: REVOKE_KEY.credential_id }, run: "x", at: "2026-10-31T12:01:00Z" })}\n`);
+  git(clone, "add", "-A");
+  git(clone, "commit", "-m", "registry: moderation (1 operator act(s))");
+  git(clone, "push", "--quiet", "origin", "HEAD:main");
+};
+const ownerRecord = () => recordDoc({ actor: "operator", trigger: "approval" });
+
+test("an owner-approved publication lands while the key is the owner's, and is dropped once main revokes it, the redo included", () => {
+  const ok = estate();
+  approveOnMain(ok.two);
+  git(ok.one, "pull", "--quiet", "--ff-only", "origin", "main");
+  const r1 = withRecord(report(ok.dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", ownerRecord());
+  const landed = run({ root: ok.one, reports: r1, watchState: path.join(ok.dir, "none"), skipChecks: true, servicePath: true, pin: REVOKE_PIN, log: quiet });
+  assert.equal(landed.outcome, "committed", JSON.stringify(landed));
+
+  const { dir, one, two, bare } = estate();
+  approveOnMain(two);
+  git(one, "pull", "--quiet", "--ff-only", "origin", "main");
+  const reports = withRecord(report(dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", ownerRecord());
+  let revoked = false;
+  const lines = [];
+  const log = (l) => {
+    lines.push(l);
+    // The revocation lands after this run read main clean once: it is the
+    // redo after a rejected push that has to see it.
+    if (l.startsWith("attempt 1 ") && !revoked) {
+      git(two, "pull", "--quiet", "--rebase", "origin", "main");
+      write(two, "plugins/gamma/plugin.json", '{"id":"gamma"}\n');
+      git(two, "add", "-A");
+      git(two, "commit", "-m", "someone else's plugin");
+      git(two, "push", "--quiet", "origin", "HEAD:main");
+    }
+    if (l.startsWith("attempt 2 ") && !revoked) {
+      write(two, "state/passkeys/revoked/owner-phone.json", '{"schema":"astra.registry.passkey-revoked/1","kid":"owner-phone","at":"2026-10-31T12:10:00Z","run":"x"}\n');
+      git(two, "add", "-A");
+      git(two, "commit", "-m", "registry: moderation (revoke)");
+      git(two, "push", "--quiet", "origin", "HEAD:main");
+      revoked = true;
+    }
+  };
+  const result = run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, servicePath: true, pin: REVOKE_PIN, log });
+  assert.ok(revoked, lines.join(" | "));
+  assert.equal(result.outcome, "refused", `a release approved by a revoked passkey was pushed: ${JSON.stringify(result)} ${lines.join(" | ")}`);
+  assert.match(result.refusals[0].message, /revoked on main/);
+  assert.ok(!git(bare, "ls-tree", "-r", "--name-only", "main").includes("plugins/alpha/versions/0.1.0.json"));
+
+  // The same key revoked by status in main's pin, with no record.
+  const st = estate();
+  approveOnMain(st.two);
+  write(st.two, "bot/lib/operator-passkeys.json", `${JSON.stringify({ ...REVOKE_PIN, keys: [{ ...REVOKE_KEY, status: "revoked" }] })}\n`);
+  git(st.two, "add", "-A");
+  git(st.two, "commit", "-m", "pin: revoke");
+  git(st.two, "push", "--quiet", "origin", "HEAD:main");
+  git(st.one, "pull", "--quiet", "--ff-only", "origin", "main");
+  const r3 = withRecord(report(st.dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", ownerRecord());
+  assert.equal(run({ root: st.one, reports: r3, watchState: path.join(st.dir, "none"), skipChecks: true, servicePath: true, pin: REVOKE_PIN, log: quiet }).outcome, "refused");
+});
+
 // ── this file, from outside ──────────────────────────────────────────────────
 //
 // The `exit` handler above is invisible from inside the process it runs in:

@@ -67,6 +67,7 @@ import { decide } from "./policy/decision.mjs";
 import { alreadyPublished, noListingNoBinding, terminalOnMain } from "../decide.mjs";
 import { CHECK_FACTS_SCHEMA } from "../ingest.mjs";
 import { artifactDigests, submissionDigest, submissionFingerprint } from "./policy/release.mjs";
+import { loadPin, ownerApprovalsAt } from "./operator-act.mjs";
 import { HOUR_MS, iso } from "./policy/time.mjs";
 import { CODES } from "./codes.mjs";
 import { POLICY_CODES } from "./policy/constants.mjs";
@@ -283,7 +284,7 @@ function titleOf(code) {
  * @param {string} root
  * @param {{now: string}} opts
  */
-export function readGitState(root, { markersOverride = null } = {}) {
+export function readGitState(root, { markersOverride = null, pin = null } = {}) {
   const records = readJsonTree(path.join(root, "log", "decisions"));
   const alerts = new Map();
   for (const { doc } of readJsonDir(path.join(root, "state", "alerts"))) {
@@ -313,7 +314,10 @@ export function readGitState(root, { markersOverride = null } = {}) {
     cutover: fs.existsSync(path.join(root, "log", "cutover.json")),
     baseline: fs.existsSync(path.join(root, "log", "baseline.json")),
   };
-  return { root, records: records.map((r) => r.doc).filter(Boolean), alerts, denied, oks, markers };
+  // The owner's approve acts (operator-acts design §4.7), each verified under
+  // the pin from THIS checkout and honoured only while its key is active.
+  const ownerApprovals = ownerApprovalsAt(root, { pin: pin ?? loadPin() });
+  return { root, records: records.map((r) => r.doc).filter(Boolean), alerts, denied, oks, markers, ownerApprovals };
 }
 
 function readJsonDir(dir) {
@@ -557,7 +561,7 @@ export const FIRST_BINDING_SELF_BASES = Object.freeze(["owner", "admin", "mainta
  *
  * @returns {{by: string, alert?: object, windowEndsAt?: string}|null}
  */
-export function firstBindingCleared({ actor, verdict, lineHash, records = [], alerts = null, denied = null, ids, pluginId, oks = null, fingerprint = null, ownerFile = null }) {
+export function firstBindingCleared({ actor, verdict, lineHash, records = [], alerts = null, denied = null, ids, pluginId, oks = null, fingerprint = null, ownerFile = null, ownerApprovals = [] }) {
   if (!lineHash || verdict !== "pass") return null;
   // The self path needs the owner FILE to be the owner's too (ID-63): a
   // stranger's merged pull request can carry a token the stranger minted —
@@ -592,7 +596,11 @@ export function firstBindingCleared({ actor, verdict, lineHash, records = [], al
       || (isStr(held.tag) && r?.tag === held.tag && r?.repository_id === held.repository_id);
     if (records.some((r) => sameRelease(r) && (r.state === "stopped" || (r.state === "refused" && (r.reasons ?? []).includes("M_REJECT"))))) continue;
     if (!isTime(alert.delivered_at)) continue;
-    const okd = oks?.get(fp) && okAnswers({ ok: oks.get(fp), record: alert, fingerprint: fp, digest: alert.digest, heldDecisionId: alert.held_decision_id });
+    // The owner's «OK» is now an approve act of the same held record (review
+    // finding 9): one that verifies for the alert's held record and whole
+    // digest ends this window as an OK record does.
+    const okd = (oks?.get(fp) && okAnswers({ ok: oks.get(fp), record: alert, fingerprint: fp, digest: alert.digest, heldDecisionId: alert.held_decision_id }))
+      || (ownerApprovals ?? []).some((a) => a?.target?.held_decision_id === alert.held_decision_id && a?.target?.digest === alert.digest && a?.target?.fingerprint === fp);
     const windowEndsAt = okd ? alert.delivered_at : iso(new Date(new Date(alert.delivered_at).getTime() + OPERATOR_WINDOW_HOURS * HOUR_MS));
     return { by: "approved", alert, fingerprint: fp, windowEndsAt };
   }
@@ -729,6 +737,34 @@ export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, 
     digest,
     held_decision_id: heldRecord.decision_id ?? null,
   };
+}
+
+/**
+ * The owner's own approval of THIS release (operator-acts design §4.7): an
+ * approve act the ingest may honour (`ownerApprovalsAt`) whose target is a
+ * `held` record on `main` of this fingerprint, by its `held_decision_id`, and
+ * whose whole digest and repository id are this run's — the same binding
+ * `honourApproval` holds a moderator's approval to. A 16-hex label match
+ * alone clears nothing. TRUST-27's wait applies as it does to any approval.
+ *
+ * It ends the operator window (no alert, no `W_OPERATOR_WINDOW`) and nothing
+ * else: a deny is read first, and MIG-12 and BOT-28's author window stand.
+ *
+ * @returns {{approval: object, act: object, heldRecord: object}|null}
+ */
+export function ownerApproval({ ownerApprovals = [], records = [], fingerprint, digest = null, repositoryId = null, now }) {
+  if (!ownerApprovals?.length || !/^[0-9a-f]{64}$/.test(String(digest ?? ""))) return null;
+  for (const act of ownerApprovals) {
+    const t = act?.target ?? {};
+    if (t.fingerprint !== fingerprint || t.digest !== digest) continue;
+    const held = records.find((r) => r?.decision_id === t.held_decision_id && r?.state === "held" && r?.fingerprint === fingerprint);
+    if (!held || recordDigest(held) !== digest) continue;
+    if (t.repository_id !== held.repository_id || (isStr(repositoryId) && held.repository_id !== repositoryId)) continue;
+    if ((held.reasons ?? []).includes("R_FIRST_BINDING") &&
+        new Date(now).getTime() - new Date(held.decided_at).getTime() < FIRST_BINDING_WAIT_DAYS * DAY_MS) continue;
+    return { approval: { by: "owner", at: act.at, for: fingerprint, publishNow: false }, act, heldRecord: held };
+  }
+  return null;
 }
 
 // ── BOT-28 / ID-60: the notice ──────────────────────────────────────────────
@@ -1277,7 +1313,7 @@ export function decideSubmission(input) {
     // a moderator already approved (`firstBindingCleared`).
     if (binding.outcome === "one") {
       firstCleared = firstBindingCleared({
-        actor: verified.actor, verdict, lineHash, records, alerts: git.alerts, denied: git.denied, oks: git.oks,
+        actor: verified.actor, verdict, lineHash, records, alerts: git.alerts, denied: git.denied, oks: git.oks, ownerApprovals: git.ownerApprovals ?? [],
         ids: identity, pluginId: verified.plugin_id, fingerprint: verified.fingerprint, ownerFile: verified.owner_file,
       });
       if (!firstCleared) heldCodes.push("R_FIRST_BINDING");
@@ -1325,6 +1361,14 @@ export function decideSubmission(input) {
     repositoryId: verified.repository_id,
   });
 
+  // The owner's own approval, by passkey, of this held release (§4.7). It
+  // stands in for a moderator's and ends the operator window; when both
+  // exist it is the one honoured, since it is the operator's own word.
+  const owner = ownerApproval({
+    ownerApprovals: git.ownerApprovals ?? [], records, fingerprint: verified.fingerprint, digest,
+    repositoryId: verified.repository_id, now,
+  });
+
   const queued = git.queueEntry ?? null;
   const decision = decide({
     path: "service",
@@ -1337,7 +1381,7 @@ export function decideSubmission(input) {
     issue: null,
     track: git.track,
     queued: queued && queued.fingerprint && queued.fingerprint !== verified.fingerprint ? null : queued,
-    approval: honoured.approval,
+    approval: owner?.approval ?? honoured.approval,
     identity: recycled ? { code: "B_REPOSITORY_RECYCLED", reason: recycled } : null,
     now: new Date(now),
     shadow: shadowed,
@@ -1513,7 +1557,8 @@ export function decideSubmission(input) {
   // 2.22.0 and approved after 3.0.0 landed — clears nothing, and the release
   // publishes at once like any other: no window stands between the checks and
   // a release nothing holds.
-  const approved = Boolean(honoured.approval) && decision.reasons.some((r) => r.code === "P_APPROVED");
+  const approved = Boolean(owner?.approval ?? honoured.approval) && decision.reasons.some((r) => r.code === "P_APPROVED");
+  const ownerApproved = approved && Boolean(owner);
 
   // TRUST-33 — an operator deny record withholds, whatever else is true.
   if (git.denied?.has(verified.fingerprint)) {
@@ -1574,9 +1619,10 @@ export function decideSubmission(input) {
       }
     }
     // TRUST-14 / TRUST-32 — the operator alert and its window (decision D2),
-    // which an operator OK ends sooner (contract 5.8.0).
+    // which an operator OK ends sooner (contract 5.8.0). The owner's own
+    // approval is the operator's answer already: no alert, no window (§4.7).
     const event = "approval";
-    const w = operatorWindow({
+    const w = ownerApproved ? { ok: true, name: null, wait: null } : operatorWindow({
       record: git.alerts?.get(verified.fingerprint) ?? null,
       fingerprint: verified.fingerprint,
       event,
@@ -1636,7 +1682,7 @@ export function decideSubmission(input) {
       decided_at: startedAt,
       state: "published",
       reasons: codesOf("publish"),
-      ...(approved ? approvalMembers(honoured.decision, honoured.approval) : {}),
+      ...(ownerApproved ? { actor: "operator", trigger: "approval" } : approved ? approvalMembers(honoured.decision, honoured.approval) : {}),
     },
     drop_queue: Boolean(queued),
   });

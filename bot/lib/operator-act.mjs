@@ -914,3 +914,30 @@ export function revokedRecordProblems(doc, { file, pin }) {
   if (!RUN_RE.test(String(doc.run))) p.push(`${file}: run is not a workflow run URL`);
   return p;
 }
+
+// ── the owner's approvals, as the ingest reads them (design §4.7) ───────────
+
+/**
+ * Every approve act on the tree at `root` that the ingest may honour now: its
+ * record verifies under its pinned key, its `aud` is this registry's, and its
+ * key is `active` NOW and may approve — no revocation record and no
+ * `revoked` status. A key revoked after the act was applied is not honoured
+ * (§4.7): the release falls back to a moderator's approval with its operator
+ * window, or stays held. `exp` is not re-checked: the moderation run applied
+ * the act inside it.
+ *
+ * @returns {{jti: string, kid: string, at: string, target: object}[]}
+ */
+export function ownerApprovalsAt(root, { pin = loadPin() } = {}) {
+  const out = [];
+  const revokedAt = (kid) => fs.existsSync(path.join(root, ...REVOKED_DIR.split("/"), `${kid}.json`));
+  for (const doc of readActRecords(root).values()) {
+    const body = canonicalBody(doc?.body);
+    if (body?.act !== "approve" || body.aud !== pin?.aud) continue;
+    if (actRecordProblems(doc, { file: `${ACTS_DIR}/${doc.jti}.json`, pin }).length) continue;
+    const key = keyByCredential(pin, doc.assertion.credential_id);
+    if (!key || key.status !== "active" || revokedAt(key.kid) || !key.acts?.includes("approve")) continue;
+    out.push({ jti: doc.jti, kid: key.kid, at: doc.at, target: body.target });
+  }
+  return out;
+}
