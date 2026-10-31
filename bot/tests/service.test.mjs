@@ -82,6 +82,7 @@ import {
   conditionalProblems,
   createClient,
   operationProblems,
+  operatorActResult,
   predicateHolds,
   splitGateItems,
   successProblems,
@@ -213,17 +214,19 @@ test("the compiled tables are internally consistent before anything compares the
   assert.notEqual(BOT_AUDIENCE, `${API_BASE}bot`.replace("/bot", "bot"));
 });
 
-test("the nine workflow-keyed operations are the token file's, with a floor of 9", () => {
+test("the ten workflow-keyed operations are the token file's, with a floor of 10", () => {
   const entries = tokenFile.entries.filter((e) => e.kind === "operation" && (e.emitter ?? []).includes("bot"));
+  // Nine distinct operations, ten workflow-keyed rows, since contract 6.10.0
+  // added `operator act result` (TRUST-48; BOT-93). Eight and nine before it.
   assert.ok(
-    entries.length >= 8,
-    `the token file holds ${entries.length} bot operations and there were 8 distinct ones at contract ` +
+    entries.length >= 9,
+    `the token file holds ${entries.length} bot operations and there were 9 distinct ones at contract ` +
     `${tokenFile.contract_version}; a filter that matched nothing would compare two empty tables and pass`,
   );
 
   // Expanded the way BOT-91 keys them: an operation's `workflow` is part of it,
   // and "both (BOT-91)" is two rows. That expansion — not a list typed beside
-  // it — is what makes the floor of 9 a count of something.
+  // it — is what makes the floor of 10 a count of something.
   const expected = [];
   for (const e of entries) {
     const w = String(e.workflow ?? "");
@@ -235,8 +238,8 @@ test("the nine workflow-keyed operations are the token file's, with a floor of 9
   expected.sort((a, b) => `${a.workflow} ${a.name}`.localeCompare(`${b.workflow} ${b.name}`));
 
   assert.ok(
-    expected.length >= 9,
-    `the token file expands to ${expected.length} workflow-keyed bot operations and the floor is 9. A floor and ` +
+    expected.length >= 10,
+    `the token file expands to ${expected.length} workflow-keyed bot operations and the floor is 10. A floor and ` +
     "the thing it counts are two claims; if this ever fails, one of them is wrong and it is not automatically " +
     "the floor",
   );
@@ -1261,6 +1264,33 @@ test("the closed lists this client names are the token file's", () => {
   assert.equal(tokens.get("too_early")?.includes("bot"), false, "`too_early` is a panel token (§0.8)");
 });
 
+test("TRUST-48's act outcomes and refusal codes are the token file's, both ways", () => {
+  // SCOPE-9 for the two lists contract 6.10.0 adds to §0.8 (BOT-93): the bot
+  // posts nothing the file does not list, and the file lists nothing the bot
+  // cannot post. In the order TRUST-48 asks its checks, which is the order the
+  // verifier names them in, so a reordering on either side is a finding.
+  const list = (name) => tokenFile.entries.find((e) => e.kind === "closed_list" && e.name === name);
+  const codes = list("operator_act_refusal_codes");
+  const outcomes = list("operator_act_results");
+  assert.ok(codes && outcomes, `the token file (${tokenFile.contract_version}) records no operator-act lists`);
+  assert.deepEqual(codes.values, [...ACT_CODES], "bot/lib/operator-act.mjs's ACT_CODES and §0.8's operator-act refusal codes have parted");
+  assert.equal(codes.accepts_unlisted, undefined, "§0.8 closes the operator-act codes in both directions");
+  for (const e of [codes, outcomes]) {
+    assert.deepEqual([e.emitter, e.acceptor], [["bot"], ["service"]], `${e.name} travels bot → service`);
+  }
+  // Every outcome the file lists composes, and nothing else does.
+  const jti = "a".repeat(32);
+  for (const outcome of outcomes.values) {
+    const body = outcome === "applied"
+      ? operatorActResult({ jti, outcome, commit: "b".repeat(40) })
+      : operatorActResult({ jti, outcome, refusal_code: ACT_CODES[0] });
+    assert.equal(body.outcome, outcome);
+  }
+  assert.deepEqual(outcomes.values, ["applied", "refused"]);
+  assert.throws(() => operatorActResult({ jti, outcome: "deferred" }), /is not an act outcome/,
+    "a deferred act is answered by no result at all (BOT-93), never by a third outcome");
+});
+
 test("each disjunction is two biconditionals in the file, and the module reads both halves", () => {
   // The token file's readme: "A disjunction is published as two biconditionals
   // and never as a group: each member of the pair is `conditional`, and a
@@ -1982,7 +2012,7 @@ test("the moderation workflow's three operations answer, and `claim` is not amon
     assert.equal(s.calls[0].raw, "");
     assert.equal(s.calls[0].contentType, null, "a GET with no body sends no Content-Type");
     assert.deepEqual(c.alerts, []);
-    assert.deepEqual(Object.keys(OPERATIONS.moderation).sort(), ["moderationWork", "result", "serviceDecisionResult"]);
+    assert.deepEqual(Object.keys(OPERATIONS.moderation).sort(), ["moderationWork", "operatorActResult", "result", "serviceDecisionResult"]);
   } finally {
     await s.close();
   }
@@ -4587,4 +4617,153 @@ test("T1/T3: no FLOW-13 row, and no FLOW-67 no-listing message, cites a contract
     readCommit: "f".repeat(40), repo: "stranger/thing", authorCommit: "a".repeat(40),
   });
   assert.ok(!CLAUSE_ID_RE.test(out.record.message), `a clause id reached the FLOW-67 no-listing message: ${out.record.message}`);
+});
+
+// ── the owner's approval by passkey, at the ingest (operator-acts design §4.7) ──
+//
+// An approve act on `main` that verifies under a pinned key that is active NOW
+// clears the held record it names — by `held_decision_id`, the whole digest
+// and the repository id — and ends the operator window: no alert, no
+// `W_OPERATOR_WINDOW`. A deny is still read first, and BOT-28's author window
+// and MIG-12 still stand. A key revoked after the act was applied is not
+// honoured: the release falls back to a moderator's approval with its window,
+// or stays held.
+
+import { firstBindingCleared, ownerApproval } from "../lib/service-decide.mjs";
+import * as OwnerAuth from "./fixtures/authenticator.mjs";
+import { ACT_CODES, actRecord } from "../lib/operator-act.mjs";
+
+const OWNER_HELD = "1".repeat(32);
+const ownerTarget = (over = {}) => ({
+  held_decision_id: OWNER_HELD, digest: FULL, fingerprint: FP, plugin_id: P.id, version: P.version, tag: P.tag,
+  repo: P.repo, repository_id: P.rid, commit: P.commit, ...over,
+});
+const ownerAct = (over = {}) => ({ jti: "9".repeat(32), kid: "owner-phone", at: "2026-09-26T09:00:00Z", target: ownerTarget(over) });
+const ownerRun = ({ acts = [ownerAct()], decisions = [], held = {}, denied = new Set(), alerts = new Map(), notice, now } = {}) => decideWith({
+  lease: { claimed_from: "approved" },
+  ask: ask({ gates: { stop_status: "no_stop", decisions }, notice: notice === undefined ? { kind: "approved", status: "sent", accepted_at: "2026-09-26T05:00:00Z" } : notice }),
+  git: git({ existing: existing(), records: [transfer, heldRecord(held)], alerts, denied, ownerApprovals: acts }),
+  now,
+});
+
+test("§4.7: the owner's approve act publishes the held release at once, with no alert and no operator window, as the operator's record", () => {
+  const plan = ownerRun();
+  assert.equal(plan.kind, "state", JSON.stringify(plan.wait ?? plan.alert ?? null));
+  assert.equal(plan.state, "published");
+  assert.ok(plan.alert == null, "an operator alert was raised for the operator's own approval");
+  assert.equal(plan.record.actor, "operator");
+  assert.equal(plan.record.trigger, "approval");
+  assert.equal(plan.record.moderator, undefined, "a moderator handle rode on the owner's approval");
+  // With a moderator's approval beside it, the owner's is the one honoured.
+  const both = ownerRun({ decisions: [approval()] });
+  assert.equal(both.state, "published");
+  assert.equal(both.record.actor, "operator");
+});
+
+test("§4.7: an owner act for another digest under the same 16-hex label, another held record or another repository clears nothing", () => {
+  for (const [what, over] of [
+    ["another digest, the same label", { digest: `${FP}${"0".repeat(48)}` }],
+    ["another held record", { held_decision_id: "2".repeat(32) }],
+    ["another repository id", { repository_id: "999" }],
+  ]) {
+    const plan = ownerRun({ acts: [ownerAct(over)] });
+    assert.equal(plan.state, "held", `${what}: ${plan.kind} ${plan.state ?? ""} ${JSON.stringify(plan.wait ?? null)}`);
+  }
+  assert.equal(ownerApproval({ ownerApprovals: [ownerAct()], records: [heldRecord({ state: "published" })], fingerprint: FP, digest: FULL, now: P.now }), null,
+    "a record that is not `held` was cleared");
+});
+
+test("§4.7: a deny beside the owner's approve withholds; R_BINDING_CHANGED still waits for the previous account's notice", () => {
+  const denied = ownerRun({ denied: new Set([FP]) });
+  assert.equal(denied.state, "refused");
+  assert.deepEqual(codes(denied), ["P_OPERATOR_DENIED"]);
+  const changed = ownerRun({ held: { reasons: ["R_BINDING_CHANGED"] }, notice: null });
+  assert.equal(changed.kind, "wait", "the owner's approval skipped BOT-28's author window for a change of hands");
+  assert.equal(changed.wait.code, "W_NOTICE_PENDING");
+});
+
+test("§4.7: a key revoked after its act was applied is not honoured; a moderator's approval then waits out its window", () => {
+  const t = fs.mkdtempSync(path.join(os.tmpdir(), "owner-approval-"));
+  try {
+    const key = OwnerAuth.makeKey("ES256", { kid: "owner-phone" });
+    const pin = OwnerAuth.pinOf([key], {});
+    const item = OwnerAuth.act(key, OwnerAuth.body({ act: "approve", target: ownerTarget(), now: Date.parse("2026-09-26T09:00:00Z") }));
+    const put = (rel, doc) => { fs.mkdirSync(path.dirname(path.join(t, rel)), { recursive: true }); fs.writeFileSync(path.join(t, rel), `${JSON.stringify(doc)}\n`); };
+    put(`state/acts/${item.jti}.json`, actRecord(item, { run: "https://github.com/o/r/actions/runs/1", at: "2026-09-26T09:01:00Z" }));
+    const live = readGitState(t, { pin, markersOverride: {} }).ownerApprovals;
+    assert.deepEqual(live.map((a) => a.kid), ["owner-phone"]);
+    assert.equal(ownerRun({ acts: live }).state, "published");
+
+    put("state/passkeys/revoked/owner-phone.json", { schema: "astra.registry.passkey-revoked/1", kid: "owner-phone", at: "2026-09-26T10:00:00Z", run: "https://github.com/o/r/actions/runs/2" });
+    const after = readGitState(t, { pin, markersOverride: {} }).ownerApprovals;
+    assert.deepEqual(after, [], "an approve signed by a revoked key is still honoured");
+    assert.equal(ownerRun({ acts: after }).state, "held");
+    const fallback = ownerRun({ acts: after, decisions: [approval()] });
+    assert.equal(fallback.kind, "wait", "with the owner's approval gone, a moderator's approval published with no window");
+    assert.ok(fallback.alert, "the moderator's approval raised no operator alert");
+
+    // Revoked by status in the pin, and an act record that does not verify.
+    assert.deepEqual(readGitState(t, { pin: OwnerAuth.pinOf([{ ...key.pinKey, status: "revoked" }]), markersOverride: {} }).ownerApprovals, []);
+    fs.rmSync(path.join(t, "state/passkeys"), { recursive: true });
+    put(`state/acts/${item.jti}.json`, actRecord({ ...item, body: item.body.replace(P.version, "0.2.1") }, { run: "https://github.com/o/r/actions/runs/1", at: "2026-09-26T09:01:00Z" }));
+    assert.deepEqual(readGitState(t, { pin, markersOverride: {} }).ownerApprovals, [], "a record that does not verify was honoured");
+  } finally {
+    fs.rmSync(t, { recursive: true, force: true });
+  }
+});
+
+test("MIG-10 (review finding 9): the owner's approve of the alert's held record ends the window for later tags of the binding, as an OK does", () => {
+  const lineHash = "ab".repeat(8);
+  const alert = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: "2026-09-26T08:00:00Z", delivered_at: "2026-09-26T09:00:00Z", run: "1/1", token_hash: lineHash, held_decision_id: OWNER_HELD, digest: FULL };
+  const held = heldRecord({ reasons: ["R_FIRST_BINDING"] });
+  const args = { verdict: "pass", lineHash, records: [held], alerts: new Map([[FP, alert]]), denied: new Set(), ids: { repository_id: P.rid, repository_owner_id: P.oid }, pluginId: P.id, fingerprint: "f".repeat(16) };
+  const before = firstBindingCleared(args);
+  assert.equal(before.by, "approved");
+  assert.notEqual(before.windowEndsAt, alert.delivered_at);
+  const after = firstBindingCleared({ ...args, ownerApprovals: [ownerAct()] });
+  assert.equal(after.windowEndsAt, alert.delivered_at, "the owner's approve did not end the MIG-10 window");
+  const other = firstBindingCleared({ ...args, ownerApprovals: [ownerAct({ digest: `${FP}${"0".repeat(48)}` })] });
+  assert.notEqual(other.windowEndsAt, alert.delivered_at, "an approve of another digest ended the window");
+});
+
+test("MIG-10 (review finding 2): the owner's approve of a first binding covers a later tag, which waits for it to land instead of being held again", () => {
+  const line = { outcome: "one", token: "t".repeat(24), token_hash: "2".repeat(16), code: null, alert: false, reason: null };
+  const aFacts = { repo: P.repo, tag: "v0.1.9", id: P.id, version: "0.1.9", commit: P.commit, digests: DIGESTS };
+  const aDigest = submissionDigest(aFacts);
+  const A = { schema: "astra.registry.decision/1", ...HELD_FACTS, tag: aFacts.tag, version: aFacts.version, submission_id: P.sid2,
+    fingerprint: aDigest.slice(0, 16), state: "held", reasons: ["R_FIRST_BINDING"], decided_at: "2026-09-25T00:00:00Z", decision_id: OWNER_HELD };
+  const act = { jti: "9".repeat(32), kid: "owner-phone", at: "2026-09-26T09:00:00Z",
+    target: { held_decision_id: OWNER_HELD, digest: aDigest, fingerprint: A.fingerprint, plugin_id: P.id, version: "0.1.9", tag: "v0.1.9", repo: P.repo, repository_id: P.rid, commit: P.commit } };
+  const run = (acts, records = [baseline(), A]) => decideWith({
+    verified: verified({ binding: line }),
+    ask: ask({ verdict: "pass" }),
+    git: git({ existing: existing(), records, ownerApprovals: acts }),
+  });
+  const held = run([]);
+  assert.equal(held.state, "held", `${held.kind} ${JSON.stringify(held.wait ?? null)}`);
+  assert.ok(codes(held).includes("R_FIRST_BINDING"));
+  const covered = run([act]);
+  assert.equal(covered.kind, "wait", `the later tag was not covered: ${covered.kind} ${JSON.stringify(codes(covered))}`);
+  assert.equal(covered.wait.code, "W_APPROVAL_DEFERRED");
+  const cleared = firstBindingCleared({ verdict: "pass", lineHash: "2".repeat(16), records: [A], ids: { repository_id: P.rid, repository_owner_id: P.oid }, pluginId: P.id, fingerprint: FP, ownerApprovals: [act] });
+  assert.deepEqual([cleared.by, cleared.windowEndsAt], ["owner_approved", act.at]);
+  // Not for another digest, another plugin's hold, a denied or a stopped release.
+  assert.equal(run([{ ...act, target: { ...act.target, digest: `${A.fingerprint}${"0".repeat(48)}` } }]).state, "held");
+  assert.equal(run([act], [baseline(), { ...A, repository_owner_id: "999" }]).state, "held");
+  assert.equal(decideWith({ verified: verified({ binding: line }), ask: ask({ verdict: "pass" }), git: git({ existing: existing(), records: [baseline(), A], ownerApprovals: [act], denied: new Set([A.fingerprint]) }) }).state, "held");
+  assert.equal(run([act], [baseline(), A, { ...A, state: "stopped", decision_id: "3".repeat(32) }]).state, "held");
+});
+
+test("§4.7 (review finding 8): under a pin that fails its own rules the ingest honours no owner approval", () => {
+  const t = fs.mkdtempSync(path.join(os.tmpdir(), "owner-approval-pin-"));
+  try {
+    const key = OwnerAuth.makeKey("ES256", { kid: "owner-phone" });
+    const item = OwnerAuth.act(key, OwnerAuth.body({ act: "approve", target: ownerTarget(), now: Date.parse("2026-09-26T09:00:00Z") }));
+    fs.mkdirSync(path.join(t, "state", "acts"), { recursive: true });
+    fs.writeFileSync(path.join(t, "state", "acts", `${item.jti}.json`), JSON.stringify(actRecord(item, { run: "https://github.com/o/r/actions/runs/1", at: "2026-09-26T09:01:00Z" })));
+    assert.equal(readGitState(t, { pin: OwnerAuth.pinOf([key]), markersOverride: {} }).ownerApprovals.length, 1);
+    assert.deepEqual(readGitState(t, { pin: OwnerAuth.pinOf([{ ...key.pinKey, enrolment: null }]), markersOverride: {} }).ownerApprovals, []);
+  } finally {
+    fs.rmSync(t, { recursive: true, force: true });
+  }
 });

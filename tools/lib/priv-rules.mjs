@@ -124,6 +124,21 @@ export const DOCUMENT_MEMBERS = {
     handleOk: [],
     source: "contract TRUST-33 (`astra.registry.deny/1`); registry plan M-T3.5",
   },
+  // The owner's passkey act, as the moderation run records it (operator-acts
+  // design §4.5): the signed body verbatim and the assertion, and nothing
+  // about who relayed it — no account id, sign-in time or `amr`.
+  "operator-act-record": {
+    members: ["schema", "jti", "body", "assertion", "run", "at"],
+    uuidOk: [],
+    handleOk: [],
+    source: "operator-acts design §4.5 (`astra.registry.operator-act/1`, schema/operator-act-v1.json)",
+  },
+  "passkey-revoked": {
+    members: ["schema", "kid", "at", "run"],
+    uuidOk: [],
+    handleOk: [],
+    source: "operator-acts design §2.3 (`astra.registry.passkey-revoked/1`)",
+  },
   "ok-record": {
     members: ["schema", "fingerprint", "approval_decided_at", "run", "at"],
     uuidOk: [],

@@ -429,26 +429,6 @@ test("every entry is a well-formed path, and one bad entry refuses the whole set
 // nothing is pending, and the next entry that names a path not yet on the
 // tree writes its row here with a task and a step.
 const UNRESOLVED_BY = new Map([
-  // Contract 6.8.0 publishes both before the operator-acts registry pull
-  // request lands them (astra-plugins-ops `dev/operator-acts-on-site-design.md`
-  // §6 step 6: `bot/lib/operator-act.mjs`, `bot/lib/operator-acts.mjs` and the
-  // two schemas below). That pull request is the one TRUST-31 "A tree
-  // acknowledged before its merge" exists for, so it is published as a new
-  // rollout step, R11, rather than folded into R6 through R10, each of which
-  // already names a different exit. §9's table does not carry R11 yet — that
-  // is 6.9.0's work, when the operator-acts feature itself ships — but
-  // `log/rollout/R11-exit.json` is the landing condition this row is held to
-  // either way, by the same grammar every other step uses.
-  ["schema/moderation-work-v2.json", {
-    by: "the operator-acts registry pull request",
-    why: "the registry's check of the service's `astra.plugins.bot-moderation-work/2` answer",
-    due: "R11",
-  }],
-  ["schema/operator-act-v1.json", {
-    by: "the operator-acts registry pull request",
-    why: "types the record `state/acts/<jti>.json` the bot writes for every operator act it applies",
-    due: "R11",
-  }],
 ]);
 
 /** Edit distance, with an early exit: anything over `max` is just "far". */
@@ -547,6 +527,40 @@ test("every entry resolves, or carries an excuse that expires", () => {
     ? `note  no rollout exit marker is on the tree, so ${UNRESOLVED_BY.size} excuse(s) have not expired: ` +
       `${[...UNRESOLVED_BY].map(([e, r]) => `${e} until ${r.due}`).join(", ")}.`
     : `note  exited: ${[...exited].sort().join(", ")}; ${UNRESOLVED_BY.size} excuse(s) held against them.`);
+});
+
+// ── the operator-acts files, inside through `bot/lib/` ──────────────────────
+//
+// Contract 6.8.0 (TRUST-31's schema paragraph) says the operator-acts pull
+// request's modules need no entry of their own, because `bot/lib/` is a
+// directory entry. That is a claim about where the files ARE: a verifier or an
+// apply module that landed at `bot/operator-act.mjs`, or a pin that landed at
+// `bot/operator-passkeys.json`, would be outside every entry — so a registry
+// writer could change what a passkey act needs, or which keys are the owner's,
+// without the bot returning to shadow — and every other leg of this file would
+// stay green. So the paths are asserted, each tracked and inside only through
+// `bot/lib/`.
+const OPERATOR_ACT_FILES = ["bot/lib/operator-act.mjs", "bot/lib/operator-acts.mjs", "bot/lib/operator-passkeys.json"];
+
+test("the passkey verifier, its apply module and its pin are tracked inside the set through `bot/lib/`", () => {
+  const files = new Set(tracked());
+  for (const f of OPERATOR_ACT_FILES) {
+    assert.ok(files.has(f), `${f} is not tracked at HEAD`);
+    assert.ok(inSet(f), `${f} is outside TRUST-31's set`);
+    assert.ok(!ENTRIES.includes(f) && ENTRIES.includes("bot/lib/"), `${f} is inside by an entry of its own, not \`bot/lib/\``);
+  }
+});
+
+test("the pin loads by literal path from this checkout, never from a tree under test", async () => {
+  // Design §2.2: as the schemas are (TRUST-31's schema paragraph). A pin read
+  // through `--registry-dir` would let the tree being judged name the keys it
+  // is judged by.
+  const { PIN_FILE, loadPin } = await import("../lib/operator-act.mjs");
+  assert.equal(PIN_FILE.pathname, path.join(REPO, "bot", "lib", "operator-passkeys.json"));
+  assert.deepEqual(loadPin(), JSON.parse(fs.readFileSync(path.join(REPO, "bot", "lib", "operator-passkeys.json"), "utf8")));
+  const validate = fs.readFileSync(path.join(REPO, "tools", "validate.mjs"), "utf8");
+  assert.match(validate, /checkOperatorPasskeys\(ctx, \{ pinRoot = REPO_ROOT \} = \{\}\)/,
+    "tools/validate.mjs reads the pin from somewhere other than REPO_ROOT");
 });
 
 test("an unresolved entry with no excuse is not a near-miss of a path that exists", () => {
@@ -997,6 +1011,10 @@ export const DATA_OUTSIDE = [
   // Records a run writes or reads as its subject — TRUST-31's own outside
   // paragraph: hashing them would put the bot into shadow for doing its job.
   { path: "plugins/", why: "the catalogue's sources, which every run judges and a publication writes" },
+  // Not a file: the service's API path for an operator act's result
+  // (bot/lib/service.mjs's OPERATIONS), relative to API_BASE, which this
+  // scan reads as a repository path because it starts with `bot/`.
+  { path: "bot/operator-act-results", why: "an API path under https://api.minice.ai/plugins/v1/, not a file in this repository" },
   { path: "publishers/", why: "publisher records, hand-reviewed and withdrawn by the daily re-check; TRUST-31 lists them outside" },
   { path: "log/", why: "decision records, the baseline marker, the cutover marker and migration notices: records, not rules" },
   // Named before `state/`, which would also cover it, because this record is

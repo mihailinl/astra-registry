@@ -99,6 +99,16 @@ import { RESERVED_KEYS, SUPPORTED_KEYS } from "./lib/platform.mjs";
 import { isTime } from "./lib/time.mjs";
 import { reviewMarkFindings } from "./lib/review-mark.mjs";
 import { readTree, treeProblems, unaskableRoot } from "./lib/tree-modes.mjs";
+import {
+  ACTS_DIR,
+  PIN_REL,
+  REVOKED_DIR,
+  actRecordProblems,
+  pinProblems,
+  revokedRecordProblems,
+} from "../bot/lib/operator-act.mjs";
+import { cleanEnv } from "./lib/git-env.mjs";
+import { execFileSync } from "node:child_process";
 
 // `tools/lib/platform.mjs`'s table, not a copy of it. Until 2026-09-22 these
 // were two literals of this file's own, and platform.mjs's RESERVED_KEYS was
@@ -2825,6 +2835,9 @@ export const RECORD_ROOTS = Object.freeze([
   "schema",
   "site",
   "tools/codes-table.json",
+  // The owner's passkeys (operator-acts design §2.2): the act page reads it
+  // from GitHub, so it is a document the registry serves.
+  "bot/lib/operator-passkeys.json",
 ]);
 
 /** Every `*.json` under `root` that `checkRecordStrings` holds, repository-relative, sorted. */
@@ -2969,12 +2982,261 @@ export function checkTreeModes(ctx) {
   for (const p of problems) report.error(p.path, p.message, p.hint);
 }
 
+// ── the owner's passkeys, and what they signed ──────────────────────────────
+//
+// `bot/lib/operator-passkeys.json` is the list of keys the bot accepts an
+// operator act from (astra-plugins-ops `dev/operator-acts-by-passkey-design.md`
+// §2.2, §4.6, and the adversarial review of 2026-10-31). It is a rule, so it is
+// read from THIS repository (`pinRoot`, never `--registry-dir`), and it is
+// judged twice: alone (every key self-signed, a genesis key first or after
+// every earlier key is revoked, every other key endorsed by one listed before
+// it) and against the pin it replaces — the working tree's against HEAD when
+// they differ, else HEAD's against its first parent, which is a pull request's
+// base on its merge commit and the previous `main` on a push. Nothing is ever
+// removed, a kept key changes only its status, an added key is `pending`, and
+// its endorser was `active` before the change.
+//
+// Then the records the keys made, in the tree under test: every
+// `state/acts/<jti>.json` named by its jti, with a canonical body, verifying
+// under its key whatever that key's status is now; every
+// `state/passkeys/revoked/<kid>.json` naming a pinned key.
+
+const gitAt = (root, args) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: cleanEnv() });
+
+/** The pin this one replaces, and how to ask that commit about revocations; `undefined` when git cannot say. */
+export function pinBase(pinRoot) {
+  if (unaskableRoot(pinRoot)) return undefined;
+  const showAt = (ref, rel) => {
+    try {
+      return gitAt(pinRoot, ["show", `${ref}:${rel}`]);
+    } catch {
+      return null;
+    }
+  };
+  let current = null;
+  try {
+    current = fs.readFileSync(path.join(pinRoot, ...PIN_REL.split("/")), "utf8");
+  } catch {
+    current = null;
+  }
+  const atHead = showAt("HEAD", PIN_REL);
+  let ref = "HEAD";
+  if (atHead === current) {
+    try {
+      gitAt(pinRoot, ["rev-parse", "--verify", "--quiet", "HEAD^1^{commit}"]);
+      ref = "HEAD^1";
+    } catch {
+      // No first parent (a root commit, or a shallow clone cut at HEAD): no
+      // pin to compare with, so the relative rules are not asked — the same
+      // as an unaskable root — rather than every key read as added
+      // (review of PR #484, finding 5).
+      return undefined;
+    }
+  }
+  const text = ref === "HEAD" ? atHead : showAt(ref, PIN_REL);
+  let pin = null;
+  try {
+    pin = text === null ? null : JSON.parse(text);
+  } catch {
+    pin = null;
+  }
+  const revoked = (kid) => {
+    try {
+      gitAt(pinRoot, ["cat-file", "-e", `${ref}:${REVOKED_DIR}/${kid}.json`]);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  return { ref, pin, revoked };
+}
+
+/** The directories whose files are written once and never removed. */
+export const PERMANENT_DIRS = Object.freeze(["state/acts/", "state/passkeys/revoked/", "state/deny/"]);
+
+/** Every removal of a permanent record: in the working tree against HEAD, and in HEAD against HEAD^1. */
+export function permanentRemovals(root) {
+  if (unaskableRoot(root)) return [];
+  const out = [];
+  const removed = (args, where) => {
+    let names;
+    try {
+      names = gitAt(root, ["diff", "--no-renames", "--name-only", "--diff-filter=D", "-z", ...args, "--", ...PERMANENT_DIRS]);
+    } catch {
+      return;
+    }
+    for (const file of names.split("\0").filter(Boolean)) out.push({ file, where });
+  };
+  removed(["HEAD"], "the working tree");
+  try {
+    gitAt(root, ["rev-parse", "--verify", "--quiet", "HEAD^1^{commit}"]);
+    removed(["HEAD^1", "HEAD"], "the commit at HEAD");
+  } catch {
+    /* no first parent: nothing for HEAD to have removed */
+  }
+  return out;
+}
+
+export function checkOperatorPasskeys(ctx, { pinRoot = REPO_ROOT } = {}) {
+  const { report, root } = ctx;
+  let pin;
+  try {
+    pin = JSON.parse(fs.readFileSync(path.join(pinRoot, ...PIN_REL.split("/")), "utf8"));
+  } catch (e) {
+    report.error(PIN_REL, `the operator passkey pin does not read: ${e.message}`);
+    return;
+  }
+  const exists = (rel) => fs.existsSync(path.join(root, ...rel.split("/")));
+  const base = pinBase(pinRoot);
+  if (base === undefined) report.note(PIN_REL, "not compared with the pin it replaces: this is not the top of a git work tree, or HEAD has no first parent to compare with");
+  const problems = pinProblems(pin, {
+    base: base === undefined ? undefined : base.pin,
+    revokedNow: (kid) => exists(`${REVOKED_DIR}/${kid}.json`),
+    revokedAtBase: (kid) => base?.revoked(kid) ?? false,
+  });
+  for (const m of problems) report.error(PIN_REL, m);
+
+  // Nothing under these three is ever removed (review of PR #484, finding 3):
+  // deleting a revocation un-revokes a key, deleting an act record reopens
+  // its jti and its target, deleting a deny lets the release it stopped
+  // publish. Asked of the working tree against HEAD and of HEAD against its
+  // first parent, so a commit that removed one is red wherever it is judged.
+  for (const m of permanentRemovals(root)) report.error(m.file, `${m.where} removes it; an operator act's record, a deny and a passkey revocation are permanent`);
+
+  const listed = (dir) => {
+    try {
+      return fs.readdirSync(path.join(root, ...dir.split("/")));
+    } catch {
+      return [];
+    }
+  };
+  for (const name of listed(ACTS_DIR)) {
+    const file = `${ACTS_DIR}/${name}`;
+    let doc;
+    try {
+      doc = JSON.parse(fs.readFileSync(path.join(root, ...file.split("/")), "utf8"));
+    } catch (e) {
+      report.error(file, `not readable JSON (${e.message})`);
+      continue;
+    }
+    for (const m of actRecordProblems(doc, { file, pin })) report.error(file, m);
+  }
+  for (const name of listed(REVOKED_DIR)) {
+    const file = `${REVOKED_DIR}/${name}`;
+    let doc;
+    try {
+      doc = JSON.parse(fs.readFileSync(path.join(root, ...file.split("/")), "utf8"));
+    } catch (e) {
+      report.error(file, `not readable JSON (${e.message})`);
+      continue;
+    }
+    for (const m of revokedRecordProblems(doc, { file, pin })) report.error(file, m);
+  }
+}
+
+// ── what a moderation commit may write without the owner's act ──────────────
+//
+// `--writer moderation`, passed only by plugins-moderation.yml's two gates
+// (operator-acts design §4.6). The moderation run writes a deny, a hold's
+// confirm or cancel, a passkey revocation and an operator revert only for an
+// owner's passkey act it verified; this holds the tree to that, compared with
+// HEAD: every such path added or changed must be named by the target of an
+// act record ADDED in the same tree, which verifies under its pinned key and
+// was applied inside its own time. So a moderation run that a writer bent to
+// write one of these on its own goes red at its own gate, whatever the run's
+// code says. operator.yml runs the validator without the flag: its acts are
+// the owner's by his GitHub identity, not by a passkey.
+//
+// A confirm written and released in one commit never reaches this check (the
+// record is deleted before the gate runs); the moderation run holds that case
+// itself: the act record stays, and the commit names it in `Operator-Act:`.
+
+const isoSeconds = (t) => Math.floor(Date.parse(t) / 1000);
+
+export function checkModerationWriter(ctx, { pinRoot = REPO_ROOT } = {}) {
+  const { report, root } = ctx;
+  const where = "--writer moderation";
+  const unaskable = unaskableRoot(root);
+  if (unaskable) {
+    report.error(where, `the tree cannot be compared with HEAD: ${unaskable}`);
+    return;
+  }
+  const changes = [];
+  const diff = gitAt(root, ["diff", "--no-renames", "--name-status", "-z", "HEAD", "--"]).split("\0").filter((x) => x !== "");
+  for (let i = 0; i + 1 < diff.length; i += 2) changes.push({ status: diff[i], file: diff[i + 1] });
+  for (const f of gitAt(root, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\0").filter(Boolean)) {
+    changes.push({ status: "A", file: f });
+  }
+  const touched = changes.filter((c) => c.status === "A" || c.status === "M");
+  let pin;
+  try {
+    pin = JSON.parse(fs.readFileSync(path.join(pinRoot, ...PIN_REL.split("/")), "utf8"));
+  } catch (e) {
+    report.error(where, `the operator passkey pin does not read: ${e.message}`);
+    return;
+  }
+
+  // The acts this tree adds, each verified and in time.
+  const backed = { deny: new Set(), confirm: new Set(), cancel: new Set(), revoke_key: new Set(), revert: new Set() };
+  for (const c of touched.filter((t) => t.file.startsWith(`${ACTS_DIR}/`))) {
+    if (c.status === "M") {
+      report.error(c.file, "an act record is written once, and this tree changes one");
+      continue;
+    }
+    let doc;
+    try {
+      doc = JSON.parse(fs.readFileSync(path.join(root, ...c.file.split("/")), "utf8"));
+    } catch (e) {
+      report.error(c.file, `not readable JSON (${e.message})`);
+      continue;
+    }
+    if (actRecordProblems(doc, { file: c.file, pin }).length) continue; // said by checkOperatorPasskeys
+    const body = JSON.parse(doc.body);
+    const at = isoSeconds(doc.at);
+    if (!(isoSeconds(body.iat) <= at + 300 && at < isoSeconds(body.exp))) {
+      report.error(c.file, `applied at ${doc.at}, outside its own time (iat ${body.iat}, exp ${body.exp})`);
+      continue;
+    }
+    const t = body.target;
+    if (body.act === "deny") backed.deny.add(t.fingerprint);
+    if (body.act === "confirm") backed.confirm.add(t.service_decision_id);
+    if (body.act === "cancel") backed.cancel.add(t.service_decision_id);
+    if (body.act === "revoke_key") backed.revoke_key.add(t.kid);
+    if (body.act === "revert") backed.revert.add(t.service_decision_id);
+  }
+
+  const unbacked = (file, why) => report.error(file, `${why}, and no act record this tree adds names it: a moderation commit writes it only for the owner's verified passkey act (operator-acts design §4.6)`);
+  for (const c of touched) {
+    let m;
+    if ((m = /^state\/deny\/([^/]+)\.json$/.exec(c.file))) {
+      if (!backed.deny.has(m[1])) unbacked(c.file, "a deny is written");
+    } else if ((m = /^state\/holds\/([^/]+)\.(confirm|cancel)\.json$/.exec(c.file))) {
+      if (!backed[m[2]].has(m[1])) unbacked(c.file, `a hold's ${m[2]} is written`);
+    } else if ((m = /^state\/passkeys\/revoked\/([^/]+)\.json$/.exec(c.file))) {
+      if (!backed.revoke_key.has(m[1])) unbacked(c.file, "a passkey revocation is written");
+    } else if (c.status === "A" && c.file.startsWith(`${MODERATION_DIR}/`) && c.file.endsWith(".json")) {
+      let entry = null;
+      try {
+        entry = JSON.parse(fs.readFileSync(path.join(root, ...c.file.split("/")), "utf8"));
+      } catch {
+        entry = null; // the moderation log's own check says so
+      }
+      // An operator's revert: a relist or unrevoke that `reverses` a decision
+      // and carries no service decision of its own (tools/operator.mjs's shape).
+      if (entry && typeof entry.reverses === "string" && entry.service_decision_id === undefined &&
+          (entry.action === "relist" || entry.action === "unrevoke") && !backed.revert.has(entry.reverses)) {
+        unbacked(c.file, `an operator's ${entry.action} of a decision is written`);
+      }
+    }
+  }
+}
+
 // ── driver ──────────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
   const opts = {
     allowStaging: false, allowDirect: false, online: false, artifactsDir: null,
-    root: REPO_ROOT, index: true,
+    root: REPO_ROOT, index: true, writer: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -2984,6 +3246,10 @@ function parseArgs(argv) {
     else if (a === "--artifacts") opts.artifactsDir = path.resolve(argv[++i]);
     else if (a === "--registry-dir") opts.root = path.resolve(argv[++i]);
     else if (a === "--no-index") opts.index = false;
+    else if (a === "--writer") {
+      opts.writer = argv[++i];
+      if (opts.writer !== "moderation") throw new Error(`--writer ${JSON.stringify(opts.writer ?? null)}: the one writer this names is \`moderation\``);
+    }
     else if (a === "--help" || a === "-h") opts.help = true;
     else throw new Error(`unknown argument: ${a}`);
   }
@@ -3039,6 +3305,8 @@ export async function runValidation(opts) {
   checkNoticeMarkers(ctx);
   checkTreeModes(ctx);
   checkRecordStrings(ctx);
+  checkOperatorPasskeys(ctx);
+  if (opts.writer === "moderation") checkModerationWriter(ctx);
 
   // B.4's other record trees, walked once and handed to both checks: the
   // second one counts author-action records against the yanks a moderation
@@ -3064,11 +3332,11 @@ async function main(argv) {
     opts = parseArgs(argv);
   } catch (e) {
     console.error(e.message);
-    console.error("usage: node tools/validate.mjs [--allow-staging] [--allow-direct] [--online] [--artifacts DIR] [--registry-dir DIR] [--no-index]");
+    console.error("usage: node tools/validate.mjs [--allow-staging] [--allow-direct] [--online] [--artifacts DIR] [--registry-dir DIR] [--no-index] [--writer NAME]");
     return 2;
   }
   if (opts.help) {
-    console.log("usage: node tools/validate.mjs [--allow-staging] [--allow-direct] [--online] [--artifacts DIR] [--registry-dir DIR] [--no-index]");
+    console.log("usage: node tools/validate.mjs [--allow-staging] [--allow-direct] [--online] [--artifacts DIR] [--registry-dir DIR] [--no-index] [--writer NAME]");
     return 0;
   }
 

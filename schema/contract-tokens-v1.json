@@ -1,6 +1,6 @@
 {
-  "contract_version": "6.8.0",
-  "source_commit": "daf3b27732030768caf7edbe93e03a46dd7e0118",
+  "contract_version": "6.10.0",
+  "source_commit": "0214a28aecf68f240a9e67d55d4a82dcb3616da8",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -437,6 +437,24 @@
       ]
     },
     {
+      "id": "token:authority_sign_in_required",
+      "kind": "refusal_token",
+      "name": "authority_sign_in_required",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
       "id": "token:not_operator",
       "kind": "refusal_token",
       "name": "not_operator",
@@ -554,7 +572,8 @@
         "service"
       ],
       "acceptor": [
-        "bot"
+        "bot",
+        "panel"
       ],
       "state": "live",
       "source": "§0.8, the refusal-token table",
@@ -1898,6 +1917,54 @@
       ]
     },
     {
+      "id": "list:operator_act_results",
+      "kind": "closed_list",
+      "name": "operator_act_results",
+      "values": [
+        "applied",
+        "refused"
+      ],
+      "emitter": [
+        "bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:operator_act_refusal_codes",
+      "kind": "closed_list",
+      "name": "operator_act_refusal_codes",
+      "values": [
+        "act_malformed",
+        "act_signature",
+        "act_not_permitted",
+        "act_origin",
+        "act_expired",
+        "act_replayed",
+        "act_target_mismatch",
+        "act_already_answered"
+      ],
+      "emitter": [
+        "bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
       "id": "list:event_outcomes",
       "kind": "closed_list",
       "name": "event_outcomes",
@@ -2780,6 +2847,276 @@
       ]
     },
     {
+      "id": "schema:astra.plugins.bot-moderation-work/2",
+      "kind": "schema",
+      "name": "astra.plugins.bot-moderation-work/2",
+      "state": "live",
+      "members": [
+        {
+          "name": "shadow",
+          "required": true
+        },
+        {
+          "name": "submissions",
+          "required": true,
+          "of": [
+            {
+              "name": "submission_id",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "repo",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "tag",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "trigger",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "service_repository_id",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "stop_status",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "fingerprints",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "code",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "category",
+              "required": false,
+              "why": "BOT-80 requires this of an `M_REJECT` entry and of no other. 0.26.0 publishes no condition for it, deliberately: the plugins service makes all four of these non-null on the decision row such an entry is built from, so its emitter satisfies the clause unconditionally. It is a decline and not an omission, and §0.6's 0.26.0 row records what the acceptor was measured to do with each of the four.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "moderator",
+              "required": false,
+              "why": "BOT-80 requires this of an `M_REJECT` entry and of no other. 0.26.0 publishes no condition for it, deliberately: the plugins service makes all four of these non-null on the decision row such an entry is built from, so its emitter satisfies the clause unconditionally. It is a decline and not an omission, and §0.6's 0.26.0 row records what the acceptor was measured to do with each of the four.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "decided_at",
+              "required": false,
+              "why": "BOT-80 requires this of an `M_REJECT` entry and of no other. 0.26.0 publishes no condition for it, deliberately: the plugins service makes all four of these non-null on the decision row such an entry is built from, so its emitter satisfies the clause unconditionally. It is a decline and not an omission, and §0.6's 0.26.0 row records what the acceptor was measured to do with each of the four.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "declared_interest",
+              "required": false,
+              "why": "BOT-80 requires this of an `M_REJECT` entry and of no other. 0.26.0 publishes no condition for it, deliberately: the plugins service makes all four of these non-null on the decision row such an entry is built from, so its emitter satisfies the clause unconditionally. It is a decline and not an omission, and §0.6's 0.26.0 row records what the acceptor was measured to do with each of the four.",
+              "source": "BOT-80"
+            }
+          ]
+        },
+        {
+          "name": "service_decisions",
+          "required": true,
+          "of": [
+            {
+              "name": "service_decision_id",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "code",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "category",
+              "required": "conditional",
+              "when": {
+                "iff": {
+                  "code": {
+                    "not": [
+                      "M_APPEAL"
+                    ]
+                  }
+                }
+              },
+              "why": "An appeal decides a decision that already has a category; it has none of its own, and §7.2 allows an appeal no category at all, so any value here would be one no code permits. Relaxed to `if`, an `M_APPEAL` entry may carry one and the bot writes it into the public decision record, where it reads as the category the appeal was decided under rather than as the category of the decision appealed. Dropped, a takedown reaches git with no category and the moderation log cannot say what the listing went for.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "plugin_id",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "versions",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "decided_at",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "reason",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "reverses",
+              "required": false,
+              "why": "BOT-80 qualifies this as where they apply and names no code, so no condition is published: the file states what the contract states and no more. A condition read out of another requirement would be a rule in BOT-80's entry list that BOT-80 does not state.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "appeal_of",
+              "required": false,
+              "why": "BOT-80 qualifies this as where they apply and names no code, so no condition is published. MOD-33 does bind it to a decided appeal, and that is a condition a later version may publish from MOD-33; taking it from there in this one would put a rule in BOT-80's entry list that BOT-80 does not state.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "corrects",
+              "required": "conditional",
+              "when": {
+                "iff": {
+                  "code": [
+                    "M_CORRECT_CATEGORY"
+                  ]
+                }
+              },
+              "why": "`corrects` names the applied decision whose category a correction moves (6.7.0), and nothing but a correction names one. Relaxed to `if`, a takedown may carry it and the bot would read the takedown as a correction of another entry. Dropped, a correction arrives naming nothing, and the bot cannot find the entry it is about, so it refuses every one `kind_refused`.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "outcome",
+              "required": "conditional",
+              "when": {
+                "iff": {
+                  "code": [
+                    "M_APPEAL"
+                  ]
+                }
+              },
+              "why": "`outcome` is the appeal's verdict, `stands` or `reversed` (MOD-33), and nothing but an appeal has one. Relaxed to `if`, a delisting may carry `outcome` `reversed`; the acceptor copies the member into the decision record for every `M_*` code, so a decision nobody appealed is published carrying an appeal's verdict, and `reversed` is the one value that makes a new artefact. Dropped, an appeal arrives with no verdict and there is nothing to write into the `appeal` log entry MOD-33 requires.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "severity",
+              "required": "conditional",
+              "when": {
+                "if": {
+                  "code": [
+                    "M_DEPRECATE",
+                    "M_REVOKE"
+                  ]
+                }
+              },
+              "why": "§0.8 calls this advisory `severity`: it grades an advisory, and a deprecation or a revocation is where one is minted, so it must be there for those two or the signed withdrawal list has nothing to grade. It is `if` and not `iff` because the codes that lift an advisory act on one too, and BOT-80 does not say a relist or an un-revoke may not restate its grade. A biconditional would refuse a conforming reversal, and a refusal is final (BOT-81): the decision would settle unapplied, leave the moderation list, page nobody, and leave suppressed a listing a moderator decided to restore. Dropped, a revocation reaches the withdrawal list ungraded and every client that renders a severity has nothing to render.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "action",
+              "required": "conditional",
+              "when": {
+                "iff": {
+                  "code": [
+                    "M_REVOKE"
+                  ]
+                }
+              },
+              "why": "§0.8 calls this revoke `action`, and the noun is the whole difference from `severity` beside it in the same clause: `severity` grades the advisory, which several codes touch, and `action` is what a client must do about a revoked version — `block_install` or `disable` (MOD-10) — which only a revocation decides. So the reverse direction is real. Relaxed to `if`, a deprecation may carry `block_install`, the acceptor copies it into the decision record, and a deprecation — which compiles to a warning and nothing else — is published carrying an enforcement no moderator chose. Dropped, a revocation lands with no enforcement and the withdrawal list cannot say whether an installed copy stops.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "moderator",
+              "required": "conditional",
+              "when": {
+                "iff": {
+                  "code": {
+                    "not": [
+                      "A_REMOVAL_REQUEST",
+                      "A_YANK"
+                    ]
+                  }
+                }
+              },
+              "why": "BOT-80 states this twice and in opposite directions — for an `M_*` code only, and then an `A_*` entry carries no moderator — because the two failures are not the same one. Relaxed to `if`, an author's own yank may carry a handle, and DEC-14 and MOD-41 forbid exactly that: the act is the author's, and a handle on it publishes a person as having decided something they took no part in, in a record ID-48 makes permanent and never reassigns. Dropped, an `M_*` takedown reaches the moderation log unattributed and MOD-47 has nobody to name.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "declared_interest",
+              "required": "conditional",
+              "when": {
+                "iff": {
+                  "code": {
+                    "not": [
+                      "A_REMOVAL_REQUEST",
+                      "A_YANK"
+                    ]
+                  }
+                }
+              },
+              "why": "MOD-12 records that a moderator declared an interest and acted because no other active moderator existed, and shows it to the owner and to every moderator. Relaxed to `if`, an author action carries a conflict declaration about a moderator who took no part in it. Dropped, the one fact MOD-12 exists to surface becomes optional on every takedown, and a decision taken under a declared conflict is indistinguishable in the public record from one taken without — which is not a missing field but the failure MOD-12 was written for.",
+              "source": "BOT-80"
+            }
+          ]
+        },
+        {
+          "name": "operator_acts",
+          "required": true,
+          "of": [
+            {
+              "name": "jti",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "body",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "assertion",
+              "required": true,
+              "of": [
+                "credential_id",
+                "authenticator_data",
+                "client_data_json",
+                "signature"
+              ],
+              "source": "BOT-80"
+            }
+          ]
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot"
+      ],
+      "source": "§4.2, the request and success bodies",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
       "id": "schema:astra.plugins.bot-notice-query/1",
       "kind": "schema",
       "name": "astra.plugins.bot-notice-query/1",
@@ -2860,6 +3197,61 @@
       ],
       "acceptor": [
         "bot"
+      ],
+      "source": "§4.2, the request and success bodies",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.bot-operator-act-result/1",
+      "kind": "schema",
+      "name": "astra.plugins.bot-operator-act-result/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "jti",
+          "required": true
+        },
+        {
+          "name": "outcome",
+          "required": true
+        },
+        {
+          "name": "commit",
+          "required": "conditional",
+          "when": {
+            "iff": {
+              "outcome": [
+                "applied"
+              ]
+            }
+          },
+          "why": "BOT-93 gives `applied` the commit that holds the act's record and says a `refused` result carries none. Relaxed to `if`, a refusal may name a commit, and BOT-82 keys an operator-act result's idempotency on (`jti`, `outcome`, `commit`): two refusals of one act carrying different commits are two keys, so the re-post that follows a lost acknowledgement reads as a different result and is answered `conflict`. Dropped, an `applied` result lands with no commit, the service has nothing to settle against `main`, and the act stays listed until its `exp` passes and BOT-84 pages for an act that was in fact applied.",
+          "source": "§4.2, the request and success bodies"
+        },
+        {
+          "name": "refusal_code",
+          "required": "conditional",
+          "when": {
+            "iff": {
+              "outcome": [
+                "refused"
+              ]
+            }
+          },
+          "why": "BOT-93 gives this to `refused` alone. Relaxed to `if`, an `applied` result may carry a code, and the console shows the owner an act both done and refused, with no rule for which to believe. Dropped, a `refused` result arrives with no code, and the owner is told his act was not done without being told why — whether to sign again, to use another key, or to wait for the bot to leave shadow.",
+          "source": "§4.2, the request and success bodies"
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "bot"
+      ],
+      "acceptor": [
+        "service"
       ],
       "source": "§4.2, the request and success bodies",
       "requirements": [
@@ -5298,6 +5690,31 @@
       "path_base": "the service API base (§4.2)",
       "workflow": "moderation",
       "request_schema": "astra.plugins.bot-service-decision-result/1",
+      "success_schema": "astra.plugins.bot-ack/1",
+      "emitter": [
+        "bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§4.2",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "BOT-91",
+        "DEC-4"
+      ]
+    },
+    {
+      "id": "operation:bot:operator-act-result",
+      "kind": "operation",
+      "name": "operator act result",
+      "method": "POST",
+      "path": "bot/operator-act-results",
+      "path_base": "the service API base (§4.2)",
+      "workflow": "moderation",
+      "request_schema": "astra.plugins.bot-operator-act-result/1",
       "success_schema": "astra.plugins.bot-ack/1",
       "emitter": [
         "bot"

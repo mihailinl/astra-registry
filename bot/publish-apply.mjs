@@ -60,6 +60,7 @@ import path from "node:path";
 import { compareSemver, parseSemver } from "../tools/lib/semver.mjs";
 import { invalidId, unsafePathComponent } from "../tools/lib/ids.mjs";
 import { readTree, treeProblems } from "../tools/lib/tree-modes.mjs";
+import { PIN_REL, REVOKED_DIR, canonicalBody, keyByCredential, loadPin, pinRefusal } from "./lib/operator-act.mjs";
 
 export const EXIT = { ok: 0, refused: 1, broke: 2, conflict: 3 };
 
@@ -612,6 +613,138 @@ export function compareReportNames(a, b) {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+const FINGERPRINT_RE = /^[0-9a-f]{16}$/;
+
+/**
+ * The fingerprints a report PUBLISHES: those of its `published` decision
+ * records. A held, refused or stopped record publishes nothing, so a deny has
+ * nothing to withdraw from it. `ownerApproved` holds the ones published on
+ * the owner's passkey approval (`actor: "operator"`, `trigger: "approval"`).
+ */
+export function publishedFingerprints(reportDir, { ownerApproved = null } = {}) {
+  const fps = new Set();
+  for (const r of filesUnder(path.join(reportDir, "log"))) {
+    if (!DECISION_RECORD_FILE.test(`log/${r}`)) continue;
+    let doc;
+    try {
+      doc = JSON.parse(fs.readFileSync(path.join(reportDir, "log", r), "utf8"));
+    } catch {
+      continue;
+    }
+    if (doc?.state === "published" && FINGERPRINT_RE.test(String(doc.fingerprint ?? ""))) {
+      fps.add(doc.fingerprint);
+      if (ownerApproved && doc.actor === "operator" && doc.trigger === "approval") ownerApproved.add(doc.fingerprint);
+    }
+  }
+  return fps;
+}
+
+/**
+ * The fingerprints at `ref` with an owner's approve act whose key is still
+ * the owner's there: no `state/passkeys/revoked/<kid>.json` and no `revoked`
+ * status in the pin at `ref` (operator-acts design §4.7, review finding 1).
+ * The key is named by THIS checkout's pin, which is the one the ingest
+ * honoured the act under.
+ */
+export function ownerApprovedAt(root, ref, { pin = loadPin() } = {}) {
+  const out = new Set();
+  if (pinRefusal(pin).length) return out;
+  const show = (rel) => {
+    try {
+      return git(root, ["show", `${ref}:${rel}`], { stdio: "pipe" });
+    } catch {
+      return null;
+    }
+  };
+  let pinAtRef = null;
+  try {
+    pinAtRef = JSON.parse(show(PIN_REL) ?? "null");
+  } catch {
+    pinAtRef = null;
+  }
+  const revoked = new Set(git(root, ["ls-tree", "-r", "--name-only", ref, "--", REVOKED_DIR]).split("\n").filter(Boolean)
+    .map((rel) => rel.slice(REVOKED_DIR.length + 1, -".json".length)));
+  for (const rel of git(root, ["ls-tree", "-r", "--name-only", ref, "--", "state/acts"]).split("\n").filter(Boolean)) {
+    let doc;
+    try {
+      doc = JSON.parse(show(rel) ?? "null");
+    } catch {
+      continue;
+    }
+    const body = canonicalBody(doc?.body);
+    if (body?.act !== "approve" || !FINGERPRINT_RE.test(String(body.target?.fingerprint ?? ""))) continue;
+    const key = keyByCredential(pin, doc?.assertion?.credential_id);
+    if (!key || revoked.has(key.kid)) continue;
+    const there = (Array.isArray(pinAtRef?.keys) ? pinAtRef.keys : []).find((k) => k?.kid === key.kid);
+    if (key.status !== "active" || there?.status === "revoked") continue;
+    out.add(body.target.fingerprint);
+  }
+  return out;
+}
+
+/**
+ * The fingerprints an operator deny record names at `ref` (TRUST-33). Read as
+ * `readGitState` reads them: the file name OR the `fingerprint` member, because
+ * the direction a disagreement errs in is withholding.
+ */
+export function deniedAt(root, ref) {
+  const denied = new Set();
+  const listed = git(root, ["ls-tree", "-r", "--name-only", ref, "--", "state/deny"]).split("\n").filter(Boolean);
+  for (const rel of listed) {
+    if (!/^state\/deny\/[^/]+\.json$/.test(rel)) continue;
+    const stem = rel.slice("state/deny/".length, -".json".length);
+    if (FINGERPRINT_RE.test(stem)) denied.add(stem);
+    try {
+      const doc = JSON.parse(git(root, ["show", `${ref}:${rel}`], { stdio: "pipe" }));
+      if (FINGERPRINT_RE.test(String(doc?.fingerprint ?? ""))) denied.add(doc.fingerprint);
+    } catch {
+      /* unreadable: the name alone already counted, which is the withholding side */
+    }
+  }
+  return denied;
+}
+
+/**
+ * The reports `main`, as it stands at `ref`, no longer lets this run publish,
+ * each with the sentence that says why (design finding 1, 2026-10-31).
+ *
+ * The ingest decided against the tree it checked out. Everything that withholds
+ * and can land AFTER that — an operator's deny (TRUST-33) — used to be read only
+ * there: the push carried a decision main had since overruled, and on a
+ * rejected push the redo re-applied the same reports onto the newer main
+ * without reading it either. So a deny pressed while the ingest ran did not
+ * stop the publication it named, on the first push or on any redo, and nothing
+ * said so. This is asked of the fetched main before EVERY push.
+ */
+export function withdrawnAt(root, ref, reports, names, { pin = null } = {}) {
+  const out = new Map();
+  if (!reports || !fs.existsSync(reports)) return out;
+  const denied = deniedAt(root, ref);
+  let stillOwner = null;
+  for (const name of names) {
+    const dir = path.join(reports, name);
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) continue;
+    const owner = new Set();
+    for (const fp of publishedFingerprints(dir, { ownerApproved: owner })) {
+      if (denied.has(fp)) {
+        out.set(name, `an operator deny record on main names fingerprint ${fp} (TRUST-33); this publication is dropped and not pushed`);
+        break;
+      }
+      // Published on the owner's passkey approval: only while the key that
+      // gave it is still his at main. A revocation that landed while this run
+      // held the report stops it as a deny does (§4.7; review finding 1).
+      if (owner.has(fp)) {
+        stillOwner ??= ownerApprovedAt(root, ref, { pin: pin ?? loadPin() });
+        if (!stillOwner.has(fp)) {
+          out.set(name, `the owner's approval of fingerprint ${fp} is signed by a passkey revoked on main, or no longer on main; this publication is dropped and not pushed`);
+          break;
+        }
+      }
+    }
+  }
+  return out;
+}
+
 /**
  * Apply everything this run has: the backstop's etag memory, then each report.
  *
@@ -619,7 +752,7 @@ export function compareReportNames(a, b) {
  * again, against the tree as it is at that moment, which is the point: the
  * version rules above are only true of the tree they were checked against.
  */
-export function applyAll(root, { reports, watchState, dropWatchState = false, servicePath = false }) {
+export function applyAll(root, { reports, watchState, dropWatchState = false, servicePath = false, skip = new Map() }) {
   const state = {
     changed: false,
     touchedIds: new Set(),
@@ -649,6 +782,12 @@ export function applyAll(root, { reports, watchState, dropWatchState = false, se
     for (const name of fs.readdirSync(reports).sort(compareReportNames)) {
       const dir = path.join(reports, name);
       if (!fs.statSync(dir).isDirectory()) continue;
+      // A report main withdrew from under this run (`withdrawnAt`): never
+      // applied again, on any later attempt, and reported as a refusal.
+      if (skip.has(name)) {
+        state.refusals.push({ report: name, file: null, message: skip.get(name) });
+        continue;
+      }
       try {
         applyReport(root, dir, state);
       } catch (err) {
@@ -720,6 +859,7 @@ export function run({
   push = true,
   dryRun = false,
   servicePath = false,
+  pin = null,
   log = console.log,
 } = {}) {
   const abs = (p) => (path.isAbsolute(p) ? p : path.resolve(root, p));
@@ -731,16 +871,23 @@ export function run({
   // "the working tree is untouched" and until this existed they only ever
   // asserted it on the refusal paths, which throw before the copy loop and so
   // could not have dirtied it. An assertion that can only pass is not one.
+  const undo = () => {
+    git(root, ["reset", "--hard", at], { stdio: "pipe" });
+    const present = ["plugins", "state", "log/decisions"].filter((d) => fs.existsSync(path.join(root, d)));
+    if (present.length > 0) git(root, ["clean", "-qfd", "--", ...present], { stdio: "pipe" });
+  };
   const attemptFailed = (err) => {
     try {
-      git(root, ["reset", "--hard", at], { stdio: "pipe" });
-      const present = ["plugins", "state", "log/decisions"].filter((d) => fs.existsSync(path.join(root, d)));
-      if (present.length > 0) git(root, ["clean", "-qfd", "--", ...present], { stdio: "pipe" });
+      undo();
     } catch {
       /* the tree is already beyond tidying; the thrown error is the news */
     }
     throw err;
   };
+
+  // Reports main withdrew while this run held them (`withdrawnAt`), by name,
+  // with the reason. Kept across attempts: a deny is never un-pressed.
+  const withdrawn = new Map();
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
     log(`attempt ${attempt} of ${attempts}, base ${at.slice(0, 8)}`);
@@ -749,6 +896,7 @@ export function run({
       watchState: abs(watchState),
       dropWatchState,
       servicePath,
+      skip: withdrawn,
     });
     // The queue entries this run is answerable for: the ones that are on disk
     // when it settles. `comment` promises an author "publishes itself at 14:00"
@@ -835,6 +983,39 @@ export function run({
 
     if (!push) {
       return { outcome: "committed", attempts: attempt, touchedIds: [...state.touchedIds], queued: queued(), refusals };
+    }
+
+    // What main says NOW, before this push leaves the runner — the first push
+    // and every redo alike (`withdrawnAt`). A report main withdrew is dropped,
+    // the attempt is undone and rebuilt without it, and that rebuild does not
+    // count against `attempts`: each one drops at least one more report, so
+    // there are never more of them than reports.
+    let withdrawnNow;
+    try {
+      git(root, ["fetch", remote, branch], { stdio: "pipe" });
+      const fetched = git(root, ["rev-parse", "FETCH_HEAD"]);
+      const live = fs.existsSync(abs(reports))
+        ? fs.readdirSync(abs(reports)).filter((n) => !withdrawn.has(n))
+        : [];
+      withdrawnNow = withdrawnAt(root, fetched, abs(reports), live, { pin });
+    } catch (err) {
+      // Not knowing what main says is not leave to push: a fetch that fails
+      // here would also fail the redo, and the push it guards is the one
+      // thing that cannot be taken back. Said like a refused push, because
+      // it is one (no retry; what git said).
+      const said = `${err?.stderr ?? ""}${err?.stdout ?? ""}`.trim() || String(err?.message ?? err);
+      attemptFailed(new Error(
+        `main could not be read before the push, so nothing was pushed, for a reason that will not change on a retry:\n${said}`,
+      ));
+    }
+    if (withdrawnNow.size > 0) {
+      for (const [name, why] of withdrawnNow) {
+        withdrawn.set(name, why);
+        log(`withdrawn ${name}: ${why}`);
+      }
+      undo();
+      attempt--;
+      continue;
     }
 
     // `DRY_RUN` (registry plan B-T3.6 step 1): everything a publication does
