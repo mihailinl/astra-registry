@@ -3026,7 +3026,11 @@ export function pinBase(pinRoot) {
       gitAt(pinRoot, ["rev-parse", "--verify", "--quiet", "HEAD^1^{commit}"]);
       ref = "HEAD^1";
     } catch {
-      return { ref: null, pin: null, revoked: () => false };
+      // No first parent (a root commit, or a shallow clone cut at HEAD): no
+      // pin to compare with, so the relative rules are not asked — the same
+      // as an unaskable root — rather than every key read as added
+      // (review of PR #484, finding 5).
+      return undefined;
     }
   }
   const text = ref === "HEAD" ? atHead : showAt(ref, PIN_REL);
@@ -3084,7 +3088,7 @@ export function checkOperatorPasskeys(ctx, { pinRoot = REPO_ROOT } = {}) {
   }
   const exists = (rel) => fs.existsSync(path.join(root, ...rel.split("/")));
   const base = pinBase(pinRoot);
-  if (base === undefined) report.note(PIN_REL, "not compared with the pin it replaces: this is not the top of a git work tree with a commit");
+  if (base === undefined) report.note(PIN_REL, "not compared with the pin it replaces: this is not the top of a git work tree, or HEAD has no first parent to compare with");
   const problems = pinProblems(pin, {
     base: base === undefined ? undefined : base.pin,
     revokedNow: (kid) => exists(`${REVOKED_DIR}/${kid}.json`),

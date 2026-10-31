@@ -893,3 +893,13 @@ test("validate refuses removing an act record, a revocation or a deny, uncommitt
     assert.match(removals().join("\n"), /the commit at HEAD removes it/, rel);
   }
 });
+
+test("validate does not read every key as added when HEAD has no first parent; it says it did not compare (review finding 5)", () => {
+  const phone = enrolled("ES256", { kid: "owner-phone" });
+  const root = pinRepo(pinWith(phone));
+  const errors = [];
+  const notes = [];
+  checkOperatorPasskeys({ root, report: { error: (w, m) => errors.push(m), note: (w, m) => notes.push(m), warn() {} } }, { pinRoot: root });
+  assert.deepEqual(errors, [], "a root commit's pin was judged against nothing, as if every key were new");
+  assert.match(notes.join(" "), /no first parent/);
+});
