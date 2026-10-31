@@ -549,6 +549,28 @@ test("every entry resolves, or carries an excuse that expires", () => {
     : `note  exited: ${[...exited].sort().join(", ")}; ${UNRESOLVED_BY.size} excuse(s) held against them.`);
 });
 
+// ── the operator-acts files, inside through `bot/lib/` ──────────────────────
+//
+// Contract 6.8.0 (TRUST-31's schema paragraph) says the operator-acts pull
+// request's modules need no entry of their own, because `bot/lib/` is a
+// directory entry. That is a claim about where the files ARE: a verifier or an
+// apply module that landed at `bot/operator-act.mjs`, or a pin that landed at
+// `bot/operator-passkeys.json`, would be outside every entry — so a registry
+// writer could change what a passkey act needs, or which keys are the owner's,
+// without the bot returning to shadow — and every other leg of this file would
+// stay green. So the paths are asserted, each tracked and inside only through
+// `bot/lib/`.
+const OPERATOR_ACT_FILES = ["bot/lib/operator-act.mjs"];
+
+test("the passkey verifier, its apply module and its pin are tracked inside the set through `bot/lib/`", () => {
+  const files = new Set(tracked());
+  for (const f of OPERATOR_ACT_FILES) {
+    assert.ok(files.has(f), `${f} is not tracked at HEAD`);
+    assert.ok(inSet(f), `${f} is outside TRUST-31's set`);
+    assert.ok(!ENTRIES.includes(f) && ENTRIES.includes("bot/lib/"), `${f} is inside by an entry of its own, not \`bot/lib/\``);
+  }
+});
+
 test("an unresolved entry with no excuse is not a near-miss of a path that exists", () => {
   // The leg that catches a misspelling TODAY, without waiting for a rollout
   // marker. A pending file is normally nothing like an existing one; a typo is

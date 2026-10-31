@@ -1,0 +1,542 @@
+// `bot/lib/operator-act.mjs`: the owner's passkey acts, verified by the bot
+// (astra-plugins-ops `dev/operator-acts-by-passkey-design.md` §4.3 and §7 lane
+// 2, as amended by its adversarial review of 2026-10-31).
+//
+// The authenticator is software, in this file (`fixtures/authenticator.mjs`):
+// P-256, RSA-2048 and Ed25519 keys made in memory, `authenticatorData` and
+// `clientDataJSON` built byte for byte, and the signature made per WebAuthn
+// §6.3.3. So every refusal below is the verifier's answer to bytes it really
+// receives. Each mutation of §7's lane 2 list is one case, and each must be
+// REFUSED — the verifier never writes, and the moderation run's tests hold the
+// "and nothing is written" half.
+
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+import {
+  ACT_CODES,
+  CAPS,
+  actRecord,
+  actRecordProblems,
+  b64url,
+  b64urlBytes,
+  batchOrder,
+  canonical,
+  canonicalBody,
+  challengeOf,
+  keyFingerprint,
+  shapeOf,
+  treeView,
+  verifyAct,
+  verifyBatch,
+} from "../lib/operator-act.mjs";
+import { submissionDigest } from "../lib/policy/release.mjs";
+import { holdEntry } from "../lib/holds.mjs";
+import { fixtureEnv } from "../../tools/lib/git-env.mjs";
+import * as A from "./fixtures/authenticator.mjs";
+
+const NOW = Date.parse("2026-10-31T12:00:00Z");
+const VECTORS = JSON.parse(fs.readFileSync(new URL("./fixtures/operator-act-vectors.json", import.meta.url), "utf8"));
+
+// ── a held release, as `log/decisions/` carries one ─────────────────────────
+
+const FACTS = { repo: "someone/voice-text-input", tag: "v1.2.1", id: "voice-text-input", version: "1.2.1", commit: "c".repeat(40), digests: [`sha256:${"d".repeat(64)}`] };
+const DIGEST = submissionDigest(FACTS);
+const HELD_ID = "0123456789abcdef0123456789abcdef";
+const heldRecord = (over = {}) => ({
+  schema: "astra.registry.decision/1", decision_id: HELD_ID, submission_id: "s-1", decided_at: "2026-10-31T10:00:00Z",
+  actor: "bot", trigger: "panel", plugin_id: FACTS.id, version: FACTS.version, repo: FACTS.repo, repository_id: "424242",
+  repository_owner_id: "99", tag: FACTS.tag, commit: FACTS.commit, artifact_digests: FACTS.digests,
+  fingerprint: DIGEST.slice(0, 16), state: "held", reasons: ["R_BINDING_CHANGED"], ...over,
+});
+const releaseTarget = (over = {}) => ({
+  held_decision_id: HELD_ID, digest: DIGEST, fingerprint: DIGEST.slice(0, 16), plugin_id: FACTS.id,
+  version: FACTS.version, tag: FACTS.tag, repo: FACTS.repo, repository_id: "424242", commit: FACTS.commit, ...over,
+});
+
+const SDI = "0192f3a4-5b6c-7d8e-9f01-234567890abc";
+const holdTarget = (over = {}) => ({ service_decision_id: SDI, code: "M_DELIST", plugin_id: "widgets", held_for: "bound", held_at: "2026-10-31T09:00:00Z", ...over });
+
+// ── a view that says yes to every tree question, so one mutation is the only "no" ──
+
+const yes = (over = {}) => ({
+  actRecord: () => null,
+  highestSignCount: () => 0,
+  revoked: () => false,
+  isAncestor: () => true,
+  facts: (_act, t) => t,
+  answered: () => null,
+  ...over,
+});
+
+const KEYS = { ES256: A.makeKey("ES256", { kid: "owner-phone" }), RS256: A.makeKey("RS256", { kid: "owner-pc" }), EdDSA: A.makeKey("EdDSA", { kid: "owner-key" }) };
+const PIN = A.pinOf(Object.values(KEYS));
+const owner = KEYS.ES256;
+
+const approve = (opts = {}, bodyOpts = {}, key = owner) => A.act(key, A.body({ act: "approve", target: releaseTarget(), now: NOW, ...bodyOpts }), opts);
+const check = (item, { pin = PIN, now = NOW, view = yes() } = {}) => verifyAct(item, { pin, now, view });
+
+function refusedWith(item, code, opts, label = "") {
+  const v = check(item, opts);
+  assert.equal(v.verdict, "refused", `${label}: accepted (${JSON.stringify(v).slice(0, 200)})`);
+  assert.equal(v.code, code, `${label}: refused as ${v.code} (${v.why}), not ${code}`);
+  assert.ok(ACT_CODES.includes(v.code));
+  return v;
+}
+
+const flipBit = (s, at, bit = 0) => {
+  const b = Buffer.from(s, "base64url");
+  const i = at < 0 ? b.length + at : at;
+  b[i] ^= 1 << bit;
+  return b64url(b);
+};
+
+// ── the controls ────────────────────────────────────────────────────────────
+
+test("an approve signed by each pinned algorithm verifies and is applied", () => {
+  for (const [alg, key] of Object.entries(KEYS)) {
+    const v = check(approve({}, {}, key));
+    assert.equal(v.verdict, "apply", `${alg}: ${v.code} ${v.why}`);
+    assert.equal(v.kid, key.pinKey.kid);
+  }
+});
+
+test("a browser's extra clientDataJSON member is signed data, not a refusal", () => {
+  const v = check(approve({ extra: { other_keys_can_be_added_here: "do not compare clientDataJSON against a template. See https://goo.gl/yabPex" } }));
+  assert.equal(v.verdict, "apply", `${v.code} ${v.why}`);
+});
+
+test("without a tree (`list`), checks 1–9 run and a good act is `verified`, not applied", () => {
+  const v = verifyAct(approve(), { pin: PIN, now: NOW, view: null });
+  assert.equal(v.verdict, "verified", `${v.code} ${v.why}`);
+});
+
+// ── 1–2: shape, caps, canonical body ────────────────────────────────────────
+
+test("every cap +1 is malformed, and every cap exactly is not refused for size", () => {
+  // The body: 2049 bytes refused for its size; 2048 passes the cap (and is
+  // refused for something else, since no real target is that long).
+  const pad = (n) => {
+    const base = A.body({ target: releaseTarget({ tag: "" }), now: NOW });
+    return base.replace('"tag":""', `"tag":"${"x".repeat(n - Buffer.byteLength(base))}"`);
+  };
+  for (const [n, over] of [[CAPS.body, false], [CAPS.body + 1, true]]) {
+    const text = pad(n);
+    assert.equal(Buffer.byteLength(text), n);
+    const v = check({ jti: JSON.parse(text).jti, body: text, assertion: A.assertion(owner, text) });
+    assert.equal(v.verdict, "refused");
+    assert.equal(/at most 2048 bytes/.test(v.why), over, `body of ${n} bytes: ${v.why}`);
+  }
+
+  // clientDataJSON: padded to exactly 1024 bytes it verifies end to end; 1025 is malformed.
+  const text = A.body({ target: releaseTarget(), now: NOW });
+  const plain = A.clientData(text, { extra: { pad: "" } });
+  const at1024 = A.clientData(text, { extra: { pad: "p".repeat(CAPS.client_data_json - plain.length) } });
+  assert.equal(at1024.length, 1024);
+  assert.equal(check({ jti: JSON.parse(text).jti, body: text, assertion: A.assertion(owner, text, { clientDataJSON: at1024 }) }).verdict, "apply");
+  const at1025 = A.clientData(text, { extra: { pad: "p".repeat(CAPS.client_data_json + 1 - plain.length) } });
+  refusedWith({ jti: JSON.parse(text).jti, body: text, assertion: A.assertion(owner, text, { clientDataJSON: at1025 }) }, "act_malformed", {}, "clientDataJSON 1025");
+
+  // authenticatorData: 512 is within the cap (and refused at check 7); 513 is malformed.
+  const ad = (n) => A.authData({ extra: Buffer.alloc(n - 37) });
+  const v512 = check({ jti: JSON.parse(text).jti, body: text, assertion: A.assertion(owner, text, { authenticatorData: ad(512) }) });
+  assert.equal(v512.code, "act_signature", v512.why);
+  refusedWith({ jti: JSON.parse(text).jti, body: text, assertion: A.assertion(owner, text, { authenticatorData: ad(513) }) }, "act_malformed", {}, "authData 513");
+
+  // signature: 512 bytes is within the cap; 513 is malformed.
+  const item = approve();
+  const sig = (n) => b64url(Buffer.alloc(n, 1));
+  assert.equal(check({ ...item, assertion: { ...item.assertion, signature: sig(512) } }).code, "act_signature");
+  refusedWith({ ...item, assertion: { ...item.assertion, signature: sig(513) } }, "act_malformed", {}, "signature 513");
+
+  // credential id: 1023 is within the cap (an unknown key); 1024 is malformed.
+  assert.equal(check({ ...item, assertion: { ...item.assertion, credential_id: sig(1023) } }).code, "act_signature");
+  refusedWith({ ...item, assertion: { ...item.assertion, credential_id: sig(1024) } }, "act_malformed", {}, "credential id 1024");
+});
+
+test("base64url is strict: padding, the other alphabet, whitespace and a non-canonical tail are malformed", () => {
+  const item = approve();
+  const s = item.assertion.signature;
+  const variants = {
+    padding: `${s}${"=".repeat((4 - (s.length % 4)) % 4 || 2)}`,
+    plus: s.replace(/-/g, "+").replace(/_/g, "/").replace(/^./, "+"),
+    space: `${s.slice(0, 4)} ${s.slice(4)}`,
+    newline: `${s}\n`,
+    empty: "",
+  };
+  for (const [name, bad] of Object.entries(variants)) {
+    refusedWith({ ...item, assertion: { ...item.assertion, signature: bad } }, "act_malformed", {}, name);
+  }
+  // Two spellings of one byte string: "AB" and "AA" both decode to 0x00 if
+  // the tail bits are ignored. Only the canonical one is base64url here.
+  assert.notEqual(b64urlBytes("AA", 8), null);
+  assert.equal(b64urlBytes("AB", 8), null);
+});
+
+test("a non-canonical body is malformed, whatever signs it", () => {
+  const good = A.body({ target: releaseTarget(), now: NOW });
+  const doc = JSON.parse(good);
+  const bodies = {
+    whitespace: JSON.stringify(doc, null, 1),
+    "a trailing newline": `${good}\n`,
+    "keys out of order": good.replace(/^\{"act":"approve","aud":"[^"]+",/, (m) => m.replace(/^\{("act":"approve"),("aud":"[^"]+"),/, "{$2,$1,")),
+    "a duplicate key": good.replace('"act":"approve",', '"act":"deny","act":"approve",'),
+    "a number": canonicalFrom(doc, (d) => { d.target.repository_id = 424242; }),
+    "a boolean": canonicalFrom(doc, (d) => { d.target.extra = true; }),
+    "a null": canonicalFrom(doc, (d) => { d.target.extra = null; }),
+    "a needless escape": good.replace('"approve"', '"\\u0061pprove"'),
+    "an extra member": canonical({ ...doc, note: "x" }),
+    "a missing member": canonical(Object.fromEntries(Object.entries(doc).filter(([k]) => k !== "main"))),
+    "another schema": canonical({ ...doc, schema: "astra.registry.operator-act-body/2" }),
+    "an unknown act": canonical({ ...doc, act: "publish" }),
+    "a jti of 31 hex": canonical({ ...doc, jti: doc.jti.slice(1) }),
+    "an iat with milliseconds": canonical({ ...doc, iat: doc.iat.replace("Z", ".000Z") }),
+    "a short main": canonical({ ...doc, main: "a".repeat(39) }),
+    "a target member too many": canonical({ ...doc, target: { ...doc.target, note: "x" } }),
+    "a target member too few": canonical({ ...doc, target: Object.fromEntries(Object.entries(doc.target).filter(([k]) => k !== "tag")) }),
+    "a fingerprint that is not the digest's": canonical({ ...doc, target: { ...doc.target, fingerprint: "f".repeat(16) } }),
+    "a deny's target on a confirm": canonical({ ...doc, act: "confirm" }),
+  };
+  for (const [name, text] of Object.entries(bodies)) {
+    const jti = (() => {
+      try {
+        return JSON.parse(text).jti;
+      } catch {
+        return doc.jti;
+      }
+    })();
+    refusedWith({ jti: typeof jti === "string" ? jti : doc.jti, body: text, assertion: A.assertion(owner, text) }, "act_malformed", {}, name);
+  }
+});
+
+function canonicalFrom(doc, mutate) {
+  const d = JSON.parse(JSON.stringify(doc));
+  mutate(d);
+  // The canonical ORDER with a non-string value inside: what a lax writer emits.
+  const enc = (v) => (v && typeof v === "object" && !Array.isArray(v)
+    ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${enc(v[k])}`).join(",")}}`
+    : JSON.stringify(v));
+  return enc(d);
+}
+
+test("an aud of another registry is malformed", () => {
+  refusedWith(approve({}, { aud: "astra-registry:1" }), "act_malformed", {}, "aud");
+});
+
+test("a wire item with a member too many, or a jti that is not its body's, is malformed", () => {
+  const item = approve();
+  refusedWith({ ...item, extra: "x" }, "act_malformed", {}, "extra wire member");
+  refusedWith({ ...item, jti: "f".repeat(32) }, "act_malformed", {}, "jti");
+  refusedWith({ ...item, assertion: { ...item.assertion, user_handle: "AA" } }, "act_malformed", {}, "user handle");
+});
+
+// ── 3: which key, and may it ────────────────────────────────────────────────
+
+test("an unpinned, revoked, pending or not-permitted credential is refused", () => {
+  const stranger = A.makeKey("ES256", { kid: "stranger" });
+  refusedWith(approve({}, {}, stranger), "act_signature", {}, "unpinned");
+
+  const revoked = A.makeKey("ES256", { kid: "revoked", status: "revoked" });
+  refusedWith(approve({}, {}, revoked), "act_not_permitted", { pin: A.pinOf([owner, revoked]) }, "revoked in the pin");
+  refusedWith(approve(), "act_not_permitted", { view: yes({ revoked: (kid) => kid === "owner-phone" }) }, "revoked by its record");
+
+  const pending = A.makeKey("ES256", { kid: "pending", status: "pending" });
+  refusedWith(approve({}, {}, pending), "act_not_permitted", { pin: A.pinOf([owner, pending]) }, "pending");
+
+  const denyOnly = A.makeKey("ES256", { kid: "knice", acts: ["deny"] });
+  const pin = A.pinOf([owner, denyOnly]);
+  refusedWith(approve({}, {}, denyOnly), "act_not_permitted", { pin }, "not permitted");
+  const deny = A.act(denyOnly, A.body({ act: "deny", target: releaseTarget(), now: NOW }));
+  assert.equal(check(deny, { pin }).verdict, "apply");
+});
+
+test("a confirm of an unbound_yank is not permitted; a cancel of it is", () => {
+  const t = holdTarget({ code: "A_YANK", held_for: "unbound_yank" });
+  refusedWith(A.act(owner, A.body({ act: "confirm", target: t, now: NOW })), "act_not_permitted", {}, "confirm");
+  assert.equal(check(A.act(owner, A.body({ act: "cancel", target: t, now: NOW }))).verdict, "apply");
+});
+
+// ── 4–8: the assertion ──────────────────────────────────────────────────────
+
+test("one bit flipped in the signature, authenticatorData, clientDataJSON or body is refused", () => {
+  const item = approve();
+  refusedWith({ ...item, assertion: { ...item.assertion, signature: flipBit(item.assertion.signature, 10) } }, "act_signature", {}, "signature");
+  refusedWith({ ...item, assertion: { ...item.assertion, authenticator_data: flipBit(item.assertion.authenticator_data, -1) } }, "act_signature", {}, "authData counter");
+  refusedWith({ ...item, assertion: { ...item.assertion, authenticator_data: flipBit(item.assertion.authenticator_data, 0) } }, "act_origin", {}, "authData rpIdHash");
+  // "webauthn.get" → "webauthn.fet": one bit of the `g`.
+  const cd = Buffer.from(item.assertion.client_data_json, "base64url");
+  const at = cd.indexOf("webauthn.get") + "webauthn.".length;
+  refusedWith({ ...item, assertion: { ...item.assertion, client_data_json: flipBit(item.assertion.client_data_json, at) } }, "act_signature", {}, "clientDataJSON");
+  // A body still canonical, one bit away: version 1.2.1 → 1.2.0.
+  const body = item.body.replace('"version":"1.2.1"', '"version":"1.2.0"');
+  assert.notEqual(body, item.body);
+  refusedWith({ ...item, body }, "act_signature", {}, "body");
+});
+
+test("the same signature over another body is refused", () => {
+  const a = approve();
+  const b = approve();
+  refusedWith({ jti: b.jti, body: b.body, assertion: a.assertion }, "act_signature", {}, "borrowed assertion");
+});
+
+test("rpIdHash of astra.minice.ai, origin https://astra.minice.ai, and any framed ceremony are refused", () => {
+  refusedWith(approve({ rpId: "astra.minice.ai" }), "act_origin", {}, "rpId");
+  refusedWith(approve({ origin: "https://astra.minice.ai" }), "act_origin", {}, "origin");
+  refusedWith(approve({ crossOrigin: true }), "act_origin", {}, "crossOrigin true, no topOrigin");
+  refusedWith(approve({ crossOrigin: true, topOrigin: "https://evil.example" }), "act_origin", {}, "crossOrigin true, evil topOrigin");
+  refusedWith(approve({ crossOrigin: true, topOrigin: "https://astra.minice.ai" }), "act_origin", {}, "crossOrigin true, the console as topOrigin");
+  refusedWith(approve({ topOrigin: "https://astra.minice.ai" }), "act_origin", {}, "a topOrigin with crossOrigin false");
+  refusedWith(approve({ omitCrossOrigin: true }), "act_origin", {}, "no crossOrigin member");
+  refusedWith(approve(), "act_origin", { pin: { ...PIN, rp_id: "" } }, "an empty pinned rp_id");
+});
+
+test("type webauthn.create, and every flag the design names, are refused", () => {
+  refusedWith(approve({ type: "webauthn.create" }), "act_signature", {}, "create");
+  refusedWith(approve({ flags: 0x04 }), "act_signature", {}, "UP off");
+  refusedWith(approve({ flags: 0x01 }), "act_signature", {}, "UV off");
+  refusedWith(approve({ flags: 0x45 }), "act_signature", {}, "AT set");
+  refusedWith(approve({ flags: 0x85 }), "act_signature", {}, "ED set");
+  const bound = A.makeKey("ES256", { kid: "yubikey", device_bound: "yes" });
+  const pin = A.pinOf([owner, bound]);
+  refusedWith(approve({ flags: 0x0d }, {}, bound), "act_signature", { pin }, "BE on a device-bound key");
+  // BE and BS on a synced passkey are what one looks like, and are accepted.
+  assert.equal(check(approve({ flags: 0x1d }), { pin }).verdict, "apply");
+  assert.equal(check(approve({ flags: 0x05 }, {}, bound), { pin }).verdict, "apply");
+});
+
+// ── 9: time ─────────────────────────────────────────────────────────────────
+
+test("an act past exp, one living too long for its kind, and one from the future are refused", () => {
+  refusedWith(approve({}, { iatOffset: -7200, lifetime: 3600 }), "act_expired", {}, "exp passed");
+  refusedWith(approve({}, { lifetime: 3 * 3600 + 1 }), "act_expired", {}, "approve exp − iat = 10801");
+  assert.equal(check(approve({}, { lifetime: 3 * 3600 })).verdict, "apply", "approve at exactly 3 h");
+  for (const act of ["confirm", "cancel"]) {
+    refusedWith(A.act(owner, A.body({ act, target: holdTarget(), now: NOW, lifetime: 10801 })), "act_expired", {}, `${act} 10801`);
+  }
+  const deny = (lifetime) => A.act(owner, A.body({ act: "deny", target: releaseTarget(), now: NOW, lifetime }));
+  refusedWith(deny(86401), "act_expired", {}, "deny exp − iat = 86401");
+  assert.equal(check(deny(86400)).verdict, "apply", "deny at exactly 24 h");
+  refusedWith(approve({}, { iatOffset: 301 }), "act_expired", {}, "iat = now + 301");
+  assert.equal(check(approve({}, { iatOffset: 300 })).verdict, "apply", "iat = now + 300");
+  refusedWith(approve({}, { lifetime: 0 }), "act_expired", {}, "exp = iat");
+});
+
+// ── 10: replay ──────────────────────────────────────────────────────────────
+
+test("a jti on main, a jti twice in a batch, and a counter that does not rise are refused", () => {
+  const item = approve();
+  const other = approve();
+  // On main with other bytes: replayed. With the same bytes: answered `applied`.
+  refusedWith(item, "act_replayed", { view: yes({ actRecord: () => ({ body: other.body, assertion: other.assertion }) }) }, "jti on main");
+  const same = check(item, { view: yes({ actRecord: () => ({ body: item.body, assertion: item.assertion }) }) });
+  assert.equal(same.verdict, "applied", "a byte-identical re-presentation is answered applied");
+
+  const batch = verifyBatch([item, item], { pin: PIN, now: NOW, view: yes() });
+  assert.deepEqual(batch.map((v) => v.verdict), ["apply", "refused"]);
+  assert.equal(batch[1].code, "act_replayed");
+
+  refusedWith(approve({ signCount: 5 }), "act_replayed", { view: yes({ highestSignCount: () => 5 }) }, "equal counter");
+  refusedWith(approve({ signCount: 4 }), "act_replayed", { view: yes({ highestSignCount: () => 5 }) }, "lower counter");
+  refusedWith(approve({ signCount: 0 }), "act_replayed", { view: yes({ highestSignCount: () => 5 }) }, "a counter back to zero");
+  assert.equal(check(approve({ signCount: 6 }), { view: yes({ highestSignCount: () => 5 }) }).verdict, "apply");
+  assert.equal(check(approve({ signCount: 0 }), { view: yes({ highestSignCount: () => 0 }) }).verdict, "apply", "a synced passkey's zero");
+
+  const twoCounts = verifyBatch([approve({ signCount: 7 }), A.act(owner, A.body({ act: "deny", target: releaseTarget({ held_decision_id: "1".repeat(32) }), now: NOW }), { signCount: 7 })], { pin: PIN, now: NOW, view: yes() });
+  assert.deepEqual(twoCounts.map((v) => [v.act, v.verdict, v.code ?? null]), [["deny", "apply", null], ["approve", "refused", "act_replayed"]]);
+});
+
+// ── 11: built on main, and still true of it ─────────────────────────────────
+
+test("main not an ancestor, and each target member changed, are refused", () => {
+  refusedWith(approve(), "act_target_mismatch", { view: yes({ isAncestor: () => false }) }, "main");
+  const truth = releaseTarget();
+  const view = yes({ facts: () => truth });
+  const changed = {
+    held_decision_id: "1".repeat(32),
+    digest: DIGEST.slice(0, 16) + "0".repeat(48),
+    fingerprint: null,
+    plugin_id: "other-plugin",
+    version: "1.2.2",
+    tag: "v1.2.2",
+    repo: "someone/else",
+    repository_id: "424243",
+    commit: "e".repeat(40),
+  };
+  for (const [member, value] of Object.entries(changed)) {
+    const target = member === "fingerprint"
+      ? releaseTarget({ digest: `${"f".repeat(16)}${DIGEST.slice(16)}`, fingerprint: "f".repeat(16) })
+      : releaseTarget({ [member]: value });
+    refusedWith(A.act(owner, A.body({ act: "approve", target, now: NOW })), "act_target_mismatch", { view }, member);
+  }
+  for (const [member, value] of Object.entries({ service_decision_id: "0192f3a4-5b6c-7d8e-9f01-234567890abd", code: "M_DEPRECATE", plugin_id: "gadgets", held_for: "unbound_removal", held_at: "2026-10-31T09:00:01Z" })) {
+    refusedWith(A.act(owner, A.body({ act: "confirm", target: holdTarget({ [member]: value }), now: NOW })), "act_target_mismatch", { view: yes({ facts: () => holdTarget() }) }, member);
+  }
+  refusedWith(approve(), "act_target_mismatch", { view: yes({ facts: () => null }) }, "no such target");
+});
+
+// ── 12: answered once ───────────────────────────────────────────────────────
+
+test("a target already answered is refused, and a deny never is", () => {
+  refusedWith(approve(), "act_already_answered", { view: yes({ answered: () => "already" }) }, "approve");
+  const deny = A.act(owner, A.body({ act: "deny", target: releaseTarget(), now: NOW }));
+  // A deny is judged by the real `answered`, which never refuses one.
+  const root = treeFixture();
+  const v = verifyAct(deny, { pin: PIN, now: NOW, view: { ...treeView(root, { pin: PIN }), isAncestor: () => true } });
+  assert.equal(v.verdict, "apply", `${v.code} ${v.why}`);
+});
+
+// ── the batch ───────────────────────────────────────────────────────────────
+
+test("in a batch, revoke_key and deny apply first: an approve by a key the batch revokes, or beside its deny, is refused", () => {
+  const phone = KEYS.ES256;
+  const pc = KEYS.RS256;
+  const approveByPhone = approve({}, {}, phone);
+  const revokePhone = A.act(pc, A.body({ act: "revoke_key", target: { kid: phone.pinKey.kid, credential_id: phone.pinKey.credential_id }, now: NOW, lifetime: 86400 }));
+  const out = verifyBatch([approveByPhone, revokePhone], { pin: PIN, now: NOW, view: yes() });
+  assert.deepEqual(out.map((v) => [v.act, v.verdict, v.code ?? null]), [["revoke_key", "apply", null], ["approve", "refused", "act_not_permitted"]]);
+
+  const root = treeFixture();
+  const view = { ...treeView(root, { pin: PIN }), isAncestor: () => true };
+  const approveByPc = approve({}, {}, pc);
+  const deny = A.act(phone, A.body({ act: "deny", target: releaseTarget(), now: NOW }));
+  const out2 = verifyBatch([approveByPc, deny], { pin: PIN, now: NOW, view });
+  assert.deepEqual(out2.map((v) => [v.act, v.verdict, v.code ?? null]), [["deny", "apply", null], ["approve", "refused", "act_already_answered"]]);
+
+  assert.deepEqual(batchOrder([approveByPc, deny, revokePhone]).map((i) => canonicalBody(i.body).act), ["revoke_key", "deny", "approve"]);
+});
+
+// ── the tree ────────────────────────────────────────────────────────────────
+
+const roots = [];
+process.on("exit", () => {
+  for (const r of roots) fs.rmSync(r, { recursive: true, force: true });
+});
+const git = (root, ...args) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8", env: fixtureEnv(root) }).trim();
+const writeJson = (root, rel, doc) => {
+  fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+  fs.writeFileSync(path.join(root, rel), `${JSON.stringify(doc, null, 2)}\n`);
+};
+const DELIST_SDI = "0192f3a4-5b6c-7d8e-9f01-234567890abd";
+
+function treeFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-act-"));
+  roots.push(root);
+  writeJson(root, `log/decisions/2026/10/${HELD_ID}.json`, heldRecord());
+  writeJson(root, `state/holds/${SDI}.json`, holdEntry(
+    { service_decision_id: SDI, code: "M_DELIST", plugin_id: "widgets", decided_at: "2026-10-31T08:00:00Z", reason: "Broken on every platform.", category: "broken", moderator: "amoderator" },
+    { held_for: "bound", held_at: "2026-10-31T09:00:00Z" },
+  ));
+  writeJson(root, "bot/moderation/2026-10-30-widgets-delist.json", {
+    date: "2026-10-30", action: "delist", plugin: "widgets", reason: "Broken on every platform.", category: "broken",
+    service_decision_id: DELIST_SDI, declared_interest: false,
+  });
+  git(root, "init", "-q", "-b", "main");
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "fixture");
+  return root;
+}
+
+test("the tree view: facts for every act, main's ancestry, and each act answered once", () => {
+  const root = treeFixture();
+  const head = git(root, "rev-parse", "HEAD");
+  const view = treeView(root, { pin: PIN });
+  const on = (act, target, extra = {}) => verifyAct(A.act(owner, A.body({ act, target, now: NOW, main: head, lifetime: act === "deny" || act === "revoke_key" ? 86400 : 3600, ...extra })), { pin: PIN, now: NOW, view });
+
+  assert.deepEqual(view.facts("approve", { held_decision_id: HELD_ID }), releaseTarget());
+  for (const act of ["approve", "deny"]) assert.equal(on(act, releaseTarget()).verdict, "apply", act);
+  for (const act of ["confirm", "cancel"]) {
+    const v = on(act, holdTarget({ code: "M_DELIST" }));
+    assert.equal(v.verdict, "apply", `${act}: ${v.code} ${v.why}`);
+  }
+  const revert = on("revert", { service_decision_id: DELIST_SDI, action: "delist", plugin_id: "widgets", entry: "2026-10-30-widgets-delist.json" });
+  assert.equal(revert.verdict, "apply", `${revert.code} ${revert.why}`);
+  const revoke = on("revoke_key", { kid: "owner-pc", credential_id: KEYS.RS256.pinKey.credential_id });
+  assert.equal(revoke.verdict, "apply", `${revoke.code} ${revoke.why}`);
+
+  // An act built on a commit the tree does not descend from.
+  const v = on("approve", releaseTarget(), { main: "f".repeat(40) });
+  assert.equal(v.code, "act_target_mismatch");
+  // A held record that is not held.
+  writeJson(root, `log/decisions/2026/10/${HELD_ID}.json`, heldRecord({ state: "published" }));
+  assert.equal(on("approve", releaseTarget()).code, "act_target_mismatch");
+  writeJson(root, `log/decisions/2026/10/${HELD_ID}.json`, heldRecord());
+
+  // Answered: an approve record, a deny, a confirm record, a revert, a revocation.
+  const first = A.act(owner, A.body({ act: "approve", target: releaseTarget(), now: NOW, main: head }));
+  writeJson(root, `state/acts/${first.jti}.json`, actRecord(first, { run: "https://github.com/o/r/actions/runs/1", at: "2026-10-31T12:00:00Z" }));
+  const view2 = treeView(root, { pin: PIN });
+  assert.equal(verifyAct(first, { pin: PIN, now: NOW, view: view2 }).verdict, "applied", "byte-identical re-presentation");
+  assert.equal(verifyAct(A.act(owner, A.body({ act: "approve", target: releaseTarget(), now: NOW, main: head })), { pin: PIN, now: NOW, view: view2 }).code, "act_already_answered");
+
+  writeJson(root, "state/deny/" + DIGEST.slice(0, 16) + ".json", { schema: "astra.registry.deny/1", fingerprint: DIGEST.slice(0, 16), run: "x", at: "2026-10-31T12:00:00Z" });
+  fs.rmSync(path.join(root, `state/acts/${first.jti}.json`));
+  assert.equal(on("approve", releaseTarget()).code, "act_already_answered", "approve beside a deny");
+  assert.equal(on("deny", releaseTarget()).verdict, "apply", "a second deny is never answered");
+
+  writeJson(root, `state/holds/${SDI}.confirm.json`, { schema: "astra.registry.hold-record/1", act: "confirm", service_decision_id: SDI, plugin_id: "widgets", at: "2026-10-31T11:00:00Z" });
+  assert.equal(on("cancel", holdTarget({ code: "M_DELIST" })).code, "act_already_answered");
+
+  writeJson(root, "bot/moderation/2026-10-31-widgets-relist.json", {
+    date: "2026-10-31", action: "relist", plugin: "widgets", reason: "Reverted by the registry operator: the decision this entry reverses was made in error.",
+    category: "error", reverses: DELIST_SDI,
+  });
+  assert.equal(on("revert", { service_decision_id: DELIST_SDI, action: "delist", plugin_id: "widgets", entry: "2026-10-30-widgets-delist.json" }).code, "act_already_answered");
+
+  writeJson(root, "state/passkeys/revoked/owner-pc.json", { schema: "astra.registry.passkey-revoked/1", kid: "owner-pc", at: "2026-10-31T12:00:00Z", run: "x" });
+  assert.equal(on("revoke_key", { kid: "owner-pc", credential_id: KEYS.RS256.pinKey.credential_id }).code, "act_already_answered");
+  const byPc = verifyAct(A.act(KEYS.RS256, A.body({ act: "deny", target: releaseTarget(), now: NOW, main: head, lifetime: 86400 })), { pin: PIN, now: NOW, view: treeView(root, { pin: PIN }) });
+  assert.equal(byPc.code, "act_not_permitted", "a key revoked by its record signs nothing");
+});
+
+test("the tree view reads the highest counter recorded for a key", () => {
+  const root = treeFixture();
+  const head = git(root, "rev-parse", "HEAD");
+  const counted = A.act(owner, A.body({ act: "deny", target: releaseTarget(), now: NOW, main: head }), { signCount: 9 });
+  writeJson(root, `state/acts/${counted.jti}.json`, actRecord(counted, { run: "https://github.com/o/r/actions/runs/1", at: "2026-10-31T12:00:00Z" }));
+  const view = treeView(root, { pin: PIN });
+  assert.equal(view.highestSignCount("owner-phone"), 9);
+  const v = verifyAct(A.act(owner, A.body({ act: "deny", target: releaseTarget(), now: NOW, main: head }), { signCount: 9 }), { pin: PIN, now: NOW, view });
+  assert.equal(v.code, "act_replayed");
+});
+
+// ── records ─────────────────────────────────────────────────────────────────
+
+test("an act record verifies under its key whatever the key's status now; a tampered one does not", () => {
+  const item = approve();
+  const rec = actRecord(item, { run: "https://github.com/o/r/actions/runs/1", at: "2026-10-31T12:00:00Z" });
+  const file = `state/acts/${item.jti}.json`;
+  assert.deepEqual(actRecordProblems(rec, { file, pin: PIN }), []);
+  const revokedPin = { ...PIN, keys: PIN.keys.map((k) => (k.kid === "owner-phone" ? { ...k, status: "revoked" } : k)) };
+  assert.deepEqual(actRecordProblems(rec, { file, pin: revokedPin }), [], "a revoked key's old records keep verifying");
+  assert.notDeepEqual(actRecordProblems({ ...rec, body: rec.body.replace("1.2.1", "1.2.0") }, { file, pin: PIN }), []);
+  assert.notDeepEqual(actRecordProblems(rec, { file: "state/acts/other.json", pin: PIN }), []);
+  assert.notDeepEqual(actRecordProblems({ ...rec, account: "x" }, { file, pin: PIN }), [], "no account id rides in a record");
+});
+
+// ── the vectors the act page reuses ─────────────────────────────────────────
+
+test("the canonical-body vectors hold, and the act page can reuse them byte for byte", () => {
+  assert.ok(VECTORS.valid.length >= 6 && VECTORS.invalid.length >= 6);
+  for (const v of VECTORS.valid) {
+    assert.equal(canonical(v.value), v.canonical, v.name);
+    assert.deepEqual(canonicalBody(v.canonical), v.value, v.name);
+    assert.equal(challengeOf(v.canonical), v.challenge, v.name);
+    if (v.value.schema === "astra.registry.operator-act-body/1") {
+      const s = shapeOf({ jti: v.value.jti, body: v.canonical, assertion: approve().assertion }, { ...PIN, aud: v.value.aud });
+      assert.ok(s.ok, `${v.name}: ${s.why}`);
+    }
+  }
+  for (const v of VECTORS.invalid) assert.equal(canonicalBody(v.text), null, v.name);
+  for (const k of VECTORS.fingerprints) assert.equal(keyFingerprint(k.public_key), k.fingerprint);
+});
+
+test("a key's fingerprint is four groups of the first 16 hex of SHA-256(SPKI)", () => {
+  const fp = keyFingerprint(owner.pinKey.public_key);
+  assert.match(fp, /^[0-9a-f]{4}( [0-9a-f]{4}){3}$/);
+  assert.equal(fp.replace(/ /g, ""), crypto.createHash("sha256").update(Buffer.from(owner.pinKey.public_key, "base64url")).digest("hex").slice(0, 16));
+});

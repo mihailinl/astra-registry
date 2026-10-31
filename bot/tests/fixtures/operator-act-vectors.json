@@ -1,0 +1,298 @@
+{
+  "readme": [
+    "Canonical-body vectors for the operator act page (astra-plugins-ops dev/operator-acts-by-passkey-design.md §3.1) and the registry's verifier (bot/lib/operator-act.mjs).",
+    "`valid[].canonical` is the exact UTF-8 text of `canonical(value)`: keys sorted (JS default order) at every level, no whitespace, JSON.stringify's escaping, values strings, arrays of strings or objects. `challenge` is base64url(SHA-256(canonical)), the WebAuthn challenge.",
+    "`invalid[].text` must each be refused: no value parses to an object whose canonical form is that exact text.",
+    "`fingerprints[]`: the first 16 hex of SHA-256 of the bytes `public_key` decodes to, in four groups of four. Neither is a real key.",
+    "Generated once from bot/lib/operator-act.mjs; bot/tests/operator-act.test.mjs holds this file to it."
+  ],
+  "valid": [
+    {
+      "name": "approve",
+      "value": {
+        "schema": "astra.registry.operator-act-body/1",
+        "aud": "astra-registry:1331176498",
+        "jti": "00112233445566778899aabbccddeeff",
+        "iat": "2026-10-31T12:00:00Z",
+        "exp": "2026-10-31T13:00:00Z",
+        "main": "0123456789abcdef0123456789abcdef01234567",
+        "act": "approve",
+        "target": {
+          "held_decision_id": "0123456789abcdef0123456789abcdef",
+          "digest": "8f3a2b1c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8",
+          "fingerprint": "8f3a2b1c4d5e6f70",
+          "plugin_id": "voice-text-input",
+          "version": "1.2.1",
+          "tag": "v1.2.1",
+          "repo": "Voltur792/voice-text-input",
+          "repository_id": "424242",
+          "commit": "cccccccccccccccccccccccccccccccccccccccc"
+        }
+      },
+      "canonical": "{\"act\":\"approve\",\"aud\":\"astra-registry:1331176498\",\"exp\":\"2026-10-31T13:00:00Z\",\"iat\":\"2026-10-31T12:00:00Z\",\"jti\":\"00112233445566778899aabbccddeeff\",\"main\":\"0123456789abcdef0123456789abcdef01234567\",\"schema\":\"astra.registry.operator-act-body/1\",\"target\":{\"commit\":\"cccccccccccccccccccccccccccccccccccccccc\",\"digest\":\"8f3a2b1c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8\",\"fingerprint\":\"8f3a2b1c4d5e6f70\",\"held_decision_id\":\"0123456789abcdef0123456789abcdef\",\"plugin_id\":\"voice-text-input\",\"repo\":\"Voltur792/voice-text-input\",\"repository_id\":\"424242\",\"tag\":\"v1.2.1\",\"version\":\"1.2.1\"}}",
+      "challenge": "u3wVowdcQ0V9-uKtOIhB--AypLA4DEFqcw5RcKx9nMc"
+    },
+    {
+      "name": "deny (24 h)",
+      "value": {
+        "schema": "astra.registry.operator-act-body/1",
+        "aud": "astra-registry:1331176498",
+        "jti": "00112233445566778899aabbccddeeff",
+        "iat": "2026-10-31T12:00:00Z",
+        "exp": "2026-11-01T12:00:00Z",
+        "main": "0123456789abcdef0123456789abcdef01234567",
+        "act": "deny",
+        "target": {
+          "held_decision_id": "0123456789abcdef0123456789abcdef",
+          "digest": "8f3a2b1c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8",
+          "fingerprint": "8f3a2b1c4d5e6f70",
+          "plugin_id": "voice-text-input",
+          "version": "1.2.1",
+          "tag": "v1.2.1",
+          "repo": "Voltur792/voice-text-input",
+          "repository_id": "424242",
+          "commit": "cccccccccccccccccccccccccccccccccccccccc"
+        }
+      },
+      "canonical": "{\"act\":\"deny\",\"aud\":\"astra-registry:1331176498\",\"exp\":\"2026-11-01T12:00:00Z\",\"iat\":\"2026-10-31T12:00:00Z\",\"jti\":\"00112233445566778899aabbccddeeff\",\"main\":\"0123456789abcdef0123456789abcdef01234567\",\"schema\":\"astra.registry.operator-act-body/1\",\"target\":{\"commit\":\"cccccccccccccccccccccccccccccccccccccccc\",\"digest\":\"8f3a2b1c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8\",\"fingerprint\":\"8f3a2b1c4d5e6f70\",\"held_decision_id\":\"0123456789abcdef0123456789abcdef\",\"plugin_id\":\"voice-text-input\",\"repo\":\"Voltur792/voice-text-input\",\"repository_id\":\"424242\",\"tag\":\"v1.2.1\",\"version\":\"1.2.1\"}}",
+      "challenge": "kuYx3beXl-vRG2oTAZEVmInDk-bM5RvwlMIbe-AJaPo"
+    },
+    {
+      "name": "confirm",
+      "value": {
+        "schema": "astra.registry.operator-act-body/1",
+        "aud": "astra-registry:1331176498",
+        "jti": "00112233445566778899aabbccddeeff",
+        "iat": "2026-10-31T12:00:00Z",
+        "exp": "2026-10-31T13:00:00Z",
+        "main": "0123456789abcdef0123456789abcdef01234567",
+        "act": "confirm",
+        "target": {
+          "service_decision_id": "0192f3a4-5b6c-7d8e-9f01-234567890abc",
+          "code": "M_DELIST",
+          "plugin_id": "widgets",
+          "held_for": "bound",
+          "held_at": "2026-10-31T09:00:00Z"
+        }
+      },
+      "canonical": "{\"act\":\"confirm\",\"aud\":\"astra-registry:1331176498\",\"exp\":\"2026-10-31T13:00:00Z\",\"iat\":\"2026-10-31T12:00:00Z\",\"jti\":\"00112233445566778899aabbccddeeff\",\"main\":\"0123456789abcdef0123456789abcdef01234567\",\"schema\":\"astra.registry.operator-act-body/1\",\"target\":{\"code\":\"M_DELIST\",\"held_at\":\"2026-10-31T09:00:00Z\",\"held_for\":\"bound\",\"plugin_id\":\"widgets\",\"service_decision_id\":\"0192f3a4-5b6c-7d8e-9f01-234567890abc\"}}",
+      "challenge": "tP_kd872TdHB5yAG5wxOUco3ENyon-qATKBK825GykI"
+    },
+    {
+      "name": "cancel",
+      "value": {
+        "schema": "astra.registry.operator-act-body/1",
+        "aud": "astra-registry:1331176498",
+        "jti": "00112233445566778899aabbccddeeff",
+        "iat": "2026-10-31T12:00:00Z",
+        "exp": "2026-10-31T13:00:00Z",
+        "main": "0123456789abcdef0123456789abcdef01234567",
+        "act": "cancel",
+        "target": {
+          "service_decision_id": "0192f3a4-5b6c-7d8e-9f01-234567890abc",
+          "code": "M_DELIST",
+          "plugin_id": "widgets",
+          "held_for": "bound",
+          "held_at": "2026-10-31T09:00:00Z"
+        }
+      },
+      "canonical": "{\"act\":\"cancel\",\"aud\":\"astra-registry:1331176498\",\"exp\":\"2026-10-31T13:00:00Z\",\"iat\":\"2026-10-31T12:00:00Z\",\"jti\":\"00112233445566778899aabbccddeeff\",\"main\":\"0123456789abcdef0123456789abcdef01234567\",\"schema\":\"astra.registry.operator-act-body/1\",\"target\":{\"code\":\"M_DELIST\",\"held_at\":\"2026-10-31T09:00:00Z\",\"held_for\":\"bound\",\"plugin_id\":\"widgets\",\"service_decision_id\":\"0192f3a4-5b6c-7d8e-9f01-234567890abc\"}}",
+      "challenge": "4BlkTJpoYxTM5jhliaBAvyikAdKXodXItU8W0p0Hya0"
+    },
+    {
+      "name": "revert of a delist",
+      "value": {
+        "schema": "astra.registry.operator-act-body/1",
+        "aud": "astra-registry:1331176498",
+        "jti": "00112233445566778899aabbccddeeff",
+        "iat": "2026-10-31T12:00:00Z",
+        "exp": "2026-10-31T13:00:00Z",
+        "main": "0123456789abcdef0123456789abcdef01234567",
+        "act": "revert",
+        "target": {
+          "service_decision_id": "0192f3a4-5b6c-7d8e-9f01-234567890abd",
+          "action": "delist",
+          "plugin_id": "widgets",
+          "entry": "2026-10-30-widgets-delist.json"
+        }
+      },
+      "canonical": "{\"act\":\"revert\",\"aud\":\"astra-registry:1331176498\",\"exp\":\"2026-10-31T13:00:00Z\",\"iat\":\"2026-10-31T12:00:00Z\",\"jti\":\"00112233445566778899aabbccddeeff\",\"main\":\"0123456789abcdef0123456789abcdef01234567\",\"schema\":\"astra.registry.operator-act-body/1\",\"target\":{\"action\":\"delist\",\"entry\":\"2026-10-30-widgets-delist.json\",\"plugin_id\":\"widgets\",\"service_decision_id\":\"0192f3a4-5b6c-7d8e-9f01-234567890abd\"}}",
+      "challenge": "F7j6hHrJLU9gjCDcF0rkxlzPIBb8nKl13PdapClO3Q8"
+    },
+    {
+      "name": "revert of a revoke names its advisory",
+      "value": {
+        "schema": "astra.registry.operator-act-body/1",
+        "aud": "astra-registry:1331176498",
+        "jti": "00112233445566778899aabbccddeeff",
+        "iat": "2026-10-31T12:00:00Z",
+        "exp": "2026-10-31T13:00:00Z",
+        "main": "0123456789abcdef0123456789abcdef01234567",
+        "act": "revert",
+        "target": {
+          "service_decision_id": "0192f3a4-5b6c-7d8e-9f01-234567890abe",
+          "action": "revoke",
+          "plugin_id": "widgets",
+          "entry": "2026-10-30-widgets-revoke.json",
+          "advisory": "ASTRA-2026-0001"
+        }
+      },
+      "canonical": "{\"act\":\"revert\",\"aud\":\"astra-registry:1331176498\",\"exp\":\"2026-10-31T13:00:00Z\",\"iat\":\"2026-10-31T12:00:00Z\",\"jti\":\"00112233445566778899aabbccddeeff\",\"main\":\"0123456789abcdef0123456789abcdef01234567\",\"schema\":\"astra.registry.operator-act-body/1\",\"target\":{\"action\":\"revoke\",\"advisory\":\"ASTRA-2026-0001\",\"entry\":\"2026-10-30-widgets-revoke.json\",\"plugin_id\":\"widgets\",\"service_decision_id\":\"0192f3a4-5b6c-7d8e-9f01-234567890abe\"}}",
+      "challenge": "TfHZdI5_l53ZNN0PKrUyV8cXwEuvmAjRb2-SUW5iv6I"
+    },
+    {
+      "name": "revoke_key",
+      "value": {
+        "schema": "astra.registry.operator-act-body/1",
+        "aud": "astra-registry:1331176498",
+        "jti": "00112233445566778899aabbccddeeff",
+        "iat": "2026-10-31T12:00:00Z",
+        "exp": "2026-11-01T12:00:00Z",
+        "main": "0123456789abcdef0123456789abcdef01234567",
+        "act": "revoke_key",
+        "target": {
+          "kid": "owner-pc",
+          "credential_id": "AAECAwQFBgcICQoLDA0ODw"
+        }
+      },
+      "canonical": "{\"act\":\"revoke_key\",\"aud\":\"astra-registry:1331176498\",\"exp\":\"2026-11-01T12:00:00Z\",\"iat\":\"2026-10-31T12:00:00Z\",\"jti\":\"00112233445566778899aabbccddeeff\",\"main\":\"0123456789abcdef0123456789abcdef01234567\",\"schema\":\"astra.registry.operator-act-body/1\",\"target\":{\"credential_id\":\"AAECAwQFBgcICQoLDA0ODw\",\"kid\":\"owner-pc\"}}",
+      "challenge": "8natDG0z1306IEpbraxMyKPlyemSmn4u5eJd4QlAVUs"
+    },
+    {
+      "name": "an enrol body: an array of strings, sorted keys",
+      "value": {
+        "schema": "astra.registry.passkey-enrol/1",
+        "aud": "astra-registry:1331176498",
+        "kid": "owner-phone",
+        "credential_id": "AAECAwQFBgcICQoLDA0ODw",
+        "alg": "ES256",
+        "public_key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE",
+        "acts": [
+          "approve",
+          "deny",
+          "confirm",
+          "cancel",
+          "revert",
+          "revoke_key"
+        ],
+        "iat": "2026-10-31T12:00:00Z"
+      },
+      "canonical": "{\"acts\":[\"approve\",\"deny\",\"confirm\",\"cancel\",\"revert\",\"revoke_key\"],\"alg\":\"ES256\",\"aud\":\"astra-registry:1331176498\",\"credential_id\":\"AAECAwQFBgcICQoLDA0ODw\",\"iat\":\"2026-10-31T12:00:00Z\",\"kid\":\"owner-phone\",\"public_key\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\",\"schema\":\"astra.registry.passkey-enrol/1\"}",
+      "challenge": "UNYGAono7yct9InhK5MIKvLj2z5BmGrap2ykOmIPvkc"
+    },
+    {
+      "name": "JSON.stringify's escaping: quote, backslash, controls, non-ASCII kept raw",
+      "value": {
+        "a": "q\"b\\s\n\t\u0001",
+        "b": "é ü 中 😀",
+        "c": "  ",
+        "d": "</script>"
+      },
+      "canonical": "{\"a\":\"q\\\"b\\\\s\\n\\t\\u0001\",\"b\":\"é ü 中 😀\",\"c\":\"  \",\"d\":\"</script>\"}",
+      "challenge": "yxEuEffCfhBTFftAK4C9NpI-tBlODNcoz8n8dJdgYoQ"
+    },
+    {
+      "name": "keys sort by UTF-16 code unit: upper before lower, digits before letters",
+      "value": {
+        "b": "1",
+        "B": "2",
+        "a1": "3",
+        "a": "4",
+        "_": "5",
+        "é": "6",
+        "Z": "7"
+      },
+      "canonical": "{\"B\":\"2\",\"Z\":\"7\",\"_\":\"5\",\"a\":\"4\",\"a1\":\"3\",\"b\":\"1\",\"é\":\"6\"}",
+      "challenge": "g_wb62OHdtqAzJ8rYiKSw5bN5l9wO3qUvnpg0-xrh9Q"
+    },
+    {
+      "name": "nested objects sort at every level",
+      "value": {
+        "z": {
+          "y": "1",
+          "x": {
+            "w": "2",
+            "v": "3"
+          }
+        },
+        "a": "0"
+      },
+      "canonical": "{\"a\":\"0\",\"z\":{\"x\":{\"v\":\"3\",\"w\":\"2\"},\"y\":\"1\"}}",
+      "challenge": "lgBaWQp5OjNam-yB-Ei9OlPk7ESJUEN7GF1W77t2JCM"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "whitespace",
+      "text": "{\n  \"schema\": \"astra.registry.operator-act-body/1\",\n  \"aud\": \"astra-registry:1331176498\",\n  \"jti\": \"00112233445566778899aabbccddeeff\",\n  \"iat\": \"2026-10-31T12:00:00Z\",\n  \"exp\": \"2026-10-31T13:00:00Z\",\n  \"main\": \"0123456789abcdef0123456789abcdef01234567\",\n  \"act\": \"approve\",\n  \"target\": {\n    \"held_decision_id\": \"0123456789abcdef0123456789abcdef\",\n    \"digest\": \"8f3a2b1c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8\",\n    \"fingerprint\": \"8f3a2b1c4d5e6f70\",\n    \"plugin_id\": \"voice-text-input\",\n    \"version\": \"1.2.1\",\n    \"tag\": \"v1.2.1\",\n    \"repo\": \"Voltur792/voice-text-input\",\n    \"repository_id\": \"424242\",\n    \"commit\": \"cccccccccccccccccccccccccccccccccccccccc\"\n  }\n}"
+    },
+    {
+      "name": "a trailing newline",
+      "text": "{\"act\":\"approve\",\"aud\":\"astra-registry:1331176498\",\"exp\":\"2026-10-31T13:00:00Z\",\"iat\":\"2026-10-31T12:00:00Z\",\"jti\":\"00112233445566778899aabbccddeeff\",\"main\":\"0123456789abcdef0123456789abcdef01234567\",\"schema\":\"astra.registry.operator-act-body/1\",\"target\":{\"commit\":\"cccccccccccccccccccccccccccccccccccccccc\",\"digest\":\"8f3a2b1c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8\",\"fingerprint\":\"8f3a2b1c4d5e6f70\",\"held_decision_id\":\"0123456789abcdef0123456789abcdef\",\"plugin_id\":\"voice-text-input\",\"repo\":\"Voltur792/voice-text-input\",\"repository_id\":\"424242\",\"tag\":\"v1.2.1\",\"version\":\"1.2.1\"}}\n"
+    },
+    {
+      "name": "a leading byte-order mark",
+      "text": "﻿{\"act\":\"approve\",\"aud\":\"astra-registry:1331176498\",\"exp\":\"2026-10-31T13:00:00Z\",\"iat\":\"2026-10-31T12:00:00Z\",\"jti\":\"00112233445566778899aabbccddeeff\",\"main\":\"0123456789abcdef0123456789abcdef01234567\",\"schema\":\"astra.registry.operator-act-body/1\",\"target\":{\"commit\":\"cccccccccccccccccccccccccccccccccccccccc\",\"digest\":\"8f3a2b1c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8\",\"fingerprint\":\"8f3a2b1c4d5e6f70\",\"held_decision_id\":\"0123456789abcdef0123456789abcdef\",\"plugin_id\":\"voice-text-input\",\"repo\":\"Voltur792/voice-text-input\",\"repository_id\":\"424242\",\"tag\":\"v1.2.1\",\"version\":\"1.2.1\"}}"
+    },
+    {
+      "name": "keys out of order",
+      "text": "{\"b\":\"1\",\"a\":\"2\"}"
+    },
+    {
+      "name": "a duplicate key",
+      "text": "{\"a\":\"1\",\"a\":\"1\"}"
+    },
+    {
+      "name": "a number",
+      "text": "{\"a\":1}"
+    },
+    {
+      "name": "a boolean",
+      "text": "{\"a\":true}"
+    },
+    {
+      "name": "a null",
+      "text": "{\"a\":null}"
+    },
+    {
+      "name": "an array holding a number",
+      "text": "{\"a\":[\"1\",2]}"
+    },
+    {
+      "name": "a needless \\u escape",
+      "text": "{\"a\":\"\\u0061\"}"
+    },
+    {
+      "name": "an escaped solidus",
+      "text": "{\"a\":\"\\/\"}"
+    },
+    {
+      "name": "an upper-case \\u escape",
+      "text": "{\"a\":\"\\u001F\"}"
+    },
+    {
+      "name": "a top-level array",
+      "text": "[\"a\"]"
+    },
+    {
+      "name": "a top-level string",
+      "text": "\"a\""
+    },
+    {
+      "name": "not JSON",
+      "text": "{a:1}"
+    }
+  ],
+  "fingerprints": [
+    {
+      "public_key": "AAECAwQFBgcICQoLDA0ODw",
+      "fingerprint": "be45 cb26 05bf 36be",
+      "note": "bytes, not a real key: the fingerprint hashes whatever the SPKI bytes are"
+    },
+    {
+      "public_key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE",
+      "fingerprint": "1aa0 ad00 54af c2f8",
+      "note": "bytes, not a real key: the fingerprint hashes whatever the SPKI bytes are"
+    }
+  ]
+}
