@@ -1297,6 +1297,104 @@ test("the moderation commit job's own commit, tipping a listing past max_listing
   assert.notEqual(git(m.bare, "rev-parse", "main"), m.base, "with the rule's line deleted, the job pushed nothing");
 });
 
+// ── a deny that lands while the ingest runs (design finding 1, 2026-10-31) ──
+//
+// The ingest decides against the tree it checked out, then spends minutes on
+// checks before it pushes. A deny pressed in that gap used to reach main and be
+// ignored: the first push carried the publication anyway when nothing else had
+// landed, and a redo after a rejected push re-applied it onto the newer main —
+// the one holding the deny — without reading it. Both paths are asserted, and
+// the redo one with the deny landing only AFTER the redo began, which is the
+// shape a check that ran once per run would miss.
+
+const DENIED_FP = "0123456789abcdef";
+const denyDoc = (fp = DENIED_FP) => `${JSON.stringify({ schema: "astra.registry.deny/1", fingerprint: fp, run: "https://github.com/o/r/actions/runs/1", at: "2026-10-31T00:00:00Z" })}\n`;
+const pushDeny = (clone, fp = DENIED_FP) => {
+  git(clone, "pull", "--quiet", "--rebase", "origin", "main");
+  write(clone, `state/deny/${fp}.json`, denyDoc(fp));
+  git(clone, "add", "-A");
+  git(clone, "commit", "-m", "operator: deny");
+  git(clone, "push", "--quiet", "origin", "HEAD:main");
+};
+
+test("a deny already on main when the push is due stops the publication it names, with no push", () => {
+  const { dir, one, two, bare } = estate();
+  // The run's base already holds the deny: a decision made against an older
+  // tree, pushed with nothing else in the way. Only a read before the FIRST
+  // push can stop this one; no push is ever rejected.
+  pushDeny(two);
+  git(one, "pull", "--quiet", "--ff-only", "origin", "main");
+  report(dir, "ingest-report-0", { id: "alpha", version: "0.1.0" });
+  withRecord(path.join(dir, "reports"), "ingest-report-0", recordDoc());
+  const reports = withRecord(report(dir, "ingest-report-1", { id: "beta", version: "1.0.0" }), "ingest-report-1",
+    recordDoc({ decision_id: "f".repeat(32), plugin_id: "beta", version: "1.0.0", repo: "example/beta", tag: "v1.0.0", fingerprint: "fedcba9876543210" }));
+  const before = git(bare, "rev-parse", "main");
+
+  const lines = [];
+  const result = run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, servicePath: true, log: (l) => lines.push(l) });
+  assert.equal(result.outcome, "committed", JSON.stringify(result));
+  assert.equal(result.attempts, 1, "the withdrawal cost an attempt");
+  assert.deepEqual(result.refusals.map((r) => r.report), ["ingest-report-0"], "the denied report is not reported as refused");
+  assert.match(result.refusals[0].message, /deny record on main names fingerprint 0123456789abcdef \(TRUST-33\)/);
+  const landed = git(bare, "ls-tree", "-r", "--name-only", "main").split("\n");
+  assert.ok(!landed.includes("plugins/alpha/versions/0.1.0.json"), "the denied release reached main");
+  assert.ok(!landed.includes(recordRel(recordDoc())), "the denied release's `published` record reached main");
+  assert.ok(landed.includes("plugins/beta/versions/1.0.0.json"), "the release nobody denied was dropped with it");
+  assert.equal(git(bare, "rev-parse", "main^"), before);
+  assert.ok(lines.some((l) => l.startsWith("withdrawn ingest-report-0")), lines.join(" | "));
+  assert.ok(!lines.some((l) => l.startsWith("push refused")), `a push was rejected, so this did not test the first read: ${lines.join(" | ")}`);
+});
+
+test("a deny that lands during the redo after a rejected push stops the redo's push", () => {
+  const { dir, one, two, bare } = estate();
+  // An unrelated commit rejects the first push; the deny lands only once the
+  // second attempt has started, after the first read of main came back clean.
+  write(two, "plugins/gamma/plugin.json", '{"id":"gamma"}\n');
+  git(two, "add", "-A");
+  git(two, "commit", "-m", "someone else's plugin");
+  const base = git(one, "rev-parse", "HEAD");
+  const reports = withRecord(report(dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", recordDoc());
+
+  let pushedOther = false;
+  let pushedDeny = false;
+  const lines = [];
+  const log = (l) => {
+    lines.push(l);
+    // `attempt 1` is logged before that attempt reads main, so the other
+    // plugin is there by then: the read sees no deny, the push is rejected,
+    // and the deny lands as attempt 2 begins.
+    if (l.startsWith("attempt 1 ") && !pushedOther) {
+      git(two, "push", "--quiet", "origin", "HEAD:main");
+      pushedOther = true;
+    }
+    if (l.startsWith("attempt 2 ") && !pushedDeny) {
+      pushDeny(two);
+      pushedDeny = true;
+    }
+  };
+  const result = run({ root: one, reports, watchState: path.join(dir, "none"), base, skipChecks: true, servicePath: true, log });
+  assert.ok(pushedOther && pushedDeny, lines.join(" | "));
+  assert.equal(result.outcome, "refused", `the redo pushed past a deny: ${JSON.stringify(result)} ${lines.join(" | ")}`);
+  assert.match(result.refusals[0].message, /TRUST-33/);
+  const landed = git(bare, "ls-tree", "-r", "--name-only", "main").split("\n");
+  assert.ok(!landed.includes("plugins/alpha/versions/0.1.0.json"), "the denied release reached main on the redo");
+  assert.ok(landed.includes(`state/deny/${DENIED_FP}.json`) && landed.includes("plugins/gamma/plugin.json"));
+  assert.ok(lines.some((l) => /^push refused on attempt 1/.test(l)), `the first push was not the rejected one: ${lines.join(" | ")}`);
+  // Nothing of the dropped report is left in the checkout either.
+  assert.equal(git(one, "status", "--porcelain", "--", "plugins", "log"), "");
+});
+
+test("a deny of another fingerprint withdraws nothing", () => {
+  const { dir, one, two, bare } = estate();
+  pushDeny(two, "aaaaaaaaaaaaaaaa");
+  git(one, "pull", "--quiet", "--ff-only", "origin", "main");
+  const reports = withRecord(report(dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", recordDoc());
+  const result = run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, servicePath: true, log: quiet });
+  assert.equal(result.outcome, "committed", JSON.stringify(result));
+  assert.deepEqual(result.refusals, []);
+  assert.ok(git(bare, "ls-tree", "-r", "--name-only", "main").includes("plugins/alpha/versions/0.1.0.json"));
+});
+
 // ── this file, from outside ──────────────────────────────────────────────────
 //
 // The `exit` handler above is invisible from inside the process it runs in:
