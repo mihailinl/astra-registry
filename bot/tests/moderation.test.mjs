@@ -43,7 +43,7 @@ import {
   ACTIONS, BACKING, CATEGORIES, ENTRY_MEMBERS, ESCALATING_ACTIONS, OUTCOMES,
   REASON_CLASSES, REASON_FILE_SUFFIXES, REASON_MAX_CODE_POINTS, REASON_MIN_CODE_POINTS,
   SOURCE_DIR, buildModerationLog, checkEntry, codePointLength, cutoverAt, fileNameFor,
-  loadEntries, reasonProblems,
+  loadEntries, reasonProblems, effectiveCategories,
 } from "../lib/moderation.mjs";
 import { checkAdvisory, buildRevocations } from "../../tools/lib/revocations.mjs";
 import { LOG_ACTION } from "../lib/compile-decision.mjs";
@@ -718,4 +718,21 @@ test("ACTIONS is exactly the log actions §7.2's codes write, as the token file 
     "and the log refuses is a takedown that throws at compile (MOD-3); one the log accepts and no code writes is a " +
     "word minice-e4's closed Table 5-I reader may refuse (ops couplings 154)");
   assert.ok(ACTIONS.length >= 8, `${ACTIONS.length} actions; §7.2 with MOD-47 names 8 at contract 2.9.0`);
+});
+
+// Two corrections of one entry on the same day are `…-correct.json` and `…-correct-2.json` (MOD-47). A plain
+// directory sort reads `-2` first ('-' sorts before '.'), and `effectiveCategories` keeps the last one it reads,
+// so the FIRST correction of the day won. loadEntries now returns MOD-47's order, and the second one wins.
+test("two corrections of one entry on one day: the second (MOD-47 `-2`) is the one in force", () => {
+  const dir = root();
+  const ID = "0192f3a4-5b6c-7d8e-9f01-2345678930aa";
+  put(dir, { ...DELIST, service_decision_id: ID, category: "malicious" });
+  const fix = { date: "2026-09-20", action: "correct", plugin: "alpha", reason: REASON, corrects: ID };
+  put(dir, { ...fix, service_decision_id: "0192f3a4-5b6c-7d8e-9f01-2345678930ab", category: "broken", previous_category: "malicious" }, 1);
+  put(dir, { ...fix, service_decision_id: "0192f3a4-5b6c-7d8e-9f01-2345678930ac", category: "harmful_behaviour", previous_category: "broken" }, 2);
+  const { entries, files } = loadEntries({ root: dir });
+  const corrections = files.filter((f) => f.includes("-correct"));
+  assert.deepEqual(corrections, ["2026-09-20-alpha-correct.json", "2026-09-20-alpha-correct-2.json"], "MOD-47 order, not the directory listing's");
+  assert.equal(effectiveCategories(entries).get(ID)?.category, "harmful_behaviour", "the day's second correction is the one in force");
+  assert.deepEqual(effectiveCategories(entries).get(ID)?.history.map((h) => h.category), ["malicious", "broken", "harmful_behaviour"]);
 });

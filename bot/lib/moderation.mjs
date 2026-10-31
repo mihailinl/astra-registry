@@ -748,6 +748,10 @@ export function loadEntries({ root = REPO_ROOT } = {}) {
   // `-1` beside it, and two files claiming the same `n`, are both a second
   // write that did not know about the first.
   const seen = new Map();
+  // MOD-47's own order, not the directory listing's: a plain `.sort()` puts `…-correct-2.json` before
+  // `…-correct.json` ('-' sorts before '.'), so the second write of a day read as the first, and
+  // `effectiveCategories` (a date-only, stable sort, last one wins) kept the FIRST correction of a day.
+  const order = new Map();
 
   for (const file of names) {
     const where = `${SOURCE_DIR}/${file}`;
@@ -775,6 +779,7 @@ export function loadEntries({ root = REPO_ROOT } = {}) {
       continue;
     }
     group.add(n);
+    order.set(doc, { base: fileNameFor(doc), n });
     seen.set(key, group);
     entries.push(doc);
     files.push(file);
@@ -796,7 +801,10 @@ export function loadEntries({ root = REPO_ROOT } = {}) {
     }
   }
 
-  return { entries, errors, files };
+  // Entries and files in MOD-47 order: by the entry's first-of-day name, then by its number.
+  const pairs = entries.map((doc, i) => ({ doc, file: files[i], key: order.get(doc) ?? { base: files[i], n: 1 } }));
+  pairs.sort((a, b) => (a.key.base < b.key.base ? -1 : a.key.base > b.key.base ? 1 : a.key.n - b.key.n));
+  return { entries: pairs.map((p) => p.doc), errors, files: pairs.map((p) => p.file) };
 }
 
 /**
