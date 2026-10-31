@@ -28,6 +28,18 @@
    - **Пальцы** — насколько согнуть пальцы к ладони поверх анимации: у Mixamo они часто прямые, как доска.
 3. Нажми **Применить** — аватар перезапустится на пару секунд.
 
+### Танцы в такт музыке
+
+Переключатель в карточке «Танцы под музыку» (включён по умолчанию). Astra меряет темп того, что играет, и передаёт
+его движку как параметр `bpm`; танцы из студии записываются как `blend` по `bpm` с `rate = "match"` и играют со
+скоростью «темп трека / темп танца» — в такт. Каждый танец по-прежнему проигрывается целиком (`loop = false`) и
+сменяется следующим.
+
+Темп самого танца плагин определяет по движению бёдер в файле (`.fbx`, `.vrma`, `.glb`): где их движение повторяется
+сильнее всего, 80–160 BPM. Если не получилось или ошибся — у танца есть поле «Темп» (BPM). Для каждой полосы берётся
+вариант темпа танца, ближайший к её обычному темпу (половинный, свой или двойной — всё в такт): медленная музыка
+танцуется вдвое быстрее, а не в замедленной съёмке.
+
 ### Плавные танцы
 
 Переключатель в карточке «Танцы под музыку» (включён по умолчанию). Без него у многих наборов танец заканчивается,
@@ -39,6 +51,33 @@
   если их не было. Выключишь — набор станет ровно таким, как был.
 - **Встроенный набор** править нельзя: для темпов, у которых есть танцы из студии, дополнение заменяет состояние
   (`merge = "replace"`) — только эти танцы, с плавной сменой. Темпы без танцев из студии остаются как есть.
+
+### Прогулки
+
+Карточка **Прогулки**. Когда она стоит без дела (не сидит, не танцует, музыка не играет, ты не в игре), раз в
+несколько минут она:
+- **проходит немного вбок** — окно аватара плавно едет вместе с ней (разгон и торможение; на торможении она
+  переходит в стойку), в ту сторону экрана, где больше места;
+- или **прячется за нижний край окна и выглядывает** — голова и плечи над краем, потом снова целиком.
+
+Работает сразу после установки: в плагин встроена ходьба **Walk_Loop** из
+[Universal Animation Library](https://quaternius.itch.io/universal-animation-library) от Quaternius (CC0) — обычный шаг
+вперёд, движок поворачивает его в профиль по ходу движения.
+
+Походок может быть несколько — каждая прогулка берёт случайную. Своя походка — любая анимация из студии (FBX или VRMA),
+играется «на месте». Например, с Mixamo: *Female Walk*, *Catwalk Walk Forward*, *Sneak Walk* или *Left Strafe Walking*
+(шаг вбок) — Download → *FBX Binary, Without Skin, 30 fps*, галочка **In Place**. Куда она идёт, плагин определяет по ногам (стопа на полу скользит назад): шаг вбок остаётся
+шагом вбок, обычная ходьба вперёд разворачивается в профиль, вторая сторона делается зеркально. Если всё же идёт
+не туда — переключатель «наоборот». Для выглядывания выбери анимацию, где она оглядывается (например, Mixamo
+*Looking Around*). Схватишь её мышкой — прогулка останавливается.
+
+**Только когда она стоит свободно.** Если она стоит на панели задач или сидит на краю окна, окно держит сама Astra и
+сдвинуть его нельзя — прогулка пропускается, а на странице появляется подсказка: перетащи её повыше. Вдоль края её
+водит встроенная прогулка Astra (Модель → Окно).
+
+Состояния пишутся в её собственный набор (`as_walk_<id>_right/left`, `as_peek`, клипы в `clips/anim-studio/`), окно
+двигает маленький помощник PowerShell (`SetWindowPos`). Нужны свой набор персонажа и команды Astra (карточка
+«Время суток»); после выбора — **Применить**.
 
 ### Редактор
 
@@ -108,40 +147,6 @@
 **Когда видно.** Эффект привязан к **состоянию** аватара, а не к клипу: какой клип играет внутри состояния, движок
 не различает. Поэтому лицо и значок есть, когда анимация играет сама:
 
-| Как играет | Состояние | Лицо и значок |
-|---|---|---|
-| «▶ Показать», время суток, реакция на событие | `greet` (вместо приветствия) | есть |
-| своё состояние `as_<id>` (триггер, команда — если анимация «в наборе персонажа») | `as_<id>` | есть |
-| «Сама, от скуки» | `idle` | нет — это один из случайных клипов покоя |
-| «Под музыку» | `dance_slow/mid/fast` | нет — один из случайных танцев |
-
-Лицо — одно на всю анимацию: если в редакторе есть ключи мимики, берётся самое сильное из них, иначе выражение из
-списка. Ключи по времени в лице не проигрываются. Как и всё остальное, вступает в силу после перезапуска аватара:
-движок читает наборы только при старте.
-
-## Сборка из исходников
-
-Нужны [bun](https://bun.sh) и [astra-plugin](https://github.com/mihailinl/AstraPlugins/blob/HEAD/docs/en/install-cli.md) 0.5.0+.
-
-```
-bun install
-bun run test
-astra-plugin check . --strict
-astra-plugin test .
-astra-plugin build .
-```
-
-Релизы собирает и подписывает GitHub Actions (`.github/workflows/release.yml`) по тегу `vX.Y.Z`.
-
 ---
 
-# Anim Studio — an Astra plugin
-
-Add your own animations to the Astra avatar without editing files by hand, and choose when she plays them:
-when bored (idle), to music (slow / mid / fast), only at some times of day (morning / day / evening / night), or as her own state `as_…` that you can bind to triggers. Supports `.vrma`, Mixamo `.fbx` (with an *in place* option) and multi-animation `.glb`.
-She also stretches in the morning, waves when you come back and yawns at night (the page creates the two Astra commands for that).
-“Smooth dances” (on by default) takes the intro/outro and the endless tempo-paced loop out of the pack's dance states, so dances flow into each other instead of stopping in the idle stance between them; her own pack is edited reversibly, a built-in one is replaced through the add-on for the tempos that have studio dances.
-“Into the character's pack” puts an animation into the character's own pack as an ordinary clip and state, so Astra lists it under Model → Animations and its triggers and commands play it live, with no restart.
-Each animation can get a face and an icon over her head (hearts, sparkles, notes…). The engine takes these only from effects in the character's own base pack, so the plugin keeps a marked block at the end of that pack's `animpack.toml` and adds it to the effect `[interactions.none]` plays. They show while the animation plays as itself (Show, time of day, a reaction: state `greet` or `as_<id>`), not as one of the random idle moves or dances.
-Install: Astra → Workshop → Development → Import plugin → choose `anim-studio.astraplugin`.
-The page lives in the ☰ Navigation menu → Plugins → Anim Studio.
+*This README was truncated. [Read the rest on GitHub](https://github.com/FluffyTaill/astra-anim-studio).*
