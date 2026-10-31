@@ -58,19 +58,6 @@ const SCHEMA_ABSENCES = {
       "is why `schema/` is not a directory entry: the token file is generated from this contract, so a directory " +
       "entry would make every contract version a shadow transition\"",
   },
-  "schema/moderation-work-v2.json": {
-    loaded:
-      "contract 6.8.0 publishes this entry before the operator-acts registry pull request lands the file and " +
-      "`bot/moderation-run.mjs`'s loader for it (astra-plugins-ops `dev/operator-acts-on-site-design.md` §6 step " +
-      "6; TRUST-31 \"A tree acknowledged before its merge\"), so nothing under schema/ opens it yet and this file " +
-      "is not on this tree to walk",
-  },
-  "schema/operator-act-v1.json": {
-    loaded:
-      "contract 6.8.0 publishes this entry before the operator-acts registry pull request lands the file and the " +
-      "`tools/validate.mjs` check that reads it, for the same reason and the same pull request as " +
-      "schema/moderation-work-v2.json above",
-  },
 };
 
 /**
@@ -96,6 +83,8 @@ const SCHEMA_LOADERS = [
   ["bot/lib/listing-state.mjs", "deadlineSchema"],
   ["bot/lib/listing-state.mjs", "cutoverSchema"],
   ["bot/moderation-run.mjs", "workSchema"],
+  ["bot/moderation-run.mjs", "workSchemaV2"],
+  ["bot/lib/operator-act.mjs", "actRecordSchema"],
 ];
 
 /**

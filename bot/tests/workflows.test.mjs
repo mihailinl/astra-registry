@@ -338,8 +338,19 @@ test("no workflow lets a caller name the submitter", () => {
 // differ declares it below, with the reason, and the declaration itself goes red
 // when the step it names stops existing or stops differing that way.
 const VALIDATE_REFERENCE = "build-index.yml";
+const WRITER_MODERATION_WHY =
+  "the moderation run writes a deny, a hold's confirm or cancel, a passkey revocation and an operator revert only " +
+  "for an owner's passkey act it verified; `--writer moderation` holds its tree to that (operator-acts design " +
+  "§4.6) and asks nothing else, so the tree main may hold is the reference's. operator.yml's and every other " +
+  "gate's writer is not the moderation run";
 const VALIDATE_DIFFERENCES = Object.freeze({
   // "<file>: <step name>": { flags: ["--flag", ...], why: "..." },
+  "plugins-moderation.yml: Every registry rule, over the staged tree": {
+    flags: ["--allow-staging", "--writer moderation"], why: WRITER_MODERATION_WHY,
+  },
+  "plugins-moderation.yml: Commit once, with a Service-Decision: trailer per decision, and push": {
+    flags: ["--allow-staging", "--writer moderation"], why: WRITER_MODERATION_WHY,
+  },
 });
 
 /** The flags `tools/validate.mjs` documents, and which of them take a value, out of its own usage line. */

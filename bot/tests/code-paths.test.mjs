@@ -429,26 +429,6 @@ test("every entry is a well-formed path, and one bad entry refuses the whole set
 // nothing is pending, and the next entry that names a path not yet on the
 // tree writes its row here with a task and a step.
 const UNRESOLVED_BY = new Map([
-  // Contract 6.8.0 publishes both before the operator-acts registry pull
-  // request lands them (astra-plugins-ops `dev/operator-acts-on-site-design.md`
-  // §6 step 6: `bot/lib/operator-act.mjs`, `bot/lib/operator-acts.mjs` and the
-  // two schemas below). That pull request is the one TRUST-31 "A tree
-  // acknowledged before its merge" exists for, so it is published as a new
-  // rollout step, R11, rather than folded into R6 through R10, each of which
-  // already names a different exit. §9's table does not carry R11 yet — that
-  // is 6.9.0's work, when the operator-acts feature itself ships — but
-  // `log/rollout/R11-exit.json` is the landing condition this row is held to
-  // either way, by the same grammar every other step uses.
-  ["schema/moderation-work-v2.json", {
-    by: "the operator-acts registry pull request",
-    why: "the registry's check of the service's `astra.plugins.bot-moderation-work/2` answer",
-    due: "R11",
-  }],
-  ["schema/operator-act-v1.json", {
-    by: "the operator-acts registry pull request",
-    why: "types the record `state/acts/<jti>.json` the bot writes for every operator act it applies",
-    due: "R11",
-  }],
 ]);
 
 /** Edit distance, with an early exit: anything over `max` is just "far". */
@@ -1031,6 +1011,10 @@ export const DATA_OUTSIDE = [
   // Records a run writes or reads as its subject — TRUST-31's own outside
   // paragraph: hashing them would put the bot into shadow for doing its job.
   { path: "plugins/", why: "the catalogue's sources, which every run judges and a publication writes" },
+  // Not a file: the service's API path for an operator act's result
+  // (bot/lib/service.mjs's OPERATIONS), relative to API_BASE, which this
+  // scan reads as a repository path because it starts with `bot/`.
+  { path: "bot/operator-act-results", why: "an API path under https://api.minice.ai/plugins/v1/, not a file in this repository" },
   { path: "publishers/", why: "publisher records, hand-reviewed and withdrawn by the daily re-check; TRUST-31 lists them outside" },
   { path: "log/", why: "decision records, the baseline marker, the cutover marker and migration notices: records, not rules" },
   // Named before `state/`, which would also cover it, because this record is

@@ -31,6 +31,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { cleanEnv } from "../../tools/lib/git-env.mjs";
+import { validate as validateSchema } from "../../tools/lib/jsonschema.mjs";
 import { ADVISORY_ID_PATTERN, ID_PATTERN } from "../../tools/lib/ids.mjs";
 import { isTime } from "../../tools/lib/time.mjs";
 import { HOLD_KINDS, readHolds } from "./holds.mjs";
@@ -48,6 +49,13 @@ export const REVOKED_SCHEMA = "astra.registry.passkey-revoked/1";
 /** Where the pin lives, relative to a registry root; read by literal path (`PIN_FILE`). */
 export const PIN_REL = "bot/lib/operator-passkeys.json";
 export const PIN_FILE = new URL("./operator-passkeys.json", import.meta.url);
+/** `schema/operator-act-v1.json`, from THIS repository (contract 6.8.0's TRUST-31 entry). */
+export const RECORD_SCHEMA_FILE = new URL("../../schema/operator-act-v1.json", import.meta.url);
+
+/** The act record's schema, read by literal path; a tree under test never supplies it. */
+export function actRecordSchema() {
+  return JSON.parse(fs.readFileSync(RECORD_SCHEMA_FILE, "utf8"));
+}
 export const ACTS_DIR = "state/acts";
 export const REVOKED_DIR = "state/passkeys/revoked";
 export const DENY_DIR = "state/deny";
@@ -357,15 +365,25 @@ export function targetProblem(act, t) {
   }
 }
 
+const carries = (doc, members) =>
+  doc && typeof doc === "object" && !Array.isArray(doc) && members.every((m) => Object.hasOwn(doc, m));
+
 /**
  * Checks 1 and 2: the wire item's shape, the caps, strict base64url, and a
  * body that is canonical, exact, addressed to this registry and naming a
  * target of its act's shape. Returns the parsed body, or a refusal.
+ *
+ * The wire item and its assertion may carry members beyond the ones read here
+ * — SCOPE-3's read side, as every answer from the service is read: nothing
+ * unsigned that this file does not read can change what it decides, and a
+ * refused act is a final answer, so a member the service adds in a legal
+ * MINOR must not refuse every act. The BODY is the signed part, and it is
+ * exact, byte for byte.
  */
 export function shapeOf(item, pin) {
   const fail = (why) => ({ ok: false, code: "act_malformed", why });
-  if (!exact(item, WIRE_MEMBERS)) return fail("the act carries members other than jti, body and assertion");
-  if (!exact(item.assertion, ASSERTION_MEMBERS)) return fail("the assertion carries members other than its four");
+  if (!carries(item, WIRE_MEMBERS)) return fail("the act does not carry jti, body and assertion");
+  if (!carries(item.assertion, ASSERTION_MEMBERS)) return fail("the assertion does not carry its four members");
   if (typeof item.body !== "string" || Buffer.byteLength(item.body, "utf8") > CAPS.body) return fail(`the body is not a string of at most ${CAPS.body} bytes`);
   for (const m of ASSERTION_MEMBERS) {
     if (!b64urlBytes(item.assertion[m], CAPS[m])) return fail(`assertion.${m} is not strict base64url within ${CAPS[m]} bytes`);
@@ -706,9 +724,10 @@ export const revokedRecord = ({ kid, at, run }) => ({ schema: REVOKED_SCHEMA, ki
  * whatever that key's status is now. Time is not re-checked: the run that
  * wrote it did, and a record stays true after its `exp`.
  */
-export function actRecordProblems(doc, { file, pin }) {
+export function actRecordProblems(doc, { file, pin, schema = actRecordSchema() }) {
   const p = [];
   if (!exact(doc, RECORD_MEMBERS)) return [`${file}: carries ${Object.keys(doc ?? {}).sort().join(",")}, not ${[...RECORD_MEMBERS].sort().join(",")}`];
+  for (const e of validateSchema(schema, doc)) p.push(`${file}: ${e.path} ${e.message}`);
   if (doc.schema !== RECORD_SCHEMA) p.push(`${file}: schema ${JSON.stringify(doc.schema)}`);
   if (!HEX32.test(String(doc.jti)) || path.posix.basename(file) !== `${doc.jti}.json`) p.push(`${file}: is not named by its jti`);
   if (!RUN_RE.test(String(doc.run))) p.push(`${file}: run is not a workflow run URL`);

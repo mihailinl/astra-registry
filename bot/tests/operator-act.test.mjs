@@ -228,11 +228,20 @@ test("an aud of another registry is malformed", () => {
   refusedWith(approve({}, { aud: "astra-registry:1" }), "act_malformed", {}, "aud");
 });
 
-test("a wire item with a member too many, or a jti that is not its body's, is malformed", () => {
+test("a jti that is not its body's, or a missing member, is malformed; an unsigned extra member is read past (SCOPE-3)", () => {
   const item = approve();
-  refusedWith({ ...item, extra: "x" }, "act_malformed", {}, "extra wire member");
   refusedWith({ ...item, jti: "f".repeat(32) }, "act_malformed", {}, "jti");
-  refusedWith({ ...item, assertion: { ...item.assertion, user_handle: "AA" } }, "act_malformed", {}, "user handle");
+  refusedWith({ jti: item.jti, body: item.body }, "act_malformed", {}, "no assertion");
+  const { signature, ...three } = item.assertion;
+  assert.ok(signature);
+  refusedWith({ ...item, assertion: three }, "act_malformed", {}, "three assertion members");
+  // A member the service adds in a MINOR is unsigned and unread: it cannot
+  // change the verdict, and refusing it would refuse every act at once.
+  assert.equal(check({ ...item, received_at: "x" }).verdict, "apply");
+  assert.equal(check({ ...item, assertion: { ...item.assertion, user_handle: "AA" } }).verdict, "apply");
+  // The record keeps the four it read, and nothing else.
+  assert.deepEqual(Object.keys(actRecord({ ...item, assertion: { ...item.assertion, user_handle: "AA" } }, { run: "https://github.com/o/r/actions/runs/1", at: "2026-10-31T12:00:00Z" }).assertion).sort(),
+    ["authenticator_data", "client_data_json", "credential_id", "signature"]);
 });
 
 // ── 3: which key, and may it ────────────────────────────────────────────────
@@ -783,4 +792,58 @@ test("revoke-passkey: a pinned key, not yet revoked, by the owner's pinned id al
   assert.match(unpinned.logs.join("\n"), /not a pinned key/);
   const mixed = await run("act", { ASTRA_ACT: "deny", ASTRA_FINGERPRINT: DIGEST.slice(0, 16), ASTRA_KID: "owner-pc" });
   assert.equal(mixed.code, 1, "a deny naming a kid was accepted");
+});
+
+// ── `--writer moderation` (design §4.6) ─────────────────────────────────────
+
+import { checkModerationWriter } from "../../tools/validate.mjs";
+import { actAlarms } from "../moderation-run.mjs";
+
+test("--writer moderation: a deny, a hold record, a revocation or an operator revert needs an act record added beside it", () => {
+  const phone = enrolled("ES256", { kid: "owner-phone" });
+  const pinRoot = pinRepo(pinWith(withStatus(phone, "pending")), pinWith(phone));
+  const root = treeFixture();
+  const writer = () => {
+    const errors = [];
+    checkModerationWriter({ root, report: { error: (w, m) => errors.push(`${w}: ${m}`), note() {}, warn() {} } }, { pinRoot });
+    return errors;
+  };
+  assert.deepEqual(writer(), []);
+  const fp = DIGEST.slice(0, 16);
+  const deny = { schema: "astra.registry.deny/1", fingerprint: fp, run: RUN, at: AT };
+  writeJson(root, `state/deny/${fp}.json`, deny);
+  writeJson(root, `state/holds/${SDI}.cancel.json`, { schema: "astra.registry.hold-record/1", act: "cancel", service_decision_id: SDI, plugin_id: "widgets", at: AT, run: RUN });
+  writeJson(root, "state/passkeys/revoked/owner-phone.json", { schema: "astra.registry.passkey-revoked/1", kid: "owner-phone", at: AT, run: RUN });
+  writeJson(root, "bot/moderation/2026-10-31-widgets-relist.json", { date: "2026-10-31", action: "relist", plugin: "widgets", reason: "Reverted by the registry operator: the decision this entry reverses was made in error.", category: "error", reverses: DELIST_SDI });
+  const red = writer().join("\n");
+  for (const what of [`state/deny/${fp}.json`, `state/holds/${SDI}.cancel.json`, "state/passkeys/revoked/owner-phone.json", "2026-10-31-widgets-relist.json"]) {
+    assert.match(red, new RegExp(what.replace(/[.]/g, "\\.")), `${what} was written by a moderation commit with no act`);
+  }
+  // Backed by verified acts applied in their time: green.
+  const head = git(root, "rev-parse", "HEAD");
+  const now = Date.parse(AT);
+  const mk = (act, target, lifetime = 3600) => A.act(phone, A.body({ act, target, now, main: head, lifetime }));
+  for (const item of [
+    mk("deny", releaseTarget(), 86400),
+    mk("cancel", holdTarget({ code: "M_DELIST" })),
+    mk("revoke_key", { kid: "owner-phone", credential_id: phone.pinKey.credential_id }, 86400),
+    mk("revert", { service_decision_id: DELIST_SDI, action: "delist", plugin_id: "widgets", entry: "2026-10-30-widgets-delist.json" }),
+  ]) writeJson(root, `state/acts/${item.jti}.json`, actRecord(item, { run: RUN, at: AT }));
+  assert.deepEqual(writer(), []);
+  // An act applied after its exp backs nothing.
+  const late = mk("deny", releaseTarget(), 60);
+  for (const n of fs.readdirSync(path.join(root, "state", "acts"))) {
+    const doc = JSON.parse(fs.readFileSync(path.join(root, "state", "acts", n), "utf8"));
+    if (canonicalBody(doc.body).act === "deny") fs.rmSync(path.join(root, "state", "acts", n));
+  }
+  writeJson(root, `state/acts/${late.jti}.json`, actRecord(late, { run: RUN, at: "2026-10-31T13:00:00Z" }));
+  assert.match(writer().join("\n"), /outside its own time/);
+});
+
+test("alert announces each act by kind, plugin, release fingerprint and key fingerprint", () => {
+  const item = A.act(owner, A.body({ act: "approve", target: releaseTarget(), now: NOW }));
+  const a = actAlarms([item], { pin: PIN });
+  assert.deepEqual(a.codes, ["OPERATOR_ACT_APPROVE"]);
+  assert.deepEqual(a.ids, ["voice-text-input"]);
+  assert.deepEqual(a.hexes, [DIGEST.slice(0, 16), keyFingerprint(owner.pinKey.public_key).replace(/ /g, "")]);
 });

@@ -3097,12 +3097,109 @@ export function checkOperatorPasskeys(ctx, { pinRoot = REPO_ROOT } = {}) {
   }
 }
 
+// ── what a moderation commit may write without the owner's act ──────────────
+//
+// `--writer moderation`, passed only by plugins-moderation.yml's two gates
+// (operator-acts design §4.6). The moderation run writes a deny, a hold's
+// confirm or cancel, a passkey revocation and an operator revert only for an
+// owner's passkey act it verified; this holds the tree to that, compared with
+// HEAD: every such path added or changed must be named by the target of an
+// act record ADDED in the same tree, which verifies under its pinned key and
+// was applied inside its own time. So a moderation run that a writer bent to
+// write one of these on its own goes red at its own gate, whatever the run's
+// code says. operator.yml runs the validator without the flag: its acts are
+// the owner's by his GitHub identity, not by a passkey.
+//
+// A confirm written and released in one commit never reaches this check (the
+// record is deleted before the gate runs); the moderation run holds that case
+// itself: the act record stays, and the commit names it in `Operator-Act:`.
+
+const isoSeconds = (t) => Math.floor(Date.parse(t) / 1000);
+
+export function checkModerationWriter(ctx, { pinRoot = REPO_ROOT } = {}) {
+  const { report, root } = ctx;
+  const where = "--writer moderation";
+  const unaskable = unaskableRoot(root);
+  if (unaskable) {
+    report.error(where, `the tree cannot be compared with HEAD: ${unaskable}`);
+    return;
+  }
+  const changes = [];
+  const diff = gitAt(root, ["diff", "--no-renames", "--name-status", "-z", "HEAD", "--"]).split("\0").filter((x) => x !== "");
+  for (let i = 0; i + 1 < diff.length; i += 2) changes.push({ status: diff[i], file: diff[i + 1] });
+  for (const f of gitAt(root, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\0").filter(Boolean)) {
+    changes.push({ status: "A", file: f });
+  }
+  const touched = changes.filter((c) => c.status === "A" || c.status === "M");
+  let pin;
+  try {
+    pin = JSON.parse(fs.readFileSync(path.join(pinRoot, ...PIN_REL.split("/")), "utf8"));
+  } catch (e) {
+    report.error(where, `the operator passkey pin does not read: ${e.message}`);
+    return;
+  }
+
+  // The acts this tree adds, each verified and in time.
+  const backed = { deny: new Set(), confirm: new Set(), cancel: new Set(), revoke_key: new Set(), revert: new Set() };
+  for (const c of touched.filter((t) => t.file.startsWith(`${ACTS_DIR}/`))) {
+    if (c.status === "M") {
+      report.error(c.file, "an act record is written once, and this tree changes one");
+      continue;
+    }
+    let doc;
+    try {
+      doc = JSON.parse(fs.readFileSync(path.join(root, ...c.file.split("/")), "utf8"));
+    } catch (e) {
+      report.error(c.file, `not readable JSON (${e.message})`);
+      continue;
+    }
+    if (actRecordProblems(doc, { file: c.file, pin }).length) continue; // said by checkOperatorPasskeys
+    const body = JSON.parse(doc.body);
+    const at = isoSeconds(doc.at);
+    if (!(isoSeconds(body.iat) <= at + 300 && at < isoSeconds(body.exp))) {
+      report.error(c.file, `applied at ${doc.at}, outside its own time (iat ${body.iat}, exp ${body.exp})`);
+      continue;
+    }
+    const t = body.target;
+    if (body.act === "deny") backed.deny.add(t.fingerprint);
+    if (body.act === "confirm") backed.confirm.add(t.service_decision_id);
+    if (body.act === "cancel") backed.cancel.add(t.service_decision_id);
+    if (body.act === "revoke_key") backed.revoke_key.add(t.kid);
+    if (body.act === "revert") backed.revert.add(t.service_decision_id);
+  }
+
+  const unbacked = (file, why) => report.error(file, `${why}, and no act record this tree adds names it: a moderation commit writes it only for the owner's verified passkey act (operator-acts design §4.6)`);
+  for (const c of touched) {
+    let m;
+    if ((m = /^state\/deny\/([^/]+)\.json$/.exec(c.file))) {
+      if (!backed.deny.has(m[1])) unbacked(c.file, "a deny is written");
+    } else if ((m = /^state\/holds\/([^/]+)\.(confirm|cancel)\.json$/.exec(c.file))) {
+      if (!backed[m[2]].has(m[1])) unbacked(c.file, `a hold's ${m[2]} is written`);
+    } else if ((m = /^state\/passkeys\/revoked\/([^/]+)\.json$/.exec(c.file))) {
+      if (!backed.revoke_key.has(m[1])) unbacked(c.file, "a passkey revocation is written");
+    } else if (c.status === "A" && c.file.startsWith(`${MODERATION_DIR}/`) && c.file.endsWith(".json")) {
+      let entry = null;
+      try {
+        entry = JSON.parse(fs.readFileSync(path.join(root, ...c.file.split("/")), "utf8"));
+      } catch {
+        entry = null; // the moderation log's own check says so
+      }
+      // An operator's revert: a relist or unrevoke that `reverses` a decision
+      // and carries no service decision of its own (tools/operator.mjs's shape).
+      if (entry && typeof entry.reverses === "string" && entry.service_decision_id === undefined &&
+          (entry.action === "relist" || entry.action === "unrevoke") && !backed.revert.has(entry.reverses)) {
+        unbacked(c.file, `an operator's ${entry.action} of a decision is written`);
+      }
+    }
+  }
+}
+
 // ── driver ──────────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
   const opts = {
     allowStaging: false, allowDirect: false, online: false, artifactsDir: null,
-    root: REPO_ROOT, index: true,
+    root: REPO_ROOT, index: true, writer: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -3112,6 +3209,10 @@ function parseArgs(argv) {
     else if (a === "--artifacts") opts.artifactsDir = path.resolve(argv[++i]);
     else if (a === "--registry-dir") opts.root = path.resolve(argv[++i]);
     else if (a === "--no-index") opts.index = false;
+    else if (a === "--writer") {
+      opts.writer = argv[++i];
+      if (opts.writer !== "moderation") throw new Error(`--writer ${JSON.stringify(opts.writer ?? null)}: the one writer this names is \`moderation\``);
+    }
     else if (a === "--help" || a === "-h") opts.help = true;
     else throw new Error(`unknown argument: ${a}`);
   }
@@ -3168,6 +3269,7 @@ export async function runValidation(opts) {
   checkTreeModes(ctx);
   checkRecordStrings(ctx);
   checkOperatorPasskeys(ctx);
+  if (opts.writer === "moderation") checkModerationWriter(ctx);
 
   // B.4's other record trees, walked once and handed to both checks: the
   // second one counts author-action records against the yanks a moderation
@@ -3193,11 +3295,11 @@ async function main(argv) {
     opts = parseArgs(argv);
   } catch (e) {
     console.error(e.message);
-    console.error("usage: node tools/validate.mjs [--allow-staging] [--allow-direct] [--online] [--artifacts DIR] [--registry-dir DIR] [--no-index]");
+    console.error("usage: node tools/validate.mjs [--allow-staging] [--allow-direct] [--online] [--artifacts DIR] [--registry-dir DIR] [--no-index] [--writer NAME]");
     return 2;
   }
   if (opts.help) {
-    console.log("usage: node tools/validate.mjs [--allow-staging] [--allow-direct] [--online] [--artifacts DIR] [--registry-dir DIR] [--no-index]");
+    console.log("usage: node tools/validate.mjs [--allow-staging] [--allow-direct] [--online] [--artifacts DIR] [--registry-dir DIR] [--no-index] [--writer NAME]");
     return 0;
   }
 

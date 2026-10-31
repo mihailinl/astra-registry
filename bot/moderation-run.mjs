@@ -212,7 +212,21 @@ import {
   writeSettled,
 } from "./lib/settled.mjs";
 import { POLICY_CODES } from "./lib/policy/constants.mjs";
-import { createClient } from "./lib/service.mjs";
+import { createClient, operatorActResult } from "./lib/service.mjs";
+import {
+  ACT_CODES,
+  ACTS_DIR,
+  ASSERTION_MEMBERS,
+  actRecord,
+  canonicalBody,
+  keyByCredential,
+  keyFingerprint,
+  loadPin,
+  treeView,
+  verifyAct,
+  verifyBatch,
+} from "./lib/operator-act.mjs";
+import { Refusal as ActRefusal, applyOperatorAct } from "./lib/operator-acts.mjs";
 import { reasonOf } from "./lib/service-decide.mjs";
 import { buildIndex } from "../tools/build-index.mjs";
 import { stableStringify } from "../tools/lib/canonical.mjs";
@@ -232,6 +246,15 @@ export const SCHEMA_FILE = "schema/moderation-work-v1.json";
 /** The body §4.2 names, and the three members BOT-80 gives it. */
 export const WORK_SCHEMA = "astra.plugins.bot-moderation-work/1";
 export const TOP_MEMBERS = Object.freeze(["shadow", "submissions", "service_decisions"]);
+
+/**
+ * `/2`, which the service answers only while its `registry_acts.enabled` flag
+ * is on: `/1` and the owner's passkey acts (operator-acts design §4.1). A `/1`
+ * answer runs exactly as before, with no act anywhere in the run.
+ */
+export const SCHEMA_FILE_V2 = "schema/moderation-work-v2.json";
+export const WORK_SCHEMA_V2 = "astra.plugins.bot-moderation-work/2";
+export const TOP_MEMBERS_V2 = Object.freeze([...TOP_MEMBERS, "operator_acts"]);
 
 /** The two members an `A_*` entry may not carry, refused BY NAME (n4). */
 export const AUTHOR_DENIED_MEMBERS = Object.freeze(["moderator", "declared_interest"]);
@@ -291,6 +314,11 @@ export const MODERATION_ALLOWLIST = Object.freeze([
   `${REVOCATIONS_DIR}/`,
   "log/decisions/",
   "state/holds/",
+  // The owner's passkey acts (operator-acts design §4.4): each act's record,
+  // a deny, and a passkey revocation. Nothing else under `state/` widens.
+  `${ACTS_DIR}/`,
+  "state/deny/",
+  "state/passkeys/revoked/",
   "registry/v1/",
   // One file, not a directory: the results the service answered as settled
   // (`bot/lib/settled.mjs`; ops entry 100).
@@ -317,6 +345,14 @@ const readJson = (file) => {
     return undefined;
   }
 };
+
+/** `schema/moderation-work-v2.json`, read from disk as `/1`'s is, by literal path. */
+export function workSchemaV2(root = REPO_ROOT) {
+  const doc = readJson(path.join(root, ...SCHEMA_FILE_V2.split("/")));
+  if (doc === null) throw new Error(`${SCHEMA_FILE_V2} is not on this tree; a \`/2\` answer cannot be read without it`);
+  if (doc === undefined) throw new Error(`${SCHEMA_FILE_V2} is present and unreadable`);
+  return doc;
+}
 
 /** `schema/moderation-work-v1.json`, read from disk so the file is the statement. */
 export function workSchema(root = REPO_ROOT) {
@@ -459,15 +495,20 @@ export function checkSubmission(entry, { root = REPO_ROOT, schema = null } = {})
  * the run instead.
  */
 export function checkWorkAnswer(body, { root = REPO_ROOT } = {}) {
-  const doc = workSchema(root);
+  const v2 = body?.schema === WORK_SCHEMA_V2;
+  const doc = v2 ? workSchemaV2(root) : workSchema(root);
   const out = {
     shadow: true,
     stated: false,
+    version: v2 ? 2 : 1,
     alerts: [],
     entries: [],
     submissions: [],
     refused: [],
     fatal: [],
+    operatorActs: [],
+    acts: [],
+    actsRefused: [],
   };
 
   const mode = readShadow(body);
@@ -479,14 +520,16 @@ export function checkWorkAnswer(body, { root = REPO_ROOT } = {}) {
     { type: doc.type, required: doc.required, properties: doc.properties, additionalProperties: true, $defs: doc.$defs },
     body,
     "$",
-  ).filter((p) => p.path === "$" || /^\$\.(shadow|submissions|service_decisions)$/.test(p.path));
+  ).filter((p) => p.path === "$" || /^\$\.(shadow|submissions|service_decisions|operator_acts)$/.test(p.path));
   if (topProblems.length) {
     out.fatal.push(
-      `the list answer is not \`${WORK_SCHEMA}\`: ${topProblems.map((p) => `${p.path} ${p.message}`).join("; ")}. ` +
+      `the list answer is not \`${v2 ? WORK_SCHEMA_V2 : WORK_SCHEMA}\`: ${topProblems.map((p) => `${p.path} ${p.message}`).join("; ")}. ` +
       "This is the body itself and not one entry of it, so there is no id to refuse against",
     );
     return out;
   }
+  // The acts as they arrived; `checkActs` verifies each, one at a time.
+  if (v2) out.operatorActs = body.operator_acts;
 
   const seen = new Set();
   for (const entry of body.service_decisions) {
@@ -541,6 +584,8 @@ export function listSummary(checked) {
   for (const r of checked.refused) {
     lines.push(`refuse ${r.service_decision_id ?? r.submission_id} ${r.code}`);
   }
+  for (const a of checked.acts ?? []) lines.push(`act    ${a.jti} ${canonicalBody(a.body)?.act ?? "?"}`);
+  for (const r of checked.actsRefused ?? []) lines.push(`refuse ${r.jti} ${r.code}`);
   const text = `${lines.join("\n")}\n`;
   if (Buffer.byteLength(text, "utf8") > MAX_OUTPUT_BYTES) {
     throw new Error(
@@ -551,8 +596,8 @@ export function listSummary(checked) {
   return text;
 }
 
-/** The five outputs the `list` job hands on, in the order its step writes them. */
-export const LIST_OUTPUTS = Object.freeze(["shadow", "entries", "submissions", "refused", "listed"]);
+/** The six outputs the `list` job hands on, in the order its step writes them. */
+export const LIST_OUTPUTS = Object.freeze(["shadow", "entries", "submissions", "refused", "listed", "acts"]);
 
 /**
  * What the `list` job hands on, one single-line JSON value per output.
@@ -585,13 +630,19 @@ export function listOutputs(checked) {
   const listed = [
     ...checked.entries.map((e) => e.service_decision_id),
     ...refused.filter((r) => r.service_decision_id !== undefined).map((r) => r.service_decision_id),
+    // The owner's acts, verified and refused alike: `settled` pages for one
+    // that got no result, as for a decision.
+    ...(checked.acts ?? []).map((a) => a.jti),
+    ...(checked.actsRefused ?? []).map((r) => r.jti),
   ];
+  refused.push(...(checked.actsRefused ?? []).map((r) => ({ jti: r.jti, code: r.code })));
   const values = {
     shadow: checked.shadow === false ? "false" : "true",
     entries: JSON.stringify(checked.entries),
     submissions: JSON.stringify(checked.submissions),
     refused: JSON.stringify(refused),
     listed: JSON.stringify(listed),
+    acts: JSON.stringify(checked.acts ?? []),
   };
   let bytes = 0;
   for (const name of LIST_OUTPUTS) {
@@ -607,6 +658,73 @@ export function listOutputs(checked) {
     );
   }
   return values;
+}
+
+// ── the owner's passkey acts ────────────────────────────────────────────────
+
+/** At most this many acts in one answer (the service's own bound, §4.2). */
+export const MAX_ACTS = 20;
+
+/** An act as it travels between jobs: its jti, its signed body, and the four assertion members. */
+const normalAct = (item) => ({
+  jti: item.jti,
+  body: item.body,
+  assertion: Object.fromEntries(ASSERTION_MEMBERS.map((m) => [m, item.assertion[m]])),
+});
+
+/**
+ * `list`'s half of §4.3: each act checked without git (checks 1–9) against
+ * this checkout's pin. A verified act is handed on as `acts`; a refused one as
+ * a `{jti, code}` row in `refused`, which `report` posts. An act with no
+ * readable `jti` cannot be answered, and is dropped with an alert rather than
+ * failing the run: the service's own check withholds those, and a list of
+ * takedowns must not wait on one bad act.
+ */
+export function checkActs(items, { pin = loadPin(), now = new Date() } = {}) {
+  const out = { acts: [], refused: [], alerts: [] };
+  const list = Array.isArray(items) ? items : [];
+  if (list.length > MAX_ACTS) out.alerts.push({ cause: "operator_act", detail: `${list.length} acts in one answer; the first ${MAX_ACTS} are read` });
+  const seen = new Set();
+  for (const item of list.slice(0, MAX_ACTS)) {
+    const jti = item?.jti;
+    if (typeof jti !== "string" || !/^[0-9a-f]{32}$/.test(jti)) {
+      out.alerts.push({ cause: "operator_act", detail: "an `operator_acts[]` entry carries no readable `jti`, so no result can name it; it is dropped" });
+      continue;
+    }
+    if (seen.has(jti)) {
+      out.alerts.push({ cause: "duplicate", detail: `act ${jti} appears twice in one list answer; the second is dropped` });
+      continue;
+    }
+    seen.add(jti);
+    const v = verifyAct(item, { pin, now, view: null });
+    if (v.verdict === "verified") out.acts.push(normalAct(item));
+    else out.refused.push({ jti, code: v.code });
+  }
+  return out;
+}
+
+/**
+ * The announcement `alert` sends for the acts `list` handed on, before
+ * `commit` applies any (§4.1 step 6): one code per kind, the plugin, the
+ * release fingerprint where the act names one, and the fingerprint of the key
+ * that signed it — the channel's grammar carries codes, plugin ids and hex,
+ * and the owner compares the key's fingerprint with the one his act page
+ * showed at enrolment.
+ */
+export function actAlarms(acts, { pin = loadPin() } = {}) {
+  const codes = [];
+  const ids = [];
+  const hexes = [];
+  for (const a of Array.isArray(acts) ? acts : []) {
+    const body = canonicalBody(a?.body);
+    if (!body) continue;
+    codes.push(`OPERATOR_ACT_${String(body.act).toUpperCase()}`);
+    if (typeof body.target?.plugin_id === "string") ids.push(body.target.plugin_id);
+    if (typeof body.target?.fingerprint === "string") hexes.push(body.target.fingerprint);
+    const key = keyByCredential(pin, a?.assertion?.credential_id);
+    if (key) hexes.push(keyFingerprint(key.public_key).replace(/ /g, ""));
+  }
+  return { codes, ids, hexes };
 }
 
 // ── the commit job ──────────────────────────────────────────────────────────
@@ -879,9 +997,12 @@ const UUID_IN_PATH = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4
  * No `Service-Decision:` trailer is written for them — a trailer says a commit
  * applies, holds or cancels a decision (BOT-81), and this one does none of that.
  */
-export function composeCommit({ compiled, held = [], submissions = [], documents = [], settled = [], run, subject = null }) {
+export function composeCommit({ compiled, held = [], submissions = [], documents = [], settled = [], acts = { paths: [], trailers: [] }, run, subject = null }) {
   const paths = new Set();
   const decisions = [];
+  // The owner's passkey acts this run applied (operator-acts design §4.4):
+  // each act's record and its effect, applied before anything below.
+  for (const p of acts.paths ?? []) paths.add(p);
   for (const r of compiled) {
     for (const e of r.edits ?? []) paths.add(e.file);
     for (const l of r.log ?? []) paths.add(l.file);
@@ -930,6 +1051,7 @@ export function composeCommit({ compiled, held = [], submissions = [], documents
     held.length ? `${held.length} hold(s)` : null,
     submissions.length ? `${submissions.length} terminal record(s)` : null,
     settled.length ? `${settled.length} settled result(s) recorded` : null,
+    acts.paths?.length ? `${new Set((acts.trailers ?? []).filter(([k]) => k === "Operator-Act").map(([, v]) => v)).size} operator act(s)` : null,
   ].filter(Boolean).join(", ");
 
   // The body lists the paths with every UUID in them — a hold entry's and its
@@ -947,6 +1069,13 @@ export function composeCommit({ compiled, held = [], submissions = [], documents
   // per-decision triples are appended here, after its PRIV-2 scan of the
   // subject and body, and through the same `trailerLine` grammar.
   const extra = composeTrailers({ run, decisions }).slice(1);
+  // `Operator-Act: <jti>` per act, and a `Service-Decision:` an act names that
+  // the decisions above do not already carry (a confirm released in this same
+  // commit carries the release's own).
+  for (const [name, value] of acts.trailers ?? []) {
+    const line = trailerLine(name, value);
+    if (!extra.includes(line)) extra.push(line);
+  }
   return {
     message: extra.length ? `${message.trimEnd()}\n${extra.join("\n")}\n` : message,
     paths: [...paths].sort(),
@@ -1406,12 +1535,23 @@ export function stageDeletions(root, paths) {
     }
   });
   if (!gone.length) return [];
-  execFileSync("git", ["-C", root, "rm", "--cached", "--quiet", "--ignore-unmatch", "--", ...gone], {
+  // Only what the index holds. A record this run wrote and deleted again — a
+  // passkey confirm whose hold the same commit releases (operator-acts design
+  // §4.4) — was never staged, so there is no deletion of it to stage, and it
+  // is not one this commit makes.
+  const tracked = new Set(execFileSync("git", ["-C", root, "ls-files", "-z", "--", ...gone], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...cleanEnv(), GIT_PAGER: "cat" },
+  }).split("\0").filter(Boolean));
+  const staged = gone.filter((p) => tracked.has(p));
+  if (!staged.length) return [];
+  execFileSync("git", ["-C", root, "rm", "--cached", "--quiet", "--ignore-unmatch", "--", ...staged], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...cleanEnv(), GIT_PAGER: "cat" },
   });
-  return gone;
+  return staged;
 }
 
 // ── holds, which run whether or not `list` answered ──────────────────────────
@@ -2033,6 +2173,24 @@ export function submissionResults(state, { commit = null } = {}) {
   return out;
 }
 
+/**
+ * The `bot/operator-act-results` bodies a commit job's `results.json` owes:
+ * one per applied act naming its commit, one per refused act naming its code.
+ * None under shadow (BOT-92). An applied act whose commit is this run's push
+ * and no push happened is not posted: its record is not on `main`.
+ */
+export function actResults(state, { commit = null } = {}) {
+  if (state?.shadow !== false) return [];
+  const pushed = typeof commit === "string" && FULL_SHA.test(commit) ? commit : null;
+  const out = [];
+  for (const a of state.acts?.applied ?? []) {
+    const c = a.commit ?? pushed;
+    if (c && FULL_SHA.test(c)) out.push(operatorActResult({ jti: a.jti, outcome: "applied", commit: c }));
+  }
+  for (const r of state.acts?.refused ?? []) out.push(operatorActResult({ jti: r.jti, outcome: "refused", refusal_code: r.code }));
+  return out;
+}
+
 /** Registry plan M-T3.4: `report` gives each call 20 seconds, inside its five-minute job. */
 export const REPORT_CALL_TIMEOUT_MS = 20_000;
 
@@ -2047,7 +2205,7 @@ export function unsettled({ listed = [], results = [], listFailed = false }) {
       ids: [],
     };
   }
-  const answered = new Set(results.map((r) => r.service_decision_id));
+  const answered = new Set(results.map((r) => r.service_decision_id ?? r.jti));
   const missing = listed.filter((id) => !answered.has(id));
   return {
     ok: missing.length === 0,
@@ -2077,6 +2235,11 @@ export function answeredBy(state, { commit = null } = {}) {
   for (const r of [...(shadowed.refused ?? []), ...(shadowed.held ?? [])]) {
     rows.push({ service_decision_id: r.service_decision_id, outcome: "shadow_withheld" });
   }
+  // The owner's acts: every one `report` posted, and every one shadow
+  // withheld. A deferred act (not announced) is NOT answered, so `settled`
+  // pages for it, as for any listed thing that got no result.
+  for (const b of actResults(state, { commit })) rows.push({ jti: b.jti, outcome: b.outcome });
+  for (const jti of shadowed.acts ?? []) rows.push({ jti, outcome: "shadow_withheld" });
   return rows;
 }
 
@@ -2118,13 +2281,14 @@ export function alarmsFor(entries) {
 }
 
 /** An `astra.registry.alert-verdict/1`, refused here rather than at the channel. */
-export function composeVerdict({ check, status, codes = [], ids = [], run = null }) {
+export function composeVerdict({ check, status, codes = [], ids = [], hexes = [], run = null }) {
   const verdict = {
     schema: VERDICT_SCHEMA,
     check,
     status,
     ...(codes.length ? { codes: [...new Set(codes)].sort() } : {}),
     ...(ids.length ? { ids: [...new Set(ids)].sort() } : {}),
+    ...(hexes.length ? { hexes: [...new Set(hexes)].sort() } : {}),
     ...(run ? { run } : {}),
   };
   const problems = verdictProblems(verdict);
@@ -2143,6 +2307,26 @@ const arg = (argv, name) => {
   const i = argv.indexOf(name);
   return i === -1 ? undefined : argv[i + 1];
 };
+
+/**
+ * `list`'s `acts` output: verified acts, each `{jti, body, assertion}`.
+ * Re-checked by `verifyBatch` before anything is applied, so a row this does
+ * not read as an act is dropped here and never applied. Empty, or not an
+ * array, is none.
+ */
+function parseActs(text) {
+  if (typeof text !== "string" || text.trim() === "") return [];
+  let rows;
+  try {
+    rows = JSON.parse(text);
+  } catch {
+    return [];
+  }
+  return Array.isArray(rows)
+    ? rows.filter((r) => r && typeof r === "object" && /^[0-9a-f]{32}$/.test(String(r.jti)) && typeof r.body === "string" && r.assertion && typeof r.assertion === "object")
+      .slice(0, MAX_ACTS)
+    : [];
+}
 
 /** The commit job's `results` output, or null when nothing was handed on. A value that is not JSON throws. */
 const parseResults = (text) => (typeof text === "string" && text.trim() !== "" ? JSON.parse(text) : null);
@@ -2185,7 +2369,7 @@ function parseSettled(text, log) {
  * one that is not even well formed.
  */
 export function listRefusals(text, { entries = [] } = {}) {
-  const out = { decisions: [], submissions: [], fatal: [] };
+  const out = { decisions: [], submissions: [], acts: [], fatal: [] };
   if (typeof text !== "string" || text.trim() === "") return out;
   let rows;
   try {
@@ -2202,10 +2386,21 @@ export function listRefusals(text, { entries = [] } = {}) {
   for (const r of rows) {
     const keys = r && typeof r === "object" ? Object.keys(r).sort() : [];
     const kind = keys.join(",") === "code,service_decision_id" ? "decisions"
-      : keys.join(",") === "code,submission_id" ? "submissions" : null;
-    const id = kind === "decisions" ? r.service_decision_id : kind === "submissions" ? r.submission_id : null;
+      : keys.join(",") === "code,submission_id" ? "submissions"
+        : keys.join(",") === "code,jti" ? "acts" : null;
+    const id = kind === "decisions" ? r.service_decision_id : kind === "submissions" ? r.submission_id
+      : kind === "acts" ? r.jti : null;
     if (!kind || typeof id !== "string" || id === "") {
-      out.fatal.push(`a \`refused\` row is not {service_decision_id | submission_id, code}: ${JSON.stringify(keys)}`);
+      out.fatal.push(`a \`refused\` row is not {service_decision_id | submission_id | jti, code}: ${JSON.stringify(keys)}`);
+      continue;
+    }
+    if (kind === "acts") {
+      if (!/^[0-9a-f]{32}$/.test(id) || !ACT_CODES.includes(r.code) || seen.has(id)) {
+        out.fatal.push(`a refused act row is not {jti, act_* code} once: ${JSON.stringify(r)}`);
+        continue;
+      }
+      seen.add(id);
+      out.acts.push(r);
       continue;
     }
     if (!REFUSALS.includes(r.code)) {
@@ -2227,8 +2422,12 @@ export function listRefusals(text, { entries = [] } = {}) {
 }
 
 export async function main(argv = [], {
-  env = process.env, log = console, fetchImpl = fetch, now = new Date(), coverage = coverageRun,
+  env = process.env, log = console, fetchImpl = fetch, now = new Date(), coverage = coverageRun, pin = null,
 } = {}) {
+  // The owner's passkeys, from THIS checkout by literal path (operator-acts
+  // design §2.2). `pin` is this file's own tests', as `fetchImpl` is: the CLI
+  // passes none, and no input of the workflow's can name one.
+  const keys = () => pin ?? loadPin();
   const job = arg(argv, "--job");
   const root = arg(argv, "--registry-dir") ?? REPO_ROOT;
 
@@ -2248,6 +2447,14 @@ export async function main(argv = [], {
     if (client.withheld(answer) && checked.shadow !== true) {
       checked.shadow = true;
       log.error("::warning::the service's moderation work answer was withheld by the client (shadow or unreadable); this run commits nothing");
+    }
+    // The owner's passkey acts, `/2` only: checks 1–9 of §4.3 here, without
+    // git, against this checkout's pin; the rest in `commit`.
+    if (checked.version === 2 && !checked.fatal.length) {
+      const acts = checkActs(checked.operatorActs, { pin: keys(), now });
+      checked.acts = acts.acts;
+      checked.actsRefused = acts.refused;
+      checked.alerts.push(...acts.alerts);
     }
     process.stdout.write(listSummary(checked));
     for (const a of checked.alerts) log.error(`::warning::${a.cause}: ${a.detail}`);
@@ -2379,6 +2586,57 @@ export async function main(argv = [], {
     }
     const fresh = recheck.entries.filter((e) => !applied.has(e.service_decision_id));
 
+    // The owner's passkey acts (operator-acts design §4.3–§4.4), re-verified
+    // here with the tree — all twelve checks, in `verifyBatch`'s order:
+    // revoke_key and deny first — and applied BEFORE `admitHeldTakedowns`, so
+    // a confirm releases its hold in this same commit. Never under shadow
+    // (BOT-92), and never unannounced: `alert` sent them before this job, and
+    // without its delivery time nothing is applied and nothing is answered,
+    // so the service lists them again until they apply or expire.
+    const actItems = parseActs(env.ASTRA_ACTS);
+    const acts = { applied: [], refused: listRefused.acts.map((r) => ({ jti: r.jti, code: r.code })), deferred: [] };
+    const actWrites = { paths: [], trailers: [] };
+    const actsLive = shadow === false;
+    const announcedAt = String(env.ASTRA_DELIVERED_AT ?? "").trim();
+    const actRun = runUrl(env);
+    if (actItems.length && !actsLive) {
+      log.log(`note  shadow: ${actItems.length} operator act(s) are neither applied nor answered (BOT-92)`);
+    } else if (actItems.length && (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z$/.test(announcedAt) || !actRun)) {
+      for (const a of actItems) acts.deferred.push({ jti: a.jti });
+      log.error(`::error::${actItems.length} operator act(s) were not announced (no delivery time from \`alert\`) or ` +
+        "this run has no run URL, so none is applied; the service lists them again until they apply or expire");
+    } else if (actItems.length) {
+      const actPin = keys();
+      const view = treeView(root, { pin: actPin });
+      const at = `${now.toISOString().slice(0, 19)}Z`;
+      for (const v of verifyBatch(actItems, { pin: actPin, now, view })) {
+        if (v.verdict === "applied") {
+          acts.applied.push({ jti: v.jti, commit: entryCommit(root, `${ACTS_DIR}/${v.jti}.json`) });
+          log.log(`once  act ${v.jti} is already on main; it is answered \`applied\` and nothing is written`);
+        } else if (v.verdict === "refused") {
+          acts.refused.push({ jti: v.jti, code: v.code });
+          log.log(`refuse act ${v.jti} ${v.code}`);
+        } else if (v.verdict === "apply") {
+          try {
+            const done = applyOperatorAct({
+              root, act: v.act, target: v.body.target, at, run: actRun, jti: v.jti, record: actRecord(v.item, { run: actRun, at }), pin: actPin,
+            });
+            actWrites.paths.push(...done.paths);
+            actWrites.trailers.push(...done.trailers);
+            acts.applied.push({ jti: v.jti, commit: null });
+            log.log(`act   ${v.jti} ${v.act} by ${v.kid}: ${done.paths.length} path(s)`);
+          } catch (err) {
+            // Verified, and the tree still would not take it (a revert whose
+            // listing something else already restored). Nothing of it was
+            // written: each act refuses before it writes.
+            if (!(err instanceof ActRefusal)) throw err;
+            acts.refused.push({ jti: v.jti, code: "act_target_mismatch" });
+            log.log(`refuse act ${v.jti} act_target_mismatch: ${err.message}`);
+          }
+        }
+      }
+    }
+
     // MOD-9 since contract 6.6.0: the takedowns already held are spent first —
     // confirmed ones, then `bound` holds oldest first while the window admits
     // them — so a hold releases by itself in the first run with room, and a
@@ -2471,11 +2729,13 @@ export async function main(argv = [], {
       );
     }
     for (const p of refusedRows) log.error(`::warning::settled_row_refused: ${p}`);
+    written.push(...actWrites.paths);
     const composed = {
       compiled: [...(live ? compiledAll.compiled : []), ...releases.compiled, ...cancels.compiled, ...strays.compiled],
       held: holdsEntered.entered,
       submissions: terminal,
       settled: recorded,
+      acts: actWrites,
       run: env.GITHUB_RUN_ID ?? "0",
     };
     let commit = composeCommit(composed);
@@ -2501,6 +2761,7 @@ export async function main(argv = [], {
       ],
       held: compiledAll.held.map((r) => ({ service_decision_id: r.service_decision_id, held_for: r.held_for })),
       submissions: recheck.submissions.map((s) => s.submission_id),
+      acts: [...actItems.map((a) => a.jti), ...acts.refused.map((r) => r.jti)],
     };
 
     fs.mkdirSync(out, { recursive: true });
@@ -2539,6 +2800,11 @@ export async function main(argv = [], {
       documents: documents.changed,
       serials: documents.serials,
       terminal,
+      // The owner's passkey acts: applied (naming the commit that holds the
+      // record, or null for this run's push), refused with an `act_*` code,
+      // and deferred (not announced; answered by a later run). Empty under
+      // shadow, which withholds them all (BOT-92).
+      acts: live ? acts : { applied: [], refused: [], deferred: [] },
       ...(shadowWithheld ? { shadow_withheld: shadowWithheld } : {}),
     }, null, 2)}\n`);
     // **The handoff to the workflow's `apply` step, and its one rule: a
@@ -2582,7 +2848,8 @@ export async function main(argv = [], {
       `${holds.released.length} released, ${holds.cancelled.length} cancelled in history, ${holds.due.length} due and not built, ` +
       `${releases.compiled.length} hold(s) released, ${releases.refused.length} release(s) refused, ` +
       `${cancels.compiled.length} hold(s) cancelled, ` +
-      `${holds.unclear.length} unclear, ${holds.settled.length} already settled, ${recorded.length} recorded as settled`);
+      `${holds.unclear.length} unclear, ${holds.settled.length} already settled, ${recorded.length} recorded as settled, ` +
+      `${acts.applied.length} operator act(s) applied, ${acts.refused.length} refused, ${acts.deferred.length} deferred`);
     if (!live) {
       // The sentence is now true because the code above makes it true, and the
       // suite checks the pair: this line, and a `paths.txt` naming none of it.
@@ -2625,6 +2892,15 @@ export async function main(argv = [], {
       const answer = await client.call("serviceDecisionResult", resultBody(r));
       if (!answer.ok) unaccepted.push(`${r.service_decision_id} ${r.outcome}`);
     }
+    // The owner's passkey acts (§4.1 step 8): each applied act names the
+    // commit holding its record — this run's push, or the one already on
+    // `main` for a re-presented act — and each refused one its `act_*` code.
+    // Nothing under shadow (BOT-92), and an applied act with no commit to
+    // name (a dry run) is held back, as an `applied` decision is.
+    for (const body of actResults(state, { commit: env.ASTRA_MAIN_COMMIT ?? null })) {
+      const answer = await client.call("operatorActResult", body);
+      if (!answer.ok) unaccepted.push(`act ${body.jti} ${body.outcome}`);
+    }
     // BOT-30's terminal records: a stop or an `M_REJECT`, to `bot/results`,
     // with `recorded[]` (§4.4). Until 2026-10-14 nothing posted these, so a
     // stop was committed and the service, which lists a stop until it has
@@ -2650,15 +2926,23 @@ export async function main(argv = [], {
     // from one that sent nothing because it was broken.
     const entries = JSON.parse(arg(argv, "--entries") || "[]");
     const alarms = alarmsFor(entries);
+    // The owner's passkey acts, announced before `commit` applies any (§4.1
+    // step 6): `commit` applies them only when this message was delivered.
+    const acts = JSON.parse(env.ASTRA_ACTS || "[]");
+    const announced = actAlarms(acts, { pin: keys() });
+    const hexes = [...new Set(announced.hexes)];
     const verdict = composeVerdict({
       check: arg(argv, "--check") ?? "moderation-run",
-      status: alarms.length ? "red" : "green",
-      codes: alarms.map((a) => a.code),
-      ids: alarms.map((a) => a.id).filter(Boolean),
+      status: alarms.length || announced.codes.length ? "red" : "green",
+      codes: [...alarms.map((a) => a.code), ...announced.codes],
+      ids: [...alarms.map((a) => a.id), ...announced.ids].filter(Boolean),
+      // The channel carries at most 40; an act announced without its hexes is
+      // still announced, by its code and plugin.
+      hexes: hexes.length <= 40 ? hexes : [],
       run: runUrl(env),
     });
     fs.writeFileSync(arg(argv, "--out") ?? "verdict.json", `${JSON.stringify(verdict, null, 2)}\n`);
-    log.log(`ok    ${alarms.length} MOD-8 alarm(s) for ${entries.length} entr(ies)`);
+    log.log(`ok    ${alarms.length} MOD-8 alarm(s) for ${entries.length} entr(ies), ${acts.length} operator act(s) announced`);
     return 0;
   }
 

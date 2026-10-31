@@ -171,9 +171,13 @@ export const OPERATIONS = Object.freeze({
     }),
   }),
   moderation: Object.freeze({
+    // `/2` adds the owner's passkey acts (operator-acts design §4.1), and the
+    // service answers it only while its `registry_acts.enabled` flag is on;
+    // `/1` otherwise. The answer names which, and each is held to its own table.
     moderationWork: Object.freeze({
       name: "list moderation work", method: "GET", path: "bot/moderation-work",
       request: null, success: "astra.plugins.bot-moderation-work/1",
+      also: Object.freeze(["astra.plugins.bot-moderation-work/2"]),
     }),
     result: Object.freeze({
       name: "submission result", method: "POST", path: "bot/results",
@@ -182,6 +186,13 @@ export const OPERATIONS = Object.freeze({
     serviceDecisionResult: Object.freeze({
       name: "service-decision result", method: "POST", path: "bot/service-decision-results",
       request: "astra.plugins.bot-service-decision-result/1", success: "astra.plugins.bot-ack/1",
+    }),
+    // What the moderation run did with each passkey act the service listed:
+    // `applied` naming the commit that holds its record, or `refused` with its
+    // `act_*` code (operator-acts design §4.1 step 8).
+    operatorActResult: Object.freeze({
+      name: "operator act result", method: "POST", path: "bot/operator-act-results",
+      request: "astra.plugins.bot-operator-act-result/1", success: "astra.plugins.bot-ack/1",
     }),
   }),
 });
@@ -295,6 +306,22 @@ export const BODIES = Object.freeze({
   "astra.plugins.bot-moderation-work/1": Object.freeze({
     role: "success",
     members: Object.freeze([["shadow", true], ["submissions", true], ["service_decisions", true]]),
+  }),
+  "astra.plugins.bot-moderation-work/2": Object.freeze({
+    role: "success",
+    members: Object.freeze([["shadow", true], ["submissions", true], ["service_decisions", true], ["operator_acts", true]]),
+  }),
+  "astra.plugins.bot-operator-act-result/1": Object.freeze({
+    role: "request",
+    members: Object.freeze([
+      ["jti", true], ["outcome", true],
+      ["commit", "conditional", Object.freeze({
+        iff: Object.freeze({ outcome: Object.freeze(["applied"]) }),
+      })],
+      ["refusal_code", "conditional", Object.freeze({
+        iff: Object.freeze({ outcome: Object.freeze(["refused"]) }),
+      })],
+    ]),
   }),
   "astra.plugins.bot-service-decision-result/1": Object.freeze({
     role: "request",
@@ -468,7 +495,7 @@ export function operationProblems(operations = OPERATIONS) {
       if (op.path.startsWith("/")) {
         problems.push(`${where}: path ${op.path} is absolute and would escape ${API_BASE}`);
       }
-      for (const schema of [op.request, op.success]) {
+      for (const schema of [op.request, op.success, ...(op.also ?? [])]) {
         if (schema !== null && !BODIES[schema]) problems.push(`${where}: no member table for ${schema}`);
       }
       if (op.method === "GET" && op.request !== null) problems.push(`${where}: a GET with a request body`);
@@ -715,15 +742,17 @@ export function createClient({
 
   /** Turn a success body into an answer, withholding whatever it cannot read. */
   function answerOf(op, body) {
-    const { problems } = successProblems(op.success, body);
+    // The schema the answer names, when it is one this operation reads.
+    const schema = (op.also ?? []).includes(body?.schema) ? body.schema : op.success;
+    const { problems } = successProblems(schema, body);
     if (problems.length) {
       return {
         ok: true, shadow: true, unreadable: true,
-        schema: op.success, body, problems,
+        schema, body, problems,
       };
     }
-    const shadow = op.success === SHADOW_EXEMPT ? false : body.shadow === true;
-    const answer = { ok: true, shadow, unreadable: false, schema: op.success, body };
+    const shadow = schema === SHADOW_EXEMPT ? false : body.shadow === true;
+    const answer = { ok: true, shadow, unreadable: false, schema, body };
     if (op.success === "astra.plugins.bot-gates/1") {
       const split = splitGateItems(body);
       answer.items = split.answered;
@@ -838,4 +867,21 @@ export function createClient({
     /** An answer this client returned is shadow, or it could not be read. */
     withheld: (answer) => answer?.ok === true && (answer.shadow === true || answer.unreadable === true),
   };
+}
+
+/**
+ * An `astra.plugins.bot-operator-act-result/1` body: `commit` with `applied`,
+ * `refusal_code` with `refused`, never both and never a null of either.
+ */
+export function operatorActResult({ jti, outcome, commit = null, refusal_code = null }) {
+  if (!/^[0-9a-f]{32}$/.test(String(jti ?? ""))) throw new Error(`${JSON.stringify(jti)} is not an act's jti`);
+  if (outcome === "applied") {
+    if (!/^[0-9a-f]{40}$/.test(String(commit ?? ""))) throw new Error(`an applied act ${jti} names no commit`);
+    return { jti, outcome, commit };
+  }
+  if (outcome === "refused") {
+    if (!/^act_[a-z_]+$/.test(String(refusal_code ?? ""))) throw new Error(`a refused act ${jti} names no act_* code`);
+    return { jti, outcome, refusal_code };
+  }
+  throw new Error(`${JSON.stringify(outcome)} is not an act outcome`);
 }

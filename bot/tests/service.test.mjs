@@ -1982,7 +1982,7 @@ test("the moderation workflow's three operations answer, and `claim` is not amon
     assert.equal(s.calls[0].raw, "");
     assert.equal(s.calls[0].contentType, null, "a GET with no body sends no Content-Type");
     assert.deepEqual(c.alerts, []);
-    assert.deepEqual(Object.keys(OPERATIONS.moderation).sort(), ["moderationWork", "result", "serviceDecisionResult"]);
+    assert.deepEqual(Object.keys(OPERATIONS.moderation).sort(), ["moderationWork", "operatorActResult", "result", "serviceDecisionResult"]);
   } finally {
     await s.close();
   }
