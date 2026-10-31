@@ -546,11 +546,16 @@ test("an `A_YANK` commit carries a `Service-Decision:` trailer", () => {
   );
 });
 
-test("every bot commit carries `Run:`, and the five trailers have a floor", () => {
+test("every bot commit carries `Run:`, and the six trailers have a floor", () => {
   assert.throws(() => renderTrailers({}), /every bot commit carries a `Run:` trailer/);
-  assert.equal(TRAILERS.length, 5,
-    `BOT-37 names five trailers and this module renders ${TRAILERS.length}`);
-  assert.deepEqual([...TRAILERS], ["Run", "Submission", "Decision", "Service-Decision", "Decided-At"]);
+  // Six since contract 6.10.0: `Operator-Act:` names each TRUST-48 act a
+  // moderation commit applied (registry plan: BOT-37). `renderTrailers` renders
+  // a decision commit's five; the moderation run adds `Operator-Act:` per act
+  // through the same `trailerLine` grammar, so the count here is the declared
+  // set, not what one renderer emits.
+  assert.equal(TRAILERS.length, 6,
+    `BOT-37 names six trailers and this module declares ${TRAILERS.length}`);
+  assert.deepEqual([...TRAILERS], ["Run", "Submission", "Decision", "Service-Decision", "Operator-Act", "Decided-At"]);
   assert.deepEqual(renderTrailers({ run: "35502265394" }), ["Run: 35502265394"],
     "the four conditional trailers appear `where they exist` and not as empty lines");
 });

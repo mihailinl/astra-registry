@@ -82,6 +82,7 @@ import {
   conditionalProblems,
   createClient,
   operationProblems,
+  operatorActResult,
   predicateHolds,
   splitGateItems,
   successProblems,
@@ -213,17 +214,19 @@ test("the compiled tables are internally consistent before anything compares the
   assert.notEqual(BOT_AUDIENCE, `${API_BASE}bot`.replace("/bot", "bot"));
 });
 
-test("the nine workflow-keyed operations are the token file's, with a floor of 9", () => {
+test("the ten workflow-keyed operations are the token file's, with a floor of 10", () => {
   const entries = tokenFile.entries.filter((e) => e.kind === "operation" && (e.emitter ?? []).includes("bot"));
+  // Nine distinct operations, ten workflow-keyed rows, since contract 6.10.0
+  // added `operator act result` (TRUST-48; BOT-93). Eight and nine before it.
   assert.ok(
-    entries.length >= 8,
-    `the token file holds ${entries.length} bot operations and there were 8 distinct ones at contract ` +
+    entries.length >= 9,
+    `the token file holds ${entries.length} bot operations and there were 9 distinct ones at contract ` +
     `${tokenFile.contract_version}; a filter that matched nothing would compare two empty tables and pass`,
   );
 
   // Expanded the way BOT-91 keys them: an operation's `workflow` is part of it,
   // and "both (BOT-91)" is two rows. That expansion — not a list typed beside
-  // it — is what makes the floor of 9 a count of something.
+  // it — is what makes the floor of 10 a count of something.
   const expected = [];
   for (const e of entries) {
     const w = String(e.workflow ?? "");
@@ -235,8 +238,8 @@ test("the nine workflow-keyed operations are the token file's, with a floor of 9
   expected.sort((a, b) => `${a.workflow} ${a.name}`.localeCompare(`${b.workflow} ${b.name}`));
 
   assert.ok(
-    expected.length >= 9,
-    `the token file expands to ${expected.length} workflow-keyed bot operations and the floor is 9. A floor and ` +
+    expected.length >= 10,
+    `the token file expands to ${expected.length} workflow-keyed bot operations and the floor is 10. A floor and ` +
     "the thing it counts are two claims; if this ever fails, one of them is wrong and it is not automatically " +
     "the floor",
   );
@@ -1259,6 +1262,33 @@ test("the closed lists this client names are the token file's", () => {
     assert.ok(tokens.get(t)?.includes("bot"), `${t} is not a token the bot accepts`);
   }
   assert.equal(tokens.get("too_early")?.includes("bot"), false, "`too_early` is a panel token (§0.8)");
+});
+
+test("TRUST-48's act outcomes and refusal codes are the token file's, both ways", () => {
+  // SCOPE-9 for the two lists contract 6.10.0 adds to §0.8 (BOT-93): the bot
+  // posts nothing the file does not list, and the file lists nothing the bot
+  // cannot post. In the order TRUST-48 asks its checks, which is the order the
+  // verifier names them in, so a reordering on either side is a finding.
+  const list = (name) => tokenFile.entries.find((e) => e.kind === "closed_list" && e.name === name);
+  const codes = list("operator_act_refusal_codes");
+  const outcomes = list("operator_act_results");
+  assert.ok(codes && outcomes, `the token file (${tokenFile.contract_version}) records no operator-act lists`);
+  assert.deepEqual(codes.values, [...ACT_CODES], "bot/lib/operator-act.mjs's ACT_CODES and §0.8's operator-act refusal codes have parted");
+  assert.equal(codes.accepts_unlisted, undefined, "§0.8 closes the operator-act codes in both directions");
+  for (const e of [codes, outcomes]) {
+    assert.deepEqual([e.emitter, e.acceptor], [["bot"], ["service"]], `${e.name} travels bot → service`);
+  }
+  // Every outcome the file lists composes, and nothing else does.
+  const jti = "a".repeat(32);
+  for (const outcome of outcomes.values) {
+    const body = outcome === "applied"
+      ? operatorActResult({ jti, outcome, commit: "b".repeat(40) })
+      : operatorActResult({ jti, outcome, refusal_code: ACT_CODES[0] });
+    assert.equal(body.outcome, outcome);
+  }
+  assert.deepEqual(outcomes.values, ["applied", "refused"]);
+  assert.throws(() => operatorActResult({ jti, outcome: "deferred" }), /is not an act outcome/,
+    "a deferred act is answered by no result at all (BOT-93), never by a third outcome");
 });
 
 test("each disjunction is two biconditionals in the file, and the module reads both halves", () => {
@@ -4601,7 +4631,7 @@ test("T1/T3: no FLOW-13 row, and no FLOW-67 no-listing message, cites a contract
 
 import { firstBindingCleared, ownerApproval } from "../lib/service-decide.mjs";
 import * as OwnerAuth from "./fixtures/authenticator.mjs";
-import { actRecord } from "../lib/operator-act.mjs";
+import { ACT_CODES, actRecord } from "../lib/operator-act.mjs";
 
 const OWNER_HELD = "1".repeat(32);
 const ownerTarget = (over = {}) => ({
