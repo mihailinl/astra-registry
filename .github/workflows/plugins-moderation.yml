@@ -284,6 +284,9 @@ jobs:
     outputs:
       delivered_at: ${{ steps.alert.outputs.delivered_at }}
       alerted: ${{ steps.alert.outputs.alerted }}
+      # The operator acts the message above named, by jti; `commit` applies
+      # those and no other. `[]` whenever `list` did not succeed.
+      announced: ${{ steps.verdict.outputs.announced }}
     env:
       ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
       ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
@@ -304,6 +307,7 @@ jobs:
       # composer refuses a verdict the channel would refuse, here, where the
       # refusal is red in a job somebody is reading.
       - name: The alarms MOD-8 owes for the work this run was handed
+        id: verdict
         env:
           ASTRA_ENTRIES: ${{ needs.list.outputs.entries }}
           # The owner's passkey acts, announced here before `commit` applies
@@ -316,9 +320,11 @@ jobs:
             ASTRA_VERDICT_CODES='["BOT_80_LIST_UNAVAILABLE"]' \
             ASTRA_VERDICT_IDS='[]' \
               node bot/moderation-run.mjs --job verdict --check moderation-run --out verdict.json
+            echo '[]' > announced.json
           else
-            node bot/moderation-run.mjs --job alarms --entries "$ASTRA_ENTRIES" --out verdict.json
+            node bot/moderation-run.mjs --job alarms --entries "$ASTRA_ENTRIES" --out verdict.json --announced announced.json
           fi
+          echo "announced=$(cat announced.json)" >> "$GITHUB_OUTPUT"
 
       - uses: ./.github/actions/alert
         id: alert
@@ -394,6 +400,8 @@ jobs:
           # Re-verified with the tree, and applied before the holds are
           # walked, so a confirm releases in this same commit.
           ASTRA_ACTS: ${{ needs.list.outputs.acts }}
+          ASTRA_ANNOUNCED: ${{ needs.alert.outputs.announced }}
+          ASTRA_LIST_RESULT: ${{ needs.list.result }}
         run: node bot/moderation-run.mjs --job commit --out moderation
 
       # The gates, in the order the plan states, and every one of them is about
@@ -503,6 +511,8 @@ jobs:
           ASTRA_SETTLED: ${{ needs.list.outputs.settled }}
           ASTRA_DELIVERED_AT: ${{ needs.alert.outputs.delivered_at }}
           ASTRA_ACTS: ${{ needs.list.outputs.acts }}
+          ASTRA_ANNOUNCED: ${{ needs.alert.outputs.announced }}
+          ASTRA_LIST_RESULT: ${{ needs.list.result }}
         run: |
           set -euo pipefail
           # The handoff's one rule: a zero-byte paths.txt and no message is

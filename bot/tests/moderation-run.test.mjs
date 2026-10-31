@@ -5172,7 +5172,7 @@ const ACT_PIN = Auth.pinOf([ACT_KEY]);
 const ACT_NOW = new Date("2026-09-20T12:30:00Z");
 const actEnv = { GITHUB_SERVER_URL: "https://github.com", GITHUB_REPOSITORY: "mihailinl/astra-registry", GITHUB_RUN_ID: "35502265394" };
 
-async function actsJob(root, { acts = [], shadow = false, delivered = "2026-09-20T12:29:00Z", entries = [], pin = ACT_PIN, now = ACT_NOW } = {}) {
+async function actsJob(root, { acts = [], shadow = false, delivered = "2026-09-20T12:29:00Z", entries = [], pin = ACT_PIN, now = ACT_NOW, listResult = "success", announced = acts.map((a) => a.jti) } = {}) {
   const out = path.join(root, "moderation");
   const logs = [];
   const offline = () => { throw new Error("the commit job reached the network"); };
@@ -5180,6 +5180,7 @@ async function actsJob(root, { acts = [], shadow = false, delivered = "2026-09-2
     env: {
       ...actEnv, ASTRA_ENTRIES: JSON.stringify(entries), ASTRA_SUBMISSIONS: "[]", ASTRA_SHADOW: shadow ? "true" : "false",
       ASTRA_OVER_BOUND: "", ASTRA_ACTS: JSON.stringify(acts), ASTRA_DELIVERED_AT: delivered,
+      ASTRA_LIST_RESULT: listResult, ASTRA_ANNOUNCED: JSON.stringify(announced),
     },
     log: { log: (m) => logs.push(String(m)), error: (m) => logs.push(String(m)) },
     fetchImpl: offline, now, pin, coverage: () => ({ status: "green", codes: [] }),
@@ -5318,4 +5319,33 @@ test("passkey acts: both gates on the moderation commit run the validator with `
   for (const l of lines) assert.match(l, /--allow-staging --writer moderation\s*$/);
   assert.doesNotMatch(read(".github/workflows/operator.yml"), /--writer/);
   assert.match(yml, /ASTRA_ACTS: \$\{\{ needs\.list\.outputs\.acts \}\}/);
+});
+
+test("passkey acts (review 1): only acts `alert` announced, and only after a `list` that succeeded, are applied", async () => {
+  for (const [what, opts] of [
+    ["a failed list whose outputs still flowed", { listResult: "failure" }],
+    ["a skipped list", { listResult: "skipped" }],
+    ["an act the alert did not name", { announced: [] }],
+    ["an alert that named another act", { announced: ["f".repeat(32)] }],
+  ]) {
+    const { root, confirm } = heldOverFullWindow();
+    const job = await actsJob(root, { acts: [confirm], ...opts });
+    assert.equal(job.code, 0, job.logs.join("\n"));
+    assert.deepEqual(job.paths, [], `${what}: an act was applied`);
+    assert.deepEqual(job.results.acts.deferred, [{ jti: confirm.jti }], what);
+    assert.ok(!fs.existsSync(path.join(root, "state", "holds", `${SDIS[0]}.confirm.json`)), what);
+  }
+  // The alert step hands on exactly the jtis its verdict named, and `[]` on a failed list.
+  const yml = read(".github/workflows/plugins-moderation.yml");
+  assert.match(yml, /announced: \$\{\{ steps\.verdict\.outputs\.announced \}\}/);
+  assert.match(yml, /echo '\[\]' > announced\.json\n\s+else\n\s+node bot\/moderation-run\.mjs --job alarms .*--announced announced\.json/);
+  assert.equal((yml.match(/ASTRA_ANNOUNCED: \$\{\{ needs\.alert\.outputs\.announced \}\}/g) ?? []).length, 2, "the compile and the redo both read `announced`");
+  assert.equal((yml.match(/ASTRA_LIST_RESULT: \$\{\{ needs\.list\.result \}\}/g) ?? []).length, 3);
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-alarms-"));
+  tmpRoots.push(out);
+  const { confirm } = heldOverFullWindow();
+  const code = await main(["--job", "alarms", "--entries", "[]", "--out", path.join(out, "v.json"), "--announced", path.join(out, "a.json")],
+    { env: { ...actEnv, ASTRA_ACTS: JSON.stringify([confirm, { jti: "e".repeat(32), body: "{}", assertion: {} }]) }, log: { log() {}, error() {} }, pin: ACT_PIN });
+  assert.equal(code, 0);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(out, "a.json"), "utf8")), [confirm.jti], "an act the message did not carry is listed as announced");
 });

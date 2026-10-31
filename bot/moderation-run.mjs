@@ -715,16 +715,18 @@ export function actAlarms(acts, { pin = loadPin() } = {}) {
   const codes = [];
   const ids = [];
   const hexes = [];
+  const jtis = [];
   for (const a of Array.isArray(acts) ? acts : []) {
     const body = canonicalBody(a?.body);
-    if (!body) continue;
+    if (!body || !/^[0-9a-f]{32}$/.test(String(a?.jti)) || body.jti !== a.jti) continue;
+    jtis.push(a.jti);
     codes.push(`OPERATOR_ACT_${String(body.act).toUpperCase()}`);
     if (typeof body.target?.plugin_id === "string") ids.push(body.target.plugin_id);
     if (typeof body.target?.fingerprint === "string") hexes.push(body.target.fingerprint);
     const key = keyByCredential(pin, a?.assertion?.credential_id);
     if (key) hexes.push(keyFingerprint(key.public_key).replace(/ /g, ""));
   }
-  return { codes, ids, hexes };
+  return { codes, ids, hexes, jtis };
 }
 
 // ── the commit job ──────────────────────────────────────────────────────────
@@ -2328,6 +2330,16 @@ function parseActs(text) {
     : [];
 }
 
+/** `alert`'s `announced` output: the jtis it put in the message it sent. Anything else is none. */
+function parseJtis(text) {
+  try {
+    const rows = JSON.parse(String(text ?? ""));
+    return Array.isArray(rows) ? rows.filter((j) => typeof j === "string" && /^[0-9a-f]{32}$/.test(j)) : [];
+  } catch {
+    return [];
+  }
+}
+
 /** The commit job's `results` output, or null when nothing was handed on. A value that is not JSON throws. */
 const parseResults = (text) => (typeof text === "string" && text.trim() !== "" ? JSON.parse(text) : null);
 
@@ -2601,11 +2613,29 @@ export async function main(argv = [], {
     const actRun = runUrl(env);
     if (actItems.length && !actsLive) {
       log.log(`note  shadow: ${actItems.length} operator act(s) are neither applied nor answered (BOT-92)`);
-    } else if (actItems.length && (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z$/.test(announcedAt) || !actRun)) {
+    } else if (actItems.length && (env.ASTRA_LIST_RESULT !== "success" ||
+        !/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z$/.test(announcedAt) || !actRun)) {
+      // A `list` that did not succeed hands on outputs its failed step may
+      // have left half-written, and `alert` then sent BOT_80_LIST_UNAVAILABLE,
+      // not the acts — yet still reports a delivery time. So nothing is
+      // applied unless `list` succeeded AND `alert` delivered.
       for (const a of actItems) acts.deferred.push({ jti: a.jti });
-      log.error(`::error::${actItems.length} operator act(s) were not announced (no delivery time from \`alert\`) or ` +
-        "this run has no run URL, so none is applied; the service lists them again until they apply or expire");
+      log.error(`::error::${actItems.length} operator act(s) were not announced (list ${JSON.stringify(env.ASTRA_LIST_RESULT ?? null)}, ` +
+        "no delivery time from `alert`, or no run URL), so none is applied; the service lists them again until they apply or expire");
     } else if (actItems.length) {
+      // Only the acts `alert` actually announced: its `announced` output, the
+      // jtis it composed into the message it delivered. An act missing from it
+      // was never in front of the owner, and waits for a run that announces it.
+      const announced = new Set(parseJtis(env.ASTRA_ANNOUNCED));
+      const unannounced = actItems.filter((a) => !announced.has(a.jti));
+      for (const a of unannounced) {
+        acts.deferred.push({ jti: a.jti });
+        log.error(`::error::operator act ${a.jti} is not among the acts \`alert\` announced; it is not applied`);
+      }
+      actItems.splice(0, actItems.length, ...actItems.filter((a) => announced.has(a.jti)));
+    }
+    if (actItems.length && actsLive && env.ASTRA_LIST_RESULT === "success" &&
+        /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z$/.test(announcedAt) && actRun) {
       const actPin = keys();
       const view = treeView(root, { pin: actPin });
       const at = `${now.toISOString().slice(0, 19)}Z`;
@@ -2942,7 +2972,11 @@ export async function main(argv = [], {
       run: runUrl(env),
     });
     fs.writeFileSync(arg(argv, "--out") ?? "verdict.json", `${JSON.stringify(verdict, null, 2)}\n`);
-    log.log(`ok    ${alarms.length} MOD-8 alarm(s) for ${entries.length} entr(ies), ${acts.length} operator act(s) announced`);
+    // The jtis this message names, handed to `commit` as `announced`: the only
+    // acts it may apply (an act the message does not carry was not announced).
+    const announcedFile = arg(argv, "--announced");
+    if (announcedFile) fs.writeFileSync(announcedFile, `${JSON.stringify(announced.jtis)}\n`);
+    log.log(`ok    ${alarms.length} MOD-8 alarm(s) for ${entries.length} entr(ies), ${announced.jtis.length} operator act(s) announced`);
     return 0;
   }
 
