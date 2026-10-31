@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "nOqt+INu1/3zKE/3hjQasd0wTNP17pGgFC3N34PVmktLXu54ujDzk9fX8kfThGW/x7NYhUAxv/p0zMFdzRJyBg=="
+      "sig": "Pl03xiErOQdw9/pIrEG83ipRANg/k8EHqZk3fQlW+onfbVhZhXS/3YGCoRoAMwKDQYO3HHXO6QFgKmhDEGeiBA=="
     }
   ],
   "signed": {
-    "expires_at": "2026-11-30T13:00:33Z",
-    "issued_at": "2026-10-31T13:00:33Z",
+    "expires_at": "2026-11-30T13:09:08Z",
+    "issued_at": "2026-10-31T13:09:08Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
@@ -3420,7 +3420,7 @@
           "ui_contributions"
         ],
         "description": "Translate any text on screen: select a region with a hotkey, or turn on live subtitles for game dialogs and videos. Text is recognized locally by Windows OCR",
-        "download_url": "https://github.com/FluffyTaill/astra-screen-translator/releases/download/v0.2.1/screen-translator-0.2.1-noarch.astraplugin",
+        "download_url": "https://github.com/FluffyTaill/astra-screen-translator/releases/download/v0.2.2/screen-translator-0.2.2-noarch.astraplugin",
         "downloads": 0,
         "i18n": {
           "ru": {
@@ -3433,12 +3433,42 @@
         "license": "MIT",
         "name": "Screen Translator",
         "platform_downloads": {
-          "linux-x64": "https://github.com/FluffyTaill/astra-screen-translator/releases/download/v0.2.1/screen-translator-0.2.1-noarch.astraplugin",
-          "noarch": "https://github.com/FluffyTaill/astra-screen-translator/releases/download/v0.2.1/screen-translator-0.2.1-noarch.astraplugin",
-          "windows-x64": "https://github.com/FluffyTaill/astra-screen-translator/releases/download/v0.2.1/screen-translator-0.2.1-noarch.astraplugin"
+          "linux-x64": "https://github.com/FluffyTaill/astra-screen-translator/releases/download/v0.2.2/screen-translator-0.2.2-noarch.astraplugin",
+          "noarch": "https://github.com/FluffyTaill/astra-screen-translator/releases/download/v0.2.2/screen-translator-0.2.2-noarch.astraplugin",
+          "windows-x64": "https://github.com/FluffyTaill/astra-screen-translator/releases/download/v0.2.2/screen-translator-0.2.2-noarch.astraplugin"
         },
         "readme": "# Перевод с экрана — плагин для Astra\n\nПереводит любой текст на экране: выдели область горячей клавишей — перевод появится рядом. Или включи\nживые субтитры для диалогов в играх и видео. Текст распознаёт сама Windows прямо на компьютере; в\nпереводчик уходит только распознанный текст, не картинка.\n\n## Установка\n\n1. Скачай `screen-translator-*.astraplugin` из [последнего релиза](../../releases/latest).\n2. Astra → **Мастерская** → **Разработка** → **Импорт плагина** → **Выбрать файл…** → выбери файл → **Установить**.\n3. Страница плагина — вкладка **Перевод с экрана** в верхнем меню Astra.\n\nНужна Windows 10 (2004) или 11.\n\n## Как пользоваться\n\n| Клавиши (по умолчанию) | Что делает |\n|---|---|\n| `Ctrl+Alt+T` | Экран замирает — выдели мышкой текст. Перевод появится под ним, с кнопками «копировать», «озвучить», «закрыть». |\n| `Ctrl+Alt+Y` | Субтитры: выдели один раз область, где появляется текст. Каждая фраза переводится сразу, последние стоят друг под другом. Нажми ещё раз — выключить. |\n| `Ctrl+Alt+W` | Перевести всё активное окно. |\n| `Ctrl+Alt+D` | Слово под курсором: наведи мышь на слово — карточка с переводом, транскрипцией и значениями по частям речи. |\n\nГолосом: «переведи, что на экране», «переведи вот это», «включи субтитры».\n\nОкно субтитров можно перетащить мышкой — место запомнится. Или выбери на странице плагина: поверх\nвыбранной области (перекрывает оригинальные субтитры), под ней, над ней, внизу экрана.\n\n## Настройки\n\nНа странице плагина:\n\n- **Горячие клавиши** — Ctrl / Alt / Shift / Win и любая клавиша.\n- **Язык текста на экране** — «Автоматически»: каждая строка читается всеми языками, что есть в\n  Windows, и берётся самое похожее на слова. Поэтому английские субтитры рядом с русской подсказкой\n  браузера читаются правильно, а мусор из картинки видео отбрасывается.\n- **Улучшать картинку для игровых шрифтов** — кроме снимка как есть, читаются его контрастная и чёрно-белая\n  копии: бледный, мелкий и обведённый текст, который Windows иначе не видит.\n- **Переводить на** — русский, английский, украинский и другие.\n- **Переводчик** — Google (бесплатно, без ключа) или DeepL (нужен бесплатный ключ с deepl.com/pro-api).\n- **Как показывать** — размер шрифта, когда скрывать перевод, как часто читать субтитры и сколько\n  последних фраз показывать, показывать ли оригинал, копировать ли перевод в буфер.\n- **Astra читает перевод вслух** — переведённая область озвучивается голосом Astra целиком, частями\n  по предложениям. Плагин создаёт для этого команду Astra (кнопка на странице), она заработает после\n  перезапуска Astra.\n\n## Свой словарь\n\nКак переводить имена и термины: «Stamina → Выносливость», «HP → ОЗ», «Geralt → (пусто)» — пустой перевод\nоставляет слово как в оригинале. Термины заменяются целыми словами без учёта регистра, длинные раньше\nкоротких («Iron Sword» раньше «Sword»). Работает с Google и DeepL, во всех режимах.\n\n## Нет нужного языка?\n\nWindows распознаёт языки, которые у неё установлены. На странице плагина в разделе **Языки распознавания**\nвыбери язык (японский, китайский, корейский и другие) и нажми **Установить** — Windows попросит\nразрешение администратора, пакет скачается с серверов Microsoft. Вручную то же самое:\n\n```powershell\nAdd-WindowsCapability -Online -Name \"Language.OCR~~~ja-JP~0.0.1.0\"\n```\n\n## Что нужно знать\n\n- Окна перевода скрыты от захвата экрана: так субтитры не читают сами себя. Поэтому перевод не виден\n  на скриншотах и в OBS.\n- Поверх игры в эксклюзивном полноэкранном режиме Windows ничего не показывает — включи в игре режим\n  «окно без рамки» (borderless).\n- Бесплатный переводчик Google — неофициальный вход. Если он временно ограничит частые запросы, плагин\n  так и напишет, а субтитры подождут 30 секунд; надёжнее — DeepL с бесплатным ключом.\n\n## Приватность\n\n- Распознавание текста — локально, средствами Windows. Снимки экрана никуда не отправляются и не\n  сохраняются на диск.\n- В выбранный переводчик (Google или DeepL) уходит только распознанный текст.\n- Настройки лежат в `%APPDATA%\\astra\\screen-translator\\settings.json`.\n\n## Разработка\n\n```bash\nbun install\nnpm test                       # 13 тестов, в том числе настоящее распознавание Windows\nastra-plugin check . --strict\nastra-plugin build .\n```\n\n- `src/overlay.ps1` — фоновый помощник: горячие клавиши, выбор области, снимок, распознавание\n  (Windows.Media.Ocr), окна поверх игр. Вшивается в бандл как текст (`--loader:.ps1=text`) и при\n  запуске пишется в `%APPDATA%\\astra\\screen-translator\\`.\n- `src/helper.ts` — общение с помощником (JSON-строки через stdin/stdout).\n- `src/translate.ts` — Google / DeepL, кэш, сравнение строк для субтитров.\n- `src/index.ts` — плагин: настройки, клавиши, субтитры, инструменты для ИИ, страница.\n\nРелиз: `astra-plugin version 0.2.0`, коммит, `git tag v0.2.0 && git push --tags` — остальное делает\nGitHub Actions (`.github/workflows/release.yml`).\n\n## Лицензия\n\nMIT\n",
         "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "screen-translator-0.2.2-noarch.astraplugin",
+                "sha256": "589826f0f18f9a628399dfbee977fd66f57b6ab195f50980585314fd9257c12e",
+                "size": 262340,
+                "url": "https://github.com/FluffyTaill/astra-screen-translator/releases/download/v0.2.2/screen-translator-0.2.2-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools",
+              "triggers",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "fire_trigger": {
+                "reason": "Lets Astra read a translation aloud through the Astra command the plugin page creates, when you turn that on."
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-10-31T00:41:17Z",
+            "release": {
+              "commit": "c75d02c0847990f5e5d97980ebbc37217cb8292b",
+              "kind": "github_release",
+              "repo": "FluffyTaill/astra-screen-translator",
+              "tag": "v0.2.2"
+            },
+            "review": "unreviewed",
+            "version": "0.2.2"
+          },
           {
             "artifacts": {
               "noarch": {
@@ -3506,8 +3536,8 @@
           "repo": "FluffyTaill/astra-screen-translator"
         },
         "stars": 0,
-        "updated_at": "2026-10-28T13:36:59Z",
-        "version": "0.2.1"
+        "updated_at": "2026-10-31T00:41:17Z",
+        "version": "0.2.2"
       },
       {
         "added_at": "2026-10-25",
@@ -4835,6 +4865,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 122
+    "serial": 123
   }
 }
