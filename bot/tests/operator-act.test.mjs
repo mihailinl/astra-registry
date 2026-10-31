@@ -903,3 +903,15 @@ test("validate does not read every key as added when HEAD has no first parent; i
   assert.deepEqual(errors, [], "a root commit's pin was judged against nothing, as if every key were new");
   assert.match(notes.join(" "), /no first parent/);
 });
+
+test("the pin reader logs the head's values JSON-quoted, and a head that is not an object is unreadable (review finding 6)", () => {
+  const phone = enrolled("ES256", { kid: "owner-phone" });
+  const base = pinWith(phone);
+  for (const head of ["[]", '"x"', "7", "null", "true"]) {
+    assert.deepEqual(pinVerdict({ base, headText: head }).verdict.codes, ["PASSKEY_PIN_UNREADABLE"], head);
+  }
+  const hostile = JSON.stringify({ ...base, keys: [...base.keys, { kid: "x\n::error::forged", status: "a\n::warning::b", public_key: "AA" }] });
+  const { notes } = pinVerdict({ base, headText: hostile });
+  assert.ok(notes.length > 0);
+  for (const n of notes) assert.ok(!/\n/.test(n), `a note carries a raw line break: ${JSON.stringify(n)}`);
+});

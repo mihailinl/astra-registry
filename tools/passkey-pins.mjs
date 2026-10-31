@@ -44,9 +44,19 @@ export function pinVerdict({ base, headText, run = null }) {
   } else {
     try {
       head = JSON.parse(headText);
-    } catch (e) {
+    } catch {
       codes.add("PASSKEY_PIN_UNREADABLE");
-      notes.push(`the head's pin is not JSON: ${e.message}`);
+      notes.push("the head's pin is not JSON");
+    }
+    // An array, a string, a number or null is no pin, and would otherwise
+    // read as "no key added" and pass green (review of PR #484, finding 6).
+    if (head !== null && (typeof head !== "object" || Array.isArray(head))) {
+      codes.add("PASSKEY_PIN_UNREADABLE");
+      notes.push("the head's pin is not a JSON object");
+      head = null;
+    } else if (head === null && !codes.has("PASSKEY_PIN_UNREADABLE")) {
+      codes.add("PASSKEY_PIN_UNREADABLE");
+      notes.push("the head's pin is null");
     }
   }
   if (head) {
@@ -65,23 +75,25 @@ export function pinVerdict({ base, headText, run = null }) {
       if (!old) {
         codes.add("PASSKEY_PIN_KEY_ADDED");
         name(k);
-        notes.push(`added ${k?.kid} (${k?.status}), fingerprint ${(() => { try { return keyFingerprint(k?.public_key); } catch { return "?"; } })()}`);
+        notes.push(`added ${JSON.stringify(k?.kid ?? null)} (${JSON.stringify(k?.status ?? null)}), fingerprint ${(() => { try { return keyFingerprint(k?.public_key); } catch { return "?"; } })()}`);
       } else if (old.status !== k.status) {
         codes.add("PASSKEY_PIN_KEY_STATUS");
         name(k);
-        notes.push(`${k.kid}: ${old.status} → ${k.status}`);
+        notes.push(`${JSON.stringify(k.kid)}: ${JSON.stringify(old.status)} → ${JSON.stringify(k.status)}`);
       }
     }
     for (const kid of before.keys()) {
       if (!keys.some((k) => k?.kid === kid)) {
         codes.add("PASSKEY_PIN_KEY_REMOVED");
-        notes.push(`removed ${kid}`);
+        notes.push(`removed ${JSON.stringify(kid)}`);
       }
     }
     const problems = pinProblems(head, { base });
     if (problems.length) {
       codes.add("PASSKEY_PIN_REFUSED");
-      notes.push(...problems.map((p) => `refused: ${p}`));
+      // A refusal quotes the head's values; JSON-quoted, so no value can start
+      // a line of its own in the log, where `::error::` is a command.
+      notes.push(...problems.map((p) => `refused: ${JSON.stringify(p)}`));
     }
   }
   const list = (s, n = 40) => [...s].sort().slice(0, n);
