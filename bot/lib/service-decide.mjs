@@ -604,6 +604,30 @@ export function firstBindingCleared({ actor, verdict, lineHash, records = [], al
     const windowEndsAt = okd ? alert.delivered_at : iso(new Date(new Date(alert.delivered_at).getTime() + OPERATOR_WINDOW_HOURS * HOUR_MS));
     return { by: "approved", alert, fingerprint: fp, windowEndsAt };
   }
+  // The owner's own approve act of a first binding of this listing (review of
+  // PR #484, finding 2). It raised no alert, so the loop above never sees it,
+  // and a later tag under the same binding was held `R_FIRST_BINDING` again
+  // for a second approval. It covers that tag on the same terms as an alert:
+  // an `R_FIRST_BINDING` hold of this plugin, repository and owner id, its
+  // whole digest the act's, not denied, stopped or rejected. One thing it
+  // cannot say that an alert says is WHICH binding token the owner approved —
+  // the act names no token hash — so the tag it covers does not publish on
+  // it: it waits (`by: "owner_approved"`) for the approved release to land,
+  // whose identity record then holds every later tag to that token (ID-41).
+  for (const act of ownerApprovals ?? []) {
+    const t = act?.target ?? {};
+    const fp = t.fingerprint;
+    if (typeof fp !== "string" || fp === fingerprint || denied?.has(fp)) continue;
+    if (records.some((r) => r?.fingerprint === fp && (r.state === "stopped" || r.state === "refused"))) continue;
+    const held = records.find((r) => r?.decision_id === t.held_decision_id && r?.state === "held");
+    if (!held || held.fingerprint !== fp || !(held.reasons ?? []).includes("R_FIRST_BINDING")) continue;
+    if (recordDigest(held) !== t.digest) continue;
+    if (held.plugin_id !== pluginId || held.repository_id !== ids.repository_id || held.repository_owner_id !== ids.repository_owner_id) continue;
+    const sameRelease = (r) => (isStr(held.submission_id) && r?.submission_id === held.submission_id)
+      || (isStr(held.tag) && r?.tag === held.tag && r?.repository_id === held.repository_id);
+    if (records.some((r) => sameRelease(r) && (r.state === "stopped" || (r.state === "refused" && (r.reasons ?? []).includes("M_REJECT"))))) continue;
+    return { by: "owner_approved", act, fingerprint: fp, windowEndsAt: act.at };
+  }
   return null;
 }
 
@@ -1580,6 +1604,18 @@ export function decideSubmission(input) {
       `${firstCleared.windowEndsAt}; it publishes then, unless an operator denies that release`, {
         earliest: operatorRetryHint({ windowEndsAt: firstCleared.windowEndsAt, from: startedAt }),
         windowEndsAt: firstCleared.windowEndsAt, reasons, derived: derivedFacts,
+      });
+  }
+
+  // The owner approved the first binding with another release (finding 2):
+  // this one waits for that release to land, and is then judged against its
+  // identity record like any bound release, rather than held for a second
+  // approval.
+  if (firstCleared?.by === "owner_approved") {
+    return waitPlan("W_APPROVAL_DEFERRED",
+      `MIG-10: the owner approved this listing's first binding with ${firstCleared.fingerprint}; this release publishes ` +
+      "once that one is on main, and is held to its binding then (ID-41)", {
+        earliest: plusMs(startedAt, OPERATOR_RETRY_HINT_MINUTES * 60_000), reasons, derived: derivedFacts,
       });
   }
 

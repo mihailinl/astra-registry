@@ -4725,3 +4725,31 @@ test("MIG-10 (review finding 9): the owner's approve of the alert's held record 
   const other = firstBindingCleared({ ...args, ownerApprovals: [ownerAct({ digest: `${FP}${"0".repeat(48)}` })] });
   assert.notEqual(other.windowEndsAt, alert.delivered_at, "an approve of another digest ended the window");
 });
+
+test("MIG-10 (review finding 2): the owner's approve of a first binding covers a later tag, which waits for it to land instead of being held again", () => {
+  const line = { outcome: "one", token: "t".repeat(24), token_hash: "2".repeat(16), code: null, alert: false, reason: null };
+  const aFacts = { repo: P.repo, tag: "v0.1.9", id: P.id, version: "0.1.9", commit: P.commit, digests: DIGESTS };
+  const aDigest = submissionDigest(aFacts);
+  const A = { schema: "astra.registry.decision/1", ...HELD_FACTS, tag: aFacts.tag, version: aFacts.version, submission_id: P.sid2,
+    fingerprint: aDigest.slice(0, 16), state: "held", reasons: ["R_FIRST_BINDING"], decided_at: "2026-09-25T00:00:00Z", decision_id: OWNER_HELD };
+  const act = { jti: "9".repeat(32), kid: "owner-phone", at: "2026-09-26T09:00:00Z",
+    target: { held_decision_id: OWNER_HELD, digest: aDigest, fingerprint: A.fingerprint, plugin_id: P.id, version: "0.1.9", tag: "v0.1.9", repo: P.repo, repository_id: P.rid, commit: P.commit } };
+  const run = (acts, records = [baseline(), A]) => decideWith({
+    verified: verified({ binding: line }),
+    ask: ask({ verdict: "pass" }),
+    git: git({ existing: existing(), records, ownerApprovals: acts }),
+  });
+  const held = run([]);
+  assert.equal(held.state, "held", `${held.kind} ${JSON.stringify(held.wait ?? null)}`);
+  assert.ok(codes(held).includes("R_FIRST_BINDING"));
+  const covered = run([act]);
+  assert.equal(covered.kind, "wait", `the later tag was not covered: ${covered.kind} ${JSON.stringify(codes(covered))}`);
+  assert.equal(covered.wait.code, "W_APPROVAL_DEFERRED");
+  const cleared = firstBindingCleared({ verdict: "pass", lineHash: "2".repeat(16), records: [A], ids: { repository_id: P.rid, repository_owner_id: P.oid }, pluginId: P.id, fingerprint: FP, ownerApprovals: [act] });
+  assert.deepEqual([cleared.by, cleared.windowEndsAt], ["owner_approved", act.at]);
+  // Not for another digest, another plugin's hold, a denied or a stopped release.
+  assert.equal(run([{ ...act, target: { ...act.target, digest: `${A.fingerprint}${"0".repeat(48)}` } }]).state, "held");
+  assert.equal(run([act], [baseline(), { ...A, repository_owner_id: "999" }]).state, "held");
+  assert.equal(decideWith({ verified: verified({ binding: line }), ask: ask({ verdict: "pass" }), git: git({ existing: existing(), records: [baseline(), A], ownerApprovals: [act], denied: new Set([A.fingerprint]) }) }).state, "held");
+  assert.equal(run([act], [baseline(), A, { ...A, state: "stopped", decision_id: "3".repeat(32) }]).state, "held");
+});
