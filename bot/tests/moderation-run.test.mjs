@@ -4235,7 +4235,7 @@ test("TRUST-32 (5.8.0): the workflow's own `ok` check runs after `authority`, re
   assert.ok(at("--job authority") > 0 && at("--job ok-authority") > at("--job authority") && at("--job act") > at("--job ok-authority"),
     "operator.yml must run `authority`, then `ok-authority`, then the act");
   assert.match(yml, /ASTRA_ACTOR_ID: \$\{\{ github\.actor_id \}\}/, "the check reads github.actor_id, the numeric id");
-  assert.match(yml, /options: \[confirm, cancel, revert, deny, ok\]/);
+  assert.match(yml, /options: \[confirm, cancel, revert, deny, ok, revoke-passkey\]/);
 });
 
 test("M-T3.5: the operator's allowlist admits its records, its revert paths and the two documents, and nothing else", async () => {

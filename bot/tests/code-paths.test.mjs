@@ -560,7 +560,7 @@ test("every entry resolves, or carries an excuse that expires", () => {
 // without the bot returning to shadow — and every other leg of this file would
 // stay green. So the paths are asserted, each tracked and inside only through
 // `bot/lib/`.
-const OPERATOR_ACT_FILES = ["bot/lib/operator-act.mjs", "bot/lib/operator-passkeys.json"];
+const OPERATOR_ACT_FILES = ["bot/lib/operator-act.mjs", "bot/lib/operator-acts.mjs", "bot/lib/operator-passkeys.json"];
 
 test("the passkey verifier, its apply module and its pin are tracked inside the set through `bot/lib/`", () => {
   const files = new Set(tracked());

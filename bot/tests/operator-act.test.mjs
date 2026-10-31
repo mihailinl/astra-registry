@@ -701,3 +701,86 @@ test("validate re-verifies every act record under its key, and refuses one that 
   writeJson(pinRoot, "state/passkeys/revoked/ghost.json", { schema: "astra.registry.passkey-revoked/1", kid: "ghost", at: "2026-10-31T12:00:00Z", run: "https://github.com/o/r/actions/runs/1" });
   assert.match(errorsOf(pinRoot).join(" "), /not a pinned key/);
 });
+
+// ── applying: one writer whichever door an act came through (design §4.4) ──
+
+import { applyOperatorAct, operatorPath, passkeyActPath, revokePasskey } from "../lib/operator-acts.mjs";
+
+const RUN = "https://github.com/o/r/actions/runs/7";
+const AT = "2026-10-31T12:30:00Z";
+const recordOf = (item) => actRecord(item, { run: RUN, at: AT });
+const applyItem = (root, item, extra = {}) => {
+  const b = JSON.parse(item.body);
+  return applyOperatorAct({ root, act: b.act, target: b.target, at: AT, run: RUN, jti: item.jti, record: recordOf(item), pin: PIN, ...extra });
+};
+
+test("applyOperatorAct writes each act's effect and its act record, and nothing else", () => {
+  const root = treeFixture();
+  writeJson(root, "plugins/widgets/plugin.json", { id: "widgets", unlisted: true });
+
+  const approveItem = A.act(owner, A.body({ act: "approve", target: releaseTarget(), now: NOW }));
+  const a = applyItem(root, approveItem);
+  assert.deepEqual(a.paths, [`state/acts/${approveItem.jti}.json`], "an approve writes its act record alone");
+  assert.deepEqual(a.trailers, [["Operator-Act", approveItem.jti]]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, a.paths[0]), "utf8")), recordOf(approveItem));
+
+  const denyItem = A.act(owner, A.body({ act: "deny", target: releaseTarget(), now: NOW }));
+  const d = applyItem(root, denyItem);
+  assert.deepEqual(d.paths, [`state/deny/${DIGEST.slice(0, 16)}.json`, `state/acts/${denyItem.jti}.json`]);
+  const again = A.act(owner, A.body({ act: "deny", target: releaseTarget(), now: NOW }));
+  assert.deepEqual(applyItem(root, again).paths, [`state/acts/${again.jti}.json`], "a second deny records itself and leaves the deny as it was");
+
+  const confirmItem = A.act(owner, A.body({ act: "confirm", target: holdTarget(), now: NOW }));
+  const c = applyItem(root, confirmItem);
+  assert.deepEqual(c.paths, [`state/holds/${SDI}.confirm.json`, `state/acts/${confirmItem.jti}.json`]);
+  assert.deepEqual(c.trailers, [["Operator-Act", confirmItem.jti], ["Service-Decision", SDI]]);
+
+  const revertItem = A.act(owner, A.body({ act: "revert", target: { service_decision_id: DELIST_SDI, action: "delist", plugin_id: "widgets", entry: "2026-10-30-widgets-delist.json" }, now: NOW }));
+  const r = applyItem(root, revertItem);
+  assert.deepEqual(r.paths, ["plugins/widgets/plugin.json", "bot/moderation/2026-10-31-widgets-relist.json", `state/acts/${revertItem.jti}.json`],
+    "a revert writes the listing and its log entry, and regenerates no document: the moderation run does, once");
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "plugins/widgets/plugin.json"), "utf8")).unlisted, undefined);
+
+  const revokeItem = A.act(owner, A.body({ act: "revoke_key", target: { kid: "owner-pc", credential_id: KEYS.RS256.pinKey.credential_id }, now: NOW, lifetime: 86400 }));
+  const k = applyItem(root, revokeItem);
+  assert.deepEqual(k.paths, ["state/passkeys/revoked/owner-pc.json", `state/acts/${revokeItem.jti}.json`]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, k.paths[0]), "utf8")), { schema: "astra.registry.passkey-revoked/1", kid: "owner-pc", at: AT, run: RUN });
+
+  assert.throws(() => applyItem(root, approveItem, { jti: "f".repeat(32) }), /not this act's/);
+  for (const p of [...a.paths, ...d.paths, ...c.paths, ...r.paths, ...k.paths]) assert.ok(passkeyActPath(p), p);
+  assert.equal(operatorPath(`state/acts/${approveItem.jti}.json`), false, "operator.yml writes no act record");
+  assert.equal(operatorPath("state/passkeys/revoked/owner-pc.json"), true, "operator.yml's revoke-passkey writes a revocation");
+});
+
+test("revoke-passkey: a pinned key, not yet revoked, by the owner's pinned id alone", async () => {
+  const root = treeFixture();
+  assert.throws(() => revokePasskey(root, "ghost", { at: AT, run: RUN, pin: PIN }), /not a pinned key/);
+  assert.throws(() => revokePasskey(root, "owner-pc", { at: AT, run: null, pin: PIN }), /no run URL/);
+  assert.deepEqual(revokePasskey(root, "owner-pc", { at: AT, run: RUN, pin: PIN }).touched, ["state/passkeys/revoked/owner-pc.json"]);
+  assert.throws(() => revokePasskey(root, "owner-pc", { at: AT, run: RUN, pin: PIN }), /already revoked/);
+
+  const { main, ACTS } = await import("../../tools/operator.mjs");
+  assert.ok(ACTS.includes("revoke-passkey"));
+  const run = async (job, env) => {
+    const logs = [];
+    const out = path.join(root, "operator-out");
+    const code = await main(["--job", job, "--registry-dir", root, "--out", out], {
+      env: { GITHUB_SERVER_URL: "https://github.com", GITHUB_REPOSITORY: "o/r", GITHUB_RUN_ID: "7", ...env },
+      log: { log: (m) => logs.push(String(m)), error: (m) => logs.push(String(m)) },
+      now: new Date(AT),
+    });
+    return { code, logs };
+  };
+  // The workflow's own step: the owner's numeric id, for revoke-passkey as for ok.
+  assert.equal((await run("ok-authority", { ASTRA_ACT: "revoke-passkey", ASTRA_ACTOR_ID: "700000555" })).code, 1);
+  assert.equal((await run("ok-authority", { ASTRA_ACT: "revoke-passkey", ASTRA_ACTOR_ID: "193032699" })).code, 0);
+  // The act itself refuses a stranger too, and a kid the committed (empty) pin does not hold.
+  const stranger = await run("act", { ASTRA_ACT: "revoke-passkey", ASTRA_KID: "owner-pc", ASTRA_ACTOR_ID: "700000555" });
+  assert.equal(stranger.code, 1, stranger.logs.join("\n"));
+  assert.match(stranger.logs.join("\n"), /TRUST-32/);
+  const unpinned = await run("act", { ASTRA_ACT: "revoke-passkey", ASTRA_KID: "owner-pc", ASTRA_ACTOR_ID: "193032699" });
+  assert.equal(unpinned.code, 1);
+  assert.match(unpinned.logs.join("\n"), /not a pinned key/);
+  const mixed = await run("act", { ASTRA_ACT: "deny", ASTRA_FINGERPRINT: DIGEST.slice(0, 16), ASTRA_KID: "owner-pc" });
+  assert.equal(mixed.code, 1, "a deny naming a kid was accepted");
+});
