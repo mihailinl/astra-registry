@@ -5367,3 +5367,11 @@ test("passkey acts (review 4): an act already on main, listed again, is handed o
   assert.deepEqual(JSON.parse(again.files.acts), []);
   assert.equal(JSON.parse(again.files.refused)[0].jti, stale.jti);
 });
+
+test("passkey acts (review 7): under shadow `list` judges no act, so nothing is announced, refused or listed", async () => {
+  const root = estate({ extra: { "schema/moderation-work-v2.json": read("schema/moderation-work-v2.json") } });
+  const item = Auth.act(ACT_KEY, Auth.body({ act: "deny", target: { held_decision_id: "1".repeat(32), digest: `${"a".repeat(16)}${"b".repeat(48)}`, fingerprint: "a".repeat(16), plugin_id: "widgets", version: "1.0.0", tag: "v1.0.0", repo: "acme/widgets", repository_id: "12", commit: "c".repeat(40) }, now: Date.now() }));
+  const job = await listJob(root, { ...answer({ shadow: true, service_decisions: [], submissions: [] }), schema: "astra.plugins.bot-moderation-work/2", operator_acts: [item] });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual([JSON.parse(job.files.acts), JSON.parse(job.files.refused), JSON.parse(job.files.listed)], [[], [], []]);
+});

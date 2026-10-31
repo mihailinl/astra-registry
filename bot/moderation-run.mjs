@@ -2473,7 +2473,10 @@ export async function main(argv = [], {
     }
     // The owner's passkey acts, `/2` only: checks 1–9 of §4.3 here, without
     // git, against this checkout's pin; the rest in `commit`.
-    if (checked.version === 2 && !checked.fatal.length) {
+    // Not under shadow (review of PR #484, finding 7): `commit` applies no
+    // act then, and an act refused or announced here would page for work no
+    // run will do.
+    if (checked.version === 2 && !checked.fatal.length && checked.shadow === false) {
       const acts = checkActs(checked.operatorActs, { pin: keys(), now, root });
       checked.acts = acts.acts;
       checked.actsRefused = acts.refused;
