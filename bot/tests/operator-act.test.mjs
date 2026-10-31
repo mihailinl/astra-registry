@@ -425,7 +425,12 @@ const roots = [];
 process.on("exit", () => {
   for (const r of roots) fs.rmSync(r, { recursive: true, force: true });
 });
-const git = (root, ...args) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8", env: fixtureEnv(root) }).trim();
+// The fixture's own identity, on every call: a runner has no global git
+// identity (Bot tests' `suites` job, 2026-10-31: "Author identity unknown"),
+// and a fixture that leans on the developer's ~/.gitconfig passes only on a
+// developer's machine.
+const git = (root, ...args) => execFileSync("git", ["-C", root, "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
+  "-c", "commit.gpgsign=false", ...args], { encoding: "utf8", env: fixtureEnv(root) }).trim();
 const writeJson = (root, rel, doc) => {
   fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
   fs.writeFileSync(path.join(root, rel), `${JSON.stringify(doc, null, 2)}\n`);
