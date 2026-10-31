@@ -34,6 +34,7 @@ import {
   run,
 } from "../publish-apply.mjs";
 import { readTree, treeModeProblems } from "../../tools/lib/tree-modes.mjs";
+import { makeKey, pinOf } from "./fixtures/authenticator.mjs";
 
 const git = (cwd, ...args) =>
   execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: fixtureEnv(cwd) }).trim();
@@ -1402,8 +1403,8 @@ test("a deny of another fingerprint withdraws nothing", () => {
 // before every push, as a deny is: an approval whose key main now holds
 // revoked publishes nothing.
 
-const REVOKE_KEY = { kid: "owner-phone", status: "active", acts: ["approve"], credential_id: "AAECAwQFBgcICQoLDA0ODw", alg: "ES256", public_key: "x", device_bound: "no", added: "2026-10-31", endorsed_by: "", enrolment: null, endorsement: null };
-const REVOKE_PIN = { schema: "astra.registry.operator-passkeys/1", aud: "astra-registry:1", rp_id: "acts.example.github.io", origins: ["https://acts.example.github.io"], keys: [REVOKE_KEY] };
+const REVOKE_KEY = makeKey("ES256", { kid: "owner-phone", acts: ["approve"] }).pinKey;
+const REVOKE_PIN = pinOf([REVOKE_KEY]);
 const approveOnMain = (clone) => {
   const body = JSON.stringify({ act: "approve", aud: "astra-registry:1", exp: "2026-10-31T13:00:00Z", iat: "2026-10-31T12:00:00Z", jti: "9".repeat(32), main: "a".repeat(40), schema: "astra.registry.operator-act-body/1", target: { fingerprint: DENIED_FP } });
   write(clone, `state/acts/${"9".repeat(32)}.json`, `${JSON.stringify({ schema: "astra.registry.operator-act/1", jti: "9".repeat(32), body, assertion: { credential_id: REVOKE_KEY.credential_id }, run: "x", at: "2026-10-31T12:01:00Z" })}\n`);
@@ -1519,4 +1520,14 @@ test("this file, run again as a child, leaves its temp directory empty", { skip:
     `the child left ${after.length} entr${after.length === 1 ? "y" : "ies"} in its temp directory after it exited ` +
     `(${[...new Set(after)].join(", ")}); every directory a test here makes has to go into \`estates\`, which the ` +
     "`exit` handler at the top of this file removes");
+});
+
+test("a pin that fails its own rules approves nothing at the push (review finding 8)", () => {
+  const { dir, one, two } = estate();
+  approveOnMain(two);
+  git(one, "pull", "--quiet", "--ff-only", "origin", "main");
+  const reports = withRecord(report(dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", ownerRecord());
+  const broken = { ...REVOKE_PIN, keys: [{ ...REVOKE_KEY, enrolment: null }] };
+  const r = run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, servicePath: true, pin: broken, log: quiet });
+  assert.equal(r.outcome, "refused", "an owner-approved release was pushed under a pin that fails its own rules");
 });

@@ -5375,3 +5375,17 @@ test("passkey acts (review 7): under shadow `list` judges no act, so nothing is 
   assert.equal(job.code, 0, job.logs.join("\n"));
   assert.deepEqual([JSON.parse(job.files.acts), JSON.parse(job.files.refused), JSON.parse(job.files.listed)], [[], [], []]);
 });
+
+test("passkey acts (review 8): under a pin that fails its own rules every act is refused, in `list` and in `commit`", async () => {
+  const broken = Auth.pinOf([{ ...ACT_KEY.pinKey, enrolment: null }]);
+  const { root, confirm } = heldOverFullWindow();
+  const listed = checkActs([confirm], { pin: broken, now: ACT_NOW, root });
+  assert.deepEqual(listed.refused, [{ jti: confirm.jti, code: "act_not_permitted" }]);
+  assert.deepEqual(listed.acts, []);
+  const job = await actsJob(root, { acts: [confirm], pin: broken });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.paths, []);
+  assert.deepEqual(job.results.acts.refused, [{ jti: confirm.jti, code: "act_not_permitted" }]);
+  // The same act under a sound pin is applied: the refusal is the pin's.
+  assert.deepEqual(checkActs([confirm], { pin: ACT_PIN, now: ACT_NOW, root }).refused, []);
+});

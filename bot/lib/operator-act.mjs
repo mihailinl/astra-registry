@@ -930,6 +930,7 @@ export function revokedRecordProblems(doc, { file, pin }) {
  */
 export function ownerApprovalsAt(root, { pin = loadPin() } = {}) {
   const out = [];
+  if (pinRefusal(pin).length) return out;
   const revokedAt = (kid) => fs.existsSync(path.join(root, ...REVOKED_DIR.split("/"), `${kid}.json`));
   for (const doc of readActRecords(root).values()) {
     const body = canonicalBody(doc?.body);
@@ -940,4 +941,21 @@ export function ownerApprovalsAt(root, { pin = loadPin() } = {}) {
     out.push({ jti: doc.jti, kid: key.kid, at: doc.at, target: body.target });
   }
   return out;
+}
+
+// ── a pin the bot may act under ─────────────────────────────────────────────
+
+const pinChecked = new WeakMap();
+
+/**
+ * The pin's own rules, alone (`pinProblems(pin, {})`), remembered per pin
+ * object. While any fails, the bot accepts NO act under it — not in `list`,
+ * not in `commit`, not at the ingest, not before a push (review of PR #484,
+ * finding 8): a pin a writer bent past `tools/validate.mjs` is not a list of
+ * the owner's keys.
+ */
+export function pinRefusal(pin) {
+  if (!pin || typeof pin !== "object") return ["no pin"];
+  if (!pinChecked.has(pin)) pinChecked.set(pin, pinProblems(pin, {}));
+  return pinChecked.get(pin);
 }

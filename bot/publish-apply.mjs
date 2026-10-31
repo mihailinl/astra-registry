@@ -60,7 +60,7 @@ import path from "node:path";
 import { compareSemver, parseSemver } from "../tools/lib/semver.mjs";
 import { invalidId, unsafePathComponent } from "../tools/lib/ids.mjs";
 import { readTree, treeProblems } from "../tools/lib/tree-modes.mjs";
-import { PIN_REL, REVOKED_DIR, canonicalBody, keyByCredential, loadPin } from "./lib/operator-act.mjs";
+import { PIN_REL, REVOKED_DIR, canonicalBody, keyByCredential, loadPin, pinRefusal } from "./lib/operator-act.mjs";
 
 export const EXIT = { ok: 0, refused: 1, broke: 2, conflict: 3 };
 
@@ -648,6 +648,7 @@ export function publishedFingerprints(reportDir, { ownerApproved = null } = {}) 
  */
 export function ownerApprovedAt(root, ref, { pin = loadPin() } = {}) {
   const out = new Set();
+  if (pinRefusal(pin).length) return out;
   const show = (rel) => {
     try {
       return git(root, ["show", `${ref}:${rel}`], { stdio: "pipe" });

@@ -222,6 +222,7 @@ import {
   keyByCredential,
   keyFingerprint,
   loadPin,
+  pinRefusal,
   readActRecords,
   treeView,
   verifyAct,
@@ -683,6 +684,8 @@ const normalAct = (item) => ({
  */
 export function checkActs(items, { pin = loadPin(), now = new Date(), root = null } = {}) {
   const out = { acts: [], refused: [], alerts: [] };
+  const broken = pinRefusal(pin);
+  if (broken.length) out.alerts.push({ cause: "operator_act", detail: `the passkey pin fails its own rules, so every act is refused: ${broken[0]}` });
   // An act already on `main`, listed again because its result was lost: it is
   // answered `applied` with its commit (BOT-93), never refused here for the
   // time or the key it had when it applied (review of PR #484, finding 4).
@@ -703,6 +706,10 @@ export function checkActs(items, { pin = loadPin(), now = new Date(), root = nul
       continue;
     }
     seen.add(jti);
+    if (broken.length) {
+      out.refused.push({ jti, code: "act_not_permitted" });
+      continue;
+    }
     if (onMain.has(jti) && sameAs(onMain.get(jti), item)) {
       out.acts.push(normalAct(item));
       continue;
@@ -2653,7 +2660,12 @@ export async function main(argv = [], {
       const actPin = keys();
       const view = treeView(root, { pin: actPin });
       const at = `${now.toISOString().slice(0, 19)}Z`;
-      for (const v of verifyBatch(actItems, { pin: actPin, now, view })) {
+      const broken = pinRefusal(actPin);
+      if (broken.length) log.error(`::error::the passkey pin fails its own rules, so every act is refused: ${broken.join("; ")}`);
+      const verdicts = broken.length
+        ? actItems.map((item) => ({ item, verdict: "refused", code: "act_not_permitted", jti: item.jti }))
+        : verifyBatch(actItems, { pin: actPin, now, view });
+      for (const v of verdicts) {
         if (v.verdict === "applied") {
           acts.applied.push({ jti: v.jti, commit: entryCommit(root, `${ACTS_DIR}/${v.jti}.json`) });
           log.log(`once  act ${v.jti} is already on main; it is answered \`applied\` and nothing is written`);

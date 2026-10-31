@@ -4753,3 +4753,17 @@ test("MIG-10 (review finding 2): the owner's approve of a first binding covers a
   assert.equal(decideWith({ verified: verified({ binding: line }), ask: ask({ verdict: "pass" }), git: git({ existing: existing(), records: [baseline(), A], ownerApprovals: [act], denied: new Set([A.fingerprint]) }) }).state, "held");
   assert.equal(run([act], [baseline(), A, { ...A, state: "stopped", decision_id: "3".repeat(32) }]).state, "held");
 });
+
+test("§4.7 (review finding 8): under a pin that fails its own rules the ingest honours no owner approval", () => {
+  const t = fs.mkdtempSync(path.join(os.tmpdir(), "owner-approval-pin-"));
+  try {
+    const key = OwnerAuth.makeKey("ES256", { kid: "owner-phone" });
+    const item = OwnerAuth.act(key, OwnerAuth.body({ act: "approve", target: ownerTarget(), now: Date.parse("2026-09-26T09:00:00Z") }));
+    fs.mkdirSync(path.join(t, "state", "acts"), { recursive: true });
+    fs.writeFileSync(path.join(t, "state", "acts", `${item.jti}.json`), JSON.stringify(actRecord(item, { run: "https://github.com/o/r/actions/runs/1", at: "2026-09-26T09:01:00Z" })));
+    assert.equal(readGitState(t, { pin: OwnerAuth.pinOf([key]), markersOverride: {} }).ownerApprovals.length, 1);
+    assert.deepEqual(readGitState(t, { pin: OwnerAuth.pinOf([{ ...key.pinKey, enrolment: null }]), markersOverride: {} }).ownerApprovals, []);
+  } finally {
+    fs.rmSync(t, { recursive: true, force: true });
+  }
+});

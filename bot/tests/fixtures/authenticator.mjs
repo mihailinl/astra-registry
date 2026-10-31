@@ -33,7 +33,12 @@ export function makeKey(alg = "ES256", { kid = `key-${++serial}`, acts = [...ACT
     public_key: b64url(publicKey.export({ format: "der", type: "spki" })),
     device_bound, added: "2026-10-31", endorsed_by: "", enrolment: null, endorsement: null,
   };
-  return { pinKey, privateKey, alg };
+  const key = { pinKey, privateKey, alg };
+  // Self-signed at enrolment, as the act page enrols one: a pin whose key
+  // carries no enrolment fails its own rules, and the bot refuses every act
+  // under such a pin.
+  pinKey.enrolment = enrol(key);
+  return key;
 }
 
 /** authenticatorData: rpIdHash ‖ flags ‖ signCount, and any extra bytes a test appends. */
