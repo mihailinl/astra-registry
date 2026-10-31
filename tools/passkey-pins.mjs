@@ -21,12 +21,11 @@
 import fs from "node:fs";
 
 import { VERDICT_SCHEMA, runUrl, verdictProblems } from "../bot/lib/alert-verdict.mjs";
-import { keyFingerprint, pinProblems } from "../bot/lib/operator-act.mjs";
+import { KID_RE, keyFingerprint, pinProblems } from "../bot/lib/operator-act.mjs";
 
 /** The head's pin, at most this many bytes. */
 export const MAX_PIN_BYTES = 256 * 1024;
 
-const KID_ID = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 
 /**
  * The verdict for a head pin against the base pin. `headText` is the head's
@@ -54,7 +53,7 @@ export function pinVerdict({ base, headText, run = null }) {
     const before = new Map((Array.isArray(base?.keys) ? base.keys : []).map((k) => [k?.kid, k]));
     const keys = Array.isArray(head.keys) ? head.keys : [];
     const name = (k) => {
-      if (typeof k?.kid === "string" && KID_ID.test(k.kid)) ids.add(k.kid);
+      if (typeof k?.kid === "string" && KID_RE.test(k.kid)) ids.add(k.kid);
       try {
         hexes.add(keyFingerprint(k?.public_key).replace(/ /g, ""));
       } catch {
