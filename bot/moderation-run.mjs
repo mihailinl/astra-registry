@@ -222,6 +222,7 @@ import {
   keyByCredential,
   keyFingerprint,
   loadPin,
+  readActRecords,
   treeView,
   verifyAct,
   verifyBatch,
@@ -680,8 +681,14 @@ const normalAct = (item) => ({
  * failing the run: the service's own check withholds those, and a list of
  * takedowns must not wait on one bad act.
  */
-export function checkActs(items, { pin = loadPin(), now = new Date() } = {}) {
+export function checkActs(items, { pin = loadPin(), now = new Date(), root = null } = {}) {
   const out = { acts: [], refused: [], alerts: [] };
+  // An act already on `main`, listed again because its result was lost: it is
+  // answered `applied` with its commit (BOT-93), never refused here for the
+  // time or the key it had when it applied (review of PR #484, finding 4).
+  const onMain = root ? readActRecords(root) : new Map();
+  const sameAs = (prior, item) => prior.body === item.body && prior.assertion && typeof item.assertion === "object" &&
+    ASSERTION_MEMBERS.every((m) => prior.assertion[m] === item.assertion[m]);
   const list = Array.isArray(items) ? items : [];
   if (list.length > MAX_ACTS) out.alerts.push({ cause: "operator_act", detail: `${list.length} acts in one answer; the first ${MAX_ACTS} are read` });
   const seen = new Set();
@@ -696,6 +703,10 @@ export function checkActs(items, { pin = loadPin(), now = new Date() } = {}) {
       continue;
     }
     seen.add(jti);
+    if (onMain.has(jti) && sameAs(onMain.get(jti), item)) {
+      out.acts.push(normalAct(item));
+      continue;
+    }
     const v = verifyAct(item, { pin, now, view: null });
     if (v.verdict === "verified") out.acts.push(normalAct(item));
     else out.refused.push({ jti, code: v.code });
@@ -2463,7 +2474,7 @@ export async function main(argv = [], {
     // The owner's passkey acts, `/2` only: checks 1–9 of §4.3 here, without
     // git, against this checkout's pin; the rest in `commit`.
     if (checked.version === 2 && !checked.fatal.length) {
-      const acts = checkActs(checked.operatorActs, { pin: keys(), now });
+      const acts = checkActs(checked.operatorActs, { pin: keys(), now, root });
       checked.acts = acts.acts;
       checked.actsRefused = acts.refused;
       checked.alerts.push(...acts.alerts);

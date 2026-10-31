@@ -5349,3 +5349,21 @@ test("passkey acts (review 1): only acts `alert` announced, and only after a `li
   assert.equal(code, 0);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(out, "a.json"), "utf8")), [confirm.jti], "an act the message did not carry is listed as announced");
 });
+
+test("passkey acts (review 4): an act already on main, listed again, is handed on for `applied`, not refused for its age or key", async () => {
+  const stale = Auth.act(ACT_KEY, Auth.body({ act: "deny", target: { held_decision_id: "1".repeat(32), digest: `${"a".repeat(16)}${"b".repeat(48)}`, fingerprint: "a".repeat(16), plugin_id: "widgets", version: "1.0.0", tag: "v1.0.0", repo: "acme/widgets", repository_id: "12", commit: "c".repeat(40) }, now: Date.parse("2026-01-01T00:00:00Z") }));
+  const root = estate({ extra: {
+    "schema/moderation-work-v2.json": read("schema/moderation-work-v2.json"),
+    [`state/acts/${stale.jti}.json`]: { schema: "astra.registry.operator-act/1", jti: stale.jti, body: stale.body, assertion: stale.assertion, run: "https://github.com/o/r/actions/runs/1", at: "2026-01-01T00:01:00Z" },
+  } });
+  const body = { ...answer({ shadow: false, service_decisions: [], submissions: [] }), schema: "astra.plugins.bot-moderation-work/2", operator_acts: [stale] };
+  const job = await listJob(root, body);
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(JSON.parse(job.files.acts).map((a) => a.jti), [stale.jti], "a re-listed act on main was not handed on");
+  assert.deepEqual(JSON.parse(job.files.refused), [], "a re-listed act on main was refused, so its `applied` is never posted");
+  // A different act under that jti is not that act: it is judged as any other.
+  const other = { ...stale, assertion: { ...stale.assertion, signature: stale.assertion.signature.replace(/^./, (c) => (c === "A" ? "B" : "A")) } };
+  const again = await listJob(root, { ...body, operator_acts: [other] });
+  assert.deepEqual(JSON.parse(again.files.acts), []);
+  assert.equal(JSON.parse(again.files.refused)[0].jti, stale.jti);
+});
