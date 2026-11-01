@@ -26,7 +26,7 @@ export const S_IFDIR = 0o040000;
 /**
  * Parse the central directory.
  * @param {Buffer} buf whole archive
- * @returns {{entries: {name: string, method: number, crc32: number,
+ * @returns {{entries: {name: string, flags: number, method: number, crc32: number,
  *            compressedSize: number, size: number, externalAttributes: number,
  *            unixMode: number, offset: number, index: number}[]}}
  */
@@ -57,6 +57,7 @@ export function readZip(buf) {
     entries.push({
       index: i,
       name: buf.toString("utf8", p + 46, p + 46 + nameLen),
+      flags: buf.readUInt16LE(p + 8),
       method: buf.readUInt16LE(p + 10),
       crc32: buf.readUInt32LE(p + 16),
       compressedSize: buf.readUInt32LE(p + 20),

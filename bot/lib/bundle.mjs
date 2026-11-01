@@ -10,8 +10,9 @@
 // of them extracts anything. A bundle that fails here never reaches a disk.
 
 import crypto from "node:crypto";
+import zlib from "node:zlib";
 
-import { readZip, readEntry, S_IFMT, S_IFLNK, S_IFDIR } from "../../tools/lib/zip.mjs";
+import { readZip, S_IFMT, S_IFLNK, S_IFDIR } from "../../tools/lib/zip.mjs";
 import { platformKeyFromManifest } from "../../tools/lib/platform.mjs";
 import { ijsonProblems, jcs } from "../../tools/lib/canonical.mjs";
 
@@ -121,6 +122,81 @@ export function permissionsHash(permissions) {
 }
 
 /**
+ * One entry's bytes, read the one way every ZIP reader agrees on, and every
+ * reason there could be a second way.
+ *
+ * Everything in this file reads through the central directory; a streaming
+ * extractor reads local headers from byte zero. Those agree only when each
+ * entry's data is exactly what its header says it is, and the registry
+ * countersigns the whole file, so a second reading is a second plugin under the
+ * same signature. Measured on main 05f8f70 (astra-ce's vectors, wrapped as
+ * bundles): a deflated entry flagged general-purpose bit 3, its central size
+ * running past the real end of its deflate stream, hid a second `bin/run` in
+ * that slack. This file found zero errors; a streaming reader extracted the
+ * hidden one last, over the one checked here. `zlib.inflateRawSync` stops at
+ * the end of the stream and says nothing about the bytes after it.
+ *
+ * So the stream must end exactly at the declared compressed size, and inflate
+ * to exactly the declared size and CRC-32; a stored entry's two sizes must be
+ * equal. Bit 3 is refused outright: it is what lets a local header carry no
+ * sizes, and `astra-plugin build` never sets it (zip 2.4.2 writes only the UTF-8
+ * and encryption bits).
+ *
+ * @param {Buffer} buf the whole .astraplugin
+ * @param {{name: string, flags: number, method: number, crc32: number,
+ *          compressedSize: number, size: number, offset: number}} e a `readZip` entry
+ * @returns {{bytes: Buffer|null, problems: string[]}} `bytes` is null when no
+ *   reading bounded by the declared sizes exists
+ */
+export function readEntryOneWay(buf, e) {
+  const problems = [];
+  const fail = (why) => ({ bytes: null, problems: [...problems, why] });
+  if (e.offset + 30 > buf.length || buf.readUInt32LE(e.offset) !== 0x04034b50) {
+    return fail("the central directory points at no local file header");
+  }
+  if ((e.flags | buf.readUInt16LE(e.offset + 6)) & 0x0008) {
+    problems.push("it sets general-purpose bit 3 (sizes in a trailing data descriptor). astra-plugin build never " +
+      "does, and it is what lets a streaming reader and a central-directory reader disagree on where the entry ends");
+  }
+  const start = e.offset + 30 + buf.readUInt16LE(e.offset + 26) + buf.readUInt16LE(e.offset + 28);
+  if (start + e.compressedSize > buf.length) return fail("its data runs past the end of the file");
+  const raw = buf.subarray(start, start + e.compressedSize);
+  let bytes;
+  if (e.method === 0) {
+    if (e.compressedSize !== e.size) {
+      problems.push(`it is stored, yet declares ${e.compressedSize} bytes stored and ${e.size} uncompressed`);
+    }
+    bytes = Buffer.from(raw);
+  } else if (e.method === 8) {
+    let out;
+    try {
+      // Bounded by the declared size, so the extraction cap is a cap on what is
+      // inflated here and not only on what the archive claims.
+      out = zlib.inflateRawSync(raw, { info: true, maxOutputLength: Math.max(1, e.size) });
+    } catch (x) {
+      return fail(`its deflate stream does not inflate to ${e.size} bytes within ${e.compressedSize} (${x.message})`);
+    }
+    bytes = out.buffer;
+    const consumed = out.engine.bytesWritten;
+    if (consumed !== e.compressedSize) {
+      problems.push(`its deflate stream ends after ${consumed} of the ${e.compressedSize} bytes declared; ` +
+        "the rest is read by no inflater, and can hold a local header that a streaming reader extracts");
+    }
+    if (bytes.length !== e.size) {
+      problems.push(`it inflates to ${bytes.length} bytes and declares ${e.size}`);
+    }
+  } else {
+    return fail(`compression method ${e.method} is neither stored nor deflate`);
+  }
+  const crc = zlib.crc32(bytes) >>> 0;
+  if (crc !== e.crc32) {
+    problems.push(`its bytes have CRC-32 ${crc.toString(16).padStart(8, "0")} and it declares ` +
+      e.crc32.toString(16).padStart(8, "0"));
+  }
+  return { bytes, problems };
+}
+
+/**
  * Every structural check, plus the bundle's own contents for the callers that
  * need them.
  *
@@ -163,6 +239,8 @@ export function inspectBundle(buf, expected, limits) {
   if (totalUncompressed > limits.max_extract_bytes) {
     err("E_BUNDLE_TOO_LARGE_EXTRACTED",
       `${totalUncompressed} bytes uncompressed, over the daemon's cap of ${limits.max_extract_bytes}`);
+    // Refused already, and every entry is inflated below: stop before that does.
+    return done();
   }
 
   // Path shape and entry kind, before anything is read.
@@ -240,6 +318,15 @@ export function inspectBundle(buf, expected, limits) {
     }
   }
 
+  // Every entry, read once, before anything is believed about any of them —
+  // including the ones no check below opens. See `readEntryOneWay`.
+  const read = new Map();
+  for (const e of entries) {
+    const { bytes, problems } = readEntryOneWay(buf, e);
+    for (const why of problems) err("E_BUNDLE_UNREADABLE", `${JSON.stringify(e.name)}: ${why}`);
+    read.set(e, bytes);
+  }
+
   const manifestEntry = entries.find((e) => e.name === "MANIFEST.json");
   if (!manifestEntry) {
     err("E_MANIFEST_MISSING", "MANIFEST.json is not in the archive; this is not a v2 bundle");
@@ -254,7 +341,7 @@ export function inspectBundle(buf, expected, limits) {
 
   // Two independent readings of the same entry, compared.
   //
-  // `readEntry` follows the CENTRAL DIRECTORY's offset for MANIFEST.json.
+  // The reading above follows the CENTRAL DIRECTORY's offset for MANIFEST.json.
   // `manifestBytesFromLocalHeader` starts at byte zero and reads the local file
   // header, which is what the daemon does. On an honest archive these are the
   // same bytes. On a crafted one they need not be: the central directory is
@@ -262,12 +349,7 @@ export function inspectBundle(buf, expected, limits) {
   // it is attached to, so an attacker can point the index at a benign entry
   // while byte zero holds the manifest that will actually be enforced. The
   // registry would then hash, display and approve a manifest no daemon reads.
-  const centralBytes = (() => {
-    try { return readEntry(buf, manifestEntry); } catch (e) {
-      err("E_BUNDLE_UNREADABLE", `MANIFEST.json: ${e.message}`);
-      return null;
-    }
-  })();
+  const centralBytes = read.get(manifestEntry);
   if (centralBytes === null) return done();
 
   let localBytes = null;
@@ -405,13 +487,8 @@ export function inspectBundle(buf, expected, limits) {
       err("E_MANIFEST_MISSING_FILE", `MANIFEST.files lists ${f.path}, which is not in the archive`);
       continue;
     }
-    let data;
-    try {
-      data = readEntry(buf, e);
-    } catch (ex) {
-      err("E_BUNDLE_UNREADABLE", `${f.path}: ${ex.message}`);
-      continue;
-    }
+    const data = read.get(e);
+    if (data === null) continue;
     if (f.size !== undefined && f.size !== data.length) {
       err("E_MANIFEST_SIZE_MISMATCH", `${f.path}: manifest says ${f.size} bytes, archive has ${data.length}`);
     }

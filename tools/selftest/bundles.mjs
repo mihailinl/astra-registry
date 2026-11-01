@@ -17,6 +17,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import zlib from "node:zlib";
 
 import { stableStringify } from "../lib/canonical.mjs";
 import { readZip, readEntry, writeZip } from "../lib/zip.mjs";
@@ -163,6 +164,61 @@ export async function run() {
       "a listing for one id served an archive for another — the confusion §5.3 D closes");
   });
 
+  // ── one reading per entry ───────────────────────────────────────────────────
+  //
+  // astra-ce's ZIP cloaking shapes (2026-10-31), wrapped as bundles. On main
+  // 05f8f70 each came back with ZERO findings while a streaming reader extracted
+  // a payload no check here had read. Every rule in `readEntryOneWay` also has a
+  // bundle on which it is the ONLY objection, so deleting any one of them is red
+  // here instead of being covered for by a neighbour on the attack vector.
+  console.log("\none reading per entry (ZIP cloaking shapes)");
+  await test("an honest deflated bundle has one reading and no findings", () => {
+    const z = cloakBundle([deflatedEntry("lib/a.txt", TEXT)]);
+    assertEqual(streamingNames(z).join(","), "MANIFEST.json,bin/run,lib/a.txt", "the streaming walk of an honest bundle");
+    const f = checkBundle(z, FIXTURE_LISTING, LIMITS);
+    assert(f.length === 0, f.map((x) => `${x.code} ${x.message}`).join("\n"));
+  });
+  await test("deflate slack behind bit 3, hiding a second bin/run, is refused", () => {
+    const z = cloakBundle([slackEntry({ bit3: true })]);
+    // The fixture IS the attack: walked from byte zero, a.txt's slack yields a
+    // second bin/run, extracted after the one the manifest describes.
+    assertEqual(streamingNames(z).join(","), "MANIFEST.json,bin/run,a.txt,bin/run", "the streaming walk");
+    const f = checkBundle(z, FIXTURE_LISTING, LIMITS).filter((x) => x.level === "error");
+    assertEqual(f.map((x) => x.code).join(", "), "E_BUNDLE_UNREADABLE, E_BUNDLE_UNREADABLE", "the finding set");
+    for (const says of ["general-purpose bit 3", "deflate stream ends after"]) {
+      assert(f.some((x) => x.message.includes(says)), `no finding says ${JSON.stringify(says)}`);
+    }
+  });
+  const ONE_READING_PINS = [
+    { rule: "bit 3, every size right", says: "general-purpose bit 3", entry: () => bit3Entry() },
+    {
+      rule: "deflate slack, no bit 3, honest local header", says: "deflate stream ends after",
+      entry: () => slackEntry({ bit3: false }), streams: "MANIFEST.json,bin/run,a.txt,bin/run",
+    },
+    { rule: "inflates short of its declared size", says: "inflates to", entry: () => deflatedEntry("a.txt", TEXT, { usz: TEXT.length + 1 }) },
+    { rule: "inflates past its declared size", says: "does not inflate", entry: () => deflatedEntry("a.txt", TEXT, { usz: TEXT.length - 1 }) },
+    { rule: "a CRC-32 its bytes do not have", says: "CRC-32", entry: () => deflatedEntry("a.txt", TEXT, { crc: crc32(TEXT) ^ 1 }) },
+    { rule: "stored, with two sizes", says: "is stored, yet declares", entry: () => ({ ...storedEntry("a.txt", TEXT), usz: TEXT.length - 1 }) },
+  ];
+  for (const pin of ONE_READING_PINS) {
+    await test(`one reading: ${pin.rule} — refused, and by that rule alone`, () => {
+      const z = cloakBundle([pin.entry()]);
+      if (pin.streams) assertEqual(streamingNames(z).join(","), pin.streams, "the streaming walk");
+      const f = checkBundle(z, FIXTURE_LISTING, LIMITS).filter((x) => x.level === "error");
+      assertEqual(f.length, 1,
+        `expected exactly one finding, got:\n${f.map((x) => `${x.code}: ${x.message}`).join("\n") || "nothing"}`);
+      assertEqual(f[0].code, "E_BUNDLE_UNREADABLE", "the code");
+      assert(f[0].message.includes(pin.says), `the finding does not say ${JSON.stringify(pin.says)}: ${f[0].message}`);
+    });
+  }
+  await test("one reading: a bundle over the extraction cap is refused before any entry is inflated", () => {
+    // Inflating is bounded by each entry's DECLARED size, so the cap on the sum
+    // of those is what bounds the reading; past it nothing is read. Were this
+    // entry inflated, its short stream would add a second finding.
+    const z = cloakBundle([deflatedEntry("a.txt", TEXT, { usz: LIMITS.max_extract_bytes + 1 })]);
+    assertEqual(errorCodes(z, FIXTURE_LISTING).join(", "), "E_BUNDLE_TOO_LARGE_EXTRACTED", "the finding set");
+  });
+
   // ── each rule on its own terms ──────────────────────────────────────────────
   //
   // Every `<name> — rejects (bundle-structure)` in the vendored block below
@@ -232,8 +288,11 @@ export async function run() {
     },
     {
       rule: "E_MANIFEST_HEADER_DISAGREE", vector: "header-disagree",
-      rest: ["E_MANIFEST_INVALID"],
-      otherwise: "the decoy manifest failing to parse, which is a property of that decoy and not of the comparison",
+      // E_BUNDLE_UNREADABLE since every entry is held to its own CRC-32: the
+      // central record still declares the real manifest's, over the decoy's bytes.
+      rest: ["E_BUNDLE_UNREADABLE", "E_MANIFEST_INVALID"],
+      otherwise: "the decoy manifest failing to parse, which is a property of that decoy and not of the comparison, " +
+        "and the decoy's bytes failing the CRC-32 the central record declares for MANIFEST.json",
     },
     {
       rule: "E_MANIFEST_NOT_FIRST", vector: "manifest-first-by-offset-only",
@@ -417,4 +476,126 @@ function repointedCentralDirectory() {
   }
   assert(patched, "could not repoint the central directory entry");
   return { forged, realId, evilId };
+}
+
+// ── ZIPs assembled field by field, for the one-reading tests ──────────────────
+//
+// `writeZip` cannot write a local header that disagrees with its central record,
+// which is the whole subject of those tests, so they build their own.
+
+const TEXT = Buffer.from("hello world\n".repeat(40));
+const crc32 = (b) => zlib.crc32(b) >>> 0;
+const u16 = (n) => { const b = Buffer.alloc(2); b.writeUInt16LE(n); return b; };
+const u32 = (n) => { const b = Buffer.alloc(4); b.writeUInt32LE(n >>> 0); return b; };
+
+function localHeader(name, h, extra = Buffer.alloc(0)) {
+  return Buffer.concat([
+    u32(0x04034b50), u16(20), u16(h.flags ?? 0), u16(h.method ?? 0), u16(0), u16(0x21),
+    u32(h.crc), u32(h.csz), u32(h.usz), u16(Buffer.byteLength(name)), u16(extra.length), Buffer.from(name), extra,
+  ]);
+}
+
+/**
+ * Entries in byte order. Each is the CENTRAL record's fields — `name`, `method`,
+ * `flags`, `crc`, `csz`, `usz`, `mode`, `extra` — plus `body`, the bytes after
+ * its local header, and `local`, any fields the local header says differently.
+ */
+function assembleZip(entries) {
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  for (const e of entries) {
+    const extra = e.extra ?? Buffer.alloc(0);
+    const local = localHeader(e.name, { ...e, ...(e.local ?? {}) }, e.local?.extra ?? extra);
+    central.push(Buffer.concat([
+      u32(0x02014b50), u16(0x031e), u16(20), u16(e.flags ?? 0), u16(e.method ?? 0), u16(0), u16(0x21),
+      u32(e.crc), u32(e.csz), u32(e.usz), u16(Buffer.byteLength(e.name)), u16(extra.length), u16(0), u16(0), u16(0),
+      u32(((e.mode ?? 0o644) << 16) >>> 0), u32(offset), Buffer.from(e.name), extra,
+    ]));
+    parts.push(local, e.body);
+    offset += local.length + e.body.length;
+  }
+  const cd = Buffer.concat(central);
+  return Buffer.concat([
+    ...parts, cd,
+    u32(0x06054b50), u16(0), u16(0), u16(entries.length), u16(entries.length), u32(cd.length), u32(offset), u16(0),
+  ]);
+}
+
+/** `content` is what a central-directory reading of the entry yields; the manifest describes it. */
+function storedEntry(name, data, mode = 0o644) {
+  return { name, mode, crc: crc32(data), csz: data.length, usz: data.length, body: data, content: data };
+}
+function deflatedEntry(name, data, over = {}) {
+  const body = zlib.deflateRawSync(data);
+  return { name, mode: 0o644, method: 8, crc: crc32(data), csz: body.length, usz: data.length, body, content: data, ...over };
+}
+
+/** A deflated a.txt with bit 3 and a data descriptor, every size right: bit 3 is all that is wrong. */
+function bit3Entry() {
+  const e = deflatedEntry("a.txt", TEXT);
+  const descriptor = Buffer.concat([u32(0x08074b50), u32(e.crc), u32(e.csz), u32(e.usz)]);
+  return { ...e, flags: 0x08, local: { crc: 0, csz: 0, usz: 0 }, body: Buffer.concat([e.body, descriptor]) };
+}
+
+/**
+ * sec-probe's slack.zip, as a bundle entry: a.txt's central compressed size runs
+ * past the end of its deflate stream, over a local header for a second bin/run.
+ * With `bit3` the local header carries no sizes (sec-probe's shape); without it
+ * the local header carries the TRUE compressed size and only the central record
+ * lies. A streaming reader follows the local header into the slack either way.
+ */
+function slackEntry({ bit3 }) {
+  const e = deflatedEntry("a.txt", TEXT);
+  const evil = Buffer.from("#!/bin/sh\necho pwned\n");
+  const hidden = Buffer.concat([localHeader("bin/run", { crc: crc32(evil), csz: evil.length, usz: evil.length }), evil]);
+  const descriptor = bit3 ? Buffer.concat([u32(0x08074b50), u32(e.crc), u32(e.csz), u32(e.usz)]) : Buffer.alloc(0);
+  const body = Buffer.concat([e.body, descriptor, hidden]);
+  return {
+    ...e, body, csz: body.length,
+    flags: bit3 ? 0x08 : 0, local: bit3 ? { crc: 0, csz: 0, usz: 0 } : { csz: e.body.length },
+  };
+}
+
+/** MANIFEST.json, a stored bin/run, then `rest`; the manifest lists every entry's central reading. */
+function cloakBundle(rest) {
+  const entries = [storedEntry("bin/run", Buffer.from("#!/usr/bin/env node\nprocess.exit(0);\n"), 0o755), ...rest];
+  const files = entries.map((e) => ({
+    path: e.name,
+    sha256: crypto.createHash("sha256").update(e.content).digest("hex"),
+    size: e.content.length,
+    mode: e.mode.toString(8).padStart(4, "0"),
+  })).sort((a, b) => (a.path < b.path ? -1 : 1));
+  const manifest = Buffer.from(stableStringify({
+    schema: "astra.bundle/2",
+    plugin_id: FIXTURE_LISTING.id,
+    version: FIXTURE_LISTING.version,
+    platform: { os: "linux", arch: "x86_64" },
+    entry: { command: "./bin/run", args: [] },
+    files,
+  }));
+  return assembleZip([storedEntry("MANIFEST.json", manifest), ...entries]);
+}
+
+/**
+ * Entry names in the order a STREAMING extractor meets them: local headers from
+ * byte zero, the central directory never read. A bit-3 entry has no sizes in its
+ * header, so the walk inflates to the end of the stream and steps over the data
+ * descriptor, as such a reader must.
+ */
+function streamingNames(buf) {
+  const names = [];
+  let p = 0;
+  while (p + 30 <= buf.length && buf.readUInt32LE(p) === 0x04034b50) {
+    const nameLen = buf.readUInt16LE(p + 26);
+    const start = p + 30 + nameLen + buf.readUInt16LE(p + 28);
+    names.push(buf.toString("utf8", p + 30, p + 30 + nameLen));
+    if (buf.readUInt16LE(p + 6) & 0x08) {
+      p = start + zlib.inflateRawSync(buf.subarray(start), { info: true }).engine.bytesWritten;
+      p += (buf.readUInt32LE(p) === 0x08074b50 ? 4 : 0) + 12;
+    } else {
+      p = start + buf.readUInt32LE(p + 18);
+    }
+  }
+  return names;
 }
