@@ -10,8 +10,9 @@
 // of them extracts anything. A bundle that fails here never reaches a disk.
 
 import crypto from "node:crypto";
+import zlib from "node:zlib";
 
-import { readZip, readEntry, S_IFMT, S_IFLNK, S_IFDIR } from "../../tools/lib/zip.mjs";
+import { readZip, S_IFMT, S_IFLNK, S_IFDIR } from "../../tools/lib/zip.mjs";
 import { platformKeyFromManifest } from "../../tools/lib/platform.mjs";
 import { ijsonProblems, jcs } from "../../tools/lib/canonical.mjs";
 
@@ -120,6 +121,202 @@ export function permissionsHash(permissions) {
   return `sha256:${crypto.createHash("sha256").update(Buffer.from(jcs(permissions ?? {}), "utf8")).digest("hex")}`;
 }
 
+const ZIP64_SENTINEL = 0xffffffff;
+
+/**
+ * One entry's bytes, read the one way every ZIP reader agrees on, and every
+ * reason there could be a second way.
+ *
+ * Everything in this file reads through the central directory; a streaming
+ * extractor reads local headers from byte zero. Those agree only when each
+ * entry's data is exactly what its header says it is, and the registry
+ * countersigns the whole file, so a second reading is a second plugin under the
+ * same signature. Measured on main 05f8f70 (astra-ce's vectors, wrapped as
+ * bundles): a deflated entry flagged general-purpose bit 3, its central size
+ * running past the real end of its deflate stream, hid a second `bin/run` in
+ * that slack. This file found zero errors; a streaming reader extracted the
+ * hidden one last, over the one checked here. `zlib.inflateRawSync` stops at
+ * the end of the stream and says nothing about the bytes after it.
+ *
+ * So the stream must end exactly at the declared compressed size, and inflate
+ * to exactly the declared size and CRC-32; a stored entry's two sizes must be
+ * equal. Bit 3 is refused outright: it is what lets a local header carry no
+ * sizes, and `astra-plugin build` never sets it (zip 2.4.2 writes only the UTF-8
+ * and encryption bits).
+ *
+ * @param {Buffer} buf the whole .astraplugin
+ * @param {{name: string, rawName: Buffer, flags: number, method: number, dosTime: number, crc32: number,
+ *          compressedSize: number, size: number, extra: Buffer, offset: number}} e a `readZip` entry
+ * @returns {{bytes: Buffer|null, problems: string[]}} `bytes` is null when no
+ *   reading bounded by the declared sizes exists
+ */
+export function readEntryOneWay(buf, e) {
+  const problems = [];
+  const fail = (why) => ({ bytes: null, problems: [...problems, why] });
+  // 0xffffffff means the real value is in a ZIP64 field, which this reader does
+  // not follow: checked against the sentinel, the deflate end and the bytes
+  // would be checked against a number no reader uses. Refused instead, so no
+  // deflated entry escapes the end check; astra-plugin build never writes one.
+  const sentinels = [["compressed size", e.compressedSize], ["uncompressed size", e.size], ["local header offset", e.offset]]
+    .filter(([, value]) => value === ZIP64_SENTINEL).map(([field]) => field);
+  if (sentinels.length) {
+    return fail(`its central record gives its ${sentinels.join(" and ")} as 0xffffffff, the ZIP64 sentinel; ` +
+      "the real value is in a ZIP64 field this reader does not follow, so its end and its bytes cannot be checked");
+  }
+  if (e.offset + 30 > buf.length || buf.readUInt32LE(e.offset) !== 0x04034b50) {
+    return fail("the central directory points at no local file header");
+  }
+  if ((e.flags | buf.readUInt16LE(e.offset + 6)) & 0x0008) {
+    problems.push("it sets general-purpose bit 3 (sizes in a trailing data descriptor). astra-plugin build never " +
+      "does, and it is what lets a streaming reader and a central-directory reader disagree on where the entry ends");
+  }
+  // The local header must say what the central record says: a streaming reader
+  // knows only the former, this file only the latter. zip 9's
+  // validate_header_consistency, which the daemon applies, compares these too,
+  // so a bundle passing here is not refused there. Measured before this check:
+  // an entry whose central record said `lib/x` and whose local header said
+  // `bin/run` drew zero findings. Under bit 3 the local CRC and sizes are
+  // pending in a descriptor, as zip 9 also allows; bit 3 is refused above.
+  const localName = buf.subarray(e.offset + 30, e.offset + 30 + buf.readUInt16LE(e.offset + 26));
+  const localFlags = buf.readUInt16LE(e.offset + 6);
+  const hex = (n, width = 4) => `0x${n.toString(16).padStart(width, "0")}`;
+  const disagree = [
+    // Bytes, not decoded text: two malformed names can decode to one string here
+    // and to two in a reader that decodes them otherwise.
+    ["name", `${JSON.stringify(localName.toString("utf8"))} (${localName.toString("hex")})`,
+      `${JSON.stringify(e.name)} (${e.rawName.toString("hex")})`, !localName.equals(e.rawName)],
+    ["method", buf.readUInt16LE(e.offset + 8), e.method],
+    ["flags", hex(localFlags & ~0x0008), hex(e.flags & ~0x0008)],
+    ["modification time", hex(buf.readUInt32LE(e.offset + 10), 8), hex(e.dosTime, 8)],
+    ...(localFlags & 0x0008 ? [] : [
+      ["CRC-32", hex(buf.readUInt32LE(e.offset + 14), 8), hex(e.crc32, 8)],
+      ["compressed size", buf.readUInt32LE(e.offset + 18), e.compressedSize],
+      ["uncompressed size", buf.readUInt32LE(e.offset + 22), e.size],
+    ]),
+  ].filter(([, local, central, differs = local !== central]) => differs);
+  for (const [field, local, central] of disagree) {
+    problems.push(`its local header says ${field} ${local} and its central record ${central}`);
+  }
+  const localExtraAt = e.offset + 30 + buf.readUInt16LE(e.offset + 26);
+  const start = localExtraAt + buf.readUInt16LE(e.offset + 28);
+  for (const [where, extra] of [["central", e.extra], ["local", buf.subarray(localExtraAt, start)]]) {
+    const why = extraFieldProblem(extra);
+    if (why) problems.push(`its ${where} header ${why}`);
+  }
+  if (start + e.compressedSize > buf.length) return fail("its data runs past the end of the file");
+  const raw = buf.subarray(start, start + e.compressedSize);
+  let bytes;
+  if (e.method === 0) {
+    if (e.compressedSize !== e.size) {
+      problems.push(`it is stored, yet declares ${e.compressedSize} bytes stored and ${e.size} uncompressed`);
+    }
+    bytes = Buffer.from(raw);
+  } else if (e.method === 8) {
+    let out;
+    try {
+      // Bounded by the declared size, so the extraction cap is a cap on what is
+      // inflated here and not only on what the archive claims.
+      out = zlib.inflateRawSync(raw, { info: true, maxOutputLength: Math.max(1, e.size) });
+    } catch (x) {
+      return fail(`its deflate stream does not inflate to ${e.size} bytes within ${e.compressedSize} (${x.message})`);
+    }
+    bytes = out.buffer;
+    const consumed = out.engine.bytesWritten;
+    if (consumed !== e.compressedSize) {
+      problems.push(`its deflate stream ends after ${consumed} of the ${e.compressedSize} bytes declared; ` +
+        "the rest is read by no inflater, and can hold a local header that a streaming reader extracts");
+    }
+    if (bytes.length !== e.size) {
+      problems.push(`it inflates to ${bytes.length} bytes and declares ${e.size}`);
+    }
+  } else {
+    return fail(`compression method ${e.method} is neither stored nor deflate`);
+  }
+  const crc = zlib.crc32(bytes) >>> 0;
+  if (crc !== e.crc32) {
+    problems.push(`its bytes have CRC-32 ${crc.toString(16).padStart(8, "0")} and it declares ` +
+      e.crc32.toString(16).padStart(8, "0"));
+  }
+  return { bytes, problems };
+}
+
+/**
+ * Every way the entries fail to tile the file from byte zero to the central
+ * directory: bytes no entry owns, before, between or after them, and entries
+ * that start inside another or run into the central directory.
+ *
+ * A streaming reader takes each local header to begin where the previous
+ * entry's data ends; the central directory names its own offsets. They meet
+ * only if the entries it lists are laid end to end over exactly that range.
+ * Measured on this branch before this check: a local header for a second
+ * `bin/run` between the last entry and the central directory, which a
+ * streaming reader extracts and nothing here indexes, came back with zero
+ * findings. Entries are taken in offset order, which need not be index order,
+ * and a bit-3 data descriptor is not allowed for: bit 3 is refused already.
+ *
+ * @param {Buffer} buf the whole .astraplugin
+ * @param {{name: string, offset: number, compressedSize: number}[]} entries `readZip`'s
+ * @param {number} cdOffset where the central directory starts
+ * @returns {string[]}
+ */
+export function tilingProblems(buf, entries, cdOffset) {
+  // An entry whose size or offset is a ZIP64 sentinel cannot be placed without
+  // ZIP64, and `readEntryOneWay` refuses it already.
+  if (entries.some((e) => e.compressedSize === ZIP64_SENTINEL || e.offset === ZIP64_SENTINEL)) return [];
+  const problems = [];
+  const label = (e) => JSON.stringify(e.name);
+  let pos = 0;
+  let prev = null;
+  for (const e of [...entries].sort((a, b) => a.offset - b.offset)) {
+    if (e.offset > pos) {
+      problems.push(prev
+        ? `the ${e.offset - pos} bytes between ${label(prev)} and ${label(e)} belong to no entry the central directory lists`
+        : `the first ${e.offset} bytes of the file belong to no entry the central directory lists`);
+    } else if (e.offset < pos) {
+      problems.push(`${label(e)} begins ${pos - e.offset} bytes inside ${label(prev)}, so a streaming reader never meets its header`);
+    }
+    // No local header to measure: refused already, and nothing after it can be placed.
+    if (e.offset + 30 > buf.length || buf.readUInt32LE(e.offset) !== 0x04034b50) return problems;
+    const end = e.offset + 30 + buf.readUInt16LE(e.offset + 26) + buf.readUInt16LE(e.offset + 28) + e.compressedSize;
+    if (end > pos) { pos = end; prev = e; }
+  }
+  if (pos < cdOffset) {
+    problems.push(`the ${cdOffset - pos} bytes between ${prev ? label(prev) : "the start of the file"} and the central ` +
+      "directory belong to no entry it lists, and a streaming reader reads whatever local header they hold");
+  } else if (pos > cdOffset) {
+    problems.push(`${label(prev)} runs ${pos - cdOffset} bytes into the central directory`);
+  }
+  return problems;
+}
+
+/**
+ * Why an entry's extra-field block gives some reader a different entry, or null.
+ *
+ * 0x7075, Info-ZIP's Unicode Path field, RENAMES the entry for every reader that
+ * honours it: measured on astra-ce's vector wrapped as a bundle, `notes.txt`
+ * carrying one that names `bin/run` came back from this file with zero findings
+ * while `unzip -l` listed it as `bin/run` — a file written over the one the
+ * manifest describes, after it was checked. astra-plugin build never writes
+ * one. A block that does not split into whole fields is refused too: readers
+ * recover from it differently, so one may find a 0x7075 another does not.
+ *
+ * @param {Buffer} extra
+ */
+function extraFieldProblem(extra) {
+  let q = 0;
+  while (q + 4 <= extra.length) {
+    if (extra.readUInt16LE(q) === 0x7075) {
+      return "carries a 0x7075 Unicode Path extra field, which renames the entry for every reader that honours it";
+    }
+    if (extra.readUInt16LE(q) === 0x0001) {
+      return "carries a 0x0001 ZIP64 extended-information field, whose sizes a reader may take in place of the " +
+        "header's while this one does not; astra-plugin build never writes one";
+    }
+    q += 4 + extra.readUInt16LE(q + 2);
+  }
+  return q === extra.length ? null : "has an extra-field block that does not split into whole fields";
+}
+
 /**
  * Every structural check, plus the bundle's own contents for the callers that
  * need them.
@@ -163,6 +360,8 @@ export function inspectBundle(buf, expected, limits) {
   if (totalUncompressed > limits.max_extract_bytes) {
     err("E_BUNDLE_TOO_LARGE_EXTRACTED",
       `${totalUncompressed} bytes uncompressed, over the daemon's cap of ${limits.max_extract_bytes}`);
+    // Refused already, and every entry is inflated below: stop before that does.
+    return done();
   }
 
   // Path shape and entry kind, before anything is read.
@@ -240,6 +439,18 @@ export function inspectBundle(buf, expected, limits) {
     }
   }
 
+  // Every entry, read once, before anything is believed about any of them —
+  // including the ones no check below opens. See `readEntryOneWay`.
+  const read = new Map();
+  for (const e of entries) {
+    const { bytes, problems } = readEntryOneWay(buf, e);
+    for (const why of problems) err("E_BUNDLE_UNREADABLE", `${JSON.stringify(e.name)}: ${why}`);
+    read.set(e, bytes);
+  }
+  for (const why of tilingProblems(buf, entries, zip.centralDirectoryOffset)) {
+    err("E_BUNDLE_UNREADABLE", `the archive's layout: ${why}`);
+  }
+
   const manifestEntry = entries.find((e) => e.name === "MANIFEST.json");
   if (!manifestEntry) {
     err("E_MANIFEST_MISSING", "MANIFEST.json is not in the archive; this is not a v2 bundle");
@@ -254,7 +465,7 @@ export function inspectBundle(buf, expected, limits) {
 
   // Two independent readings of the same entry, compared.
   //
-  // `readEntry` follows the CENTRAL DIRECTORY's offset for MANIFEST.json.
+  // The reading above follows the CENTRAL DIRECTORY's offset for MANIFEST.json.
   // `manifestBytesFromLocalHeader` starts at byte zero and reads the local file
   // header, which is what the daemon does. On an honest archive these are the
   // same bytes. On a crafted one they need not be: the central directory is
@@ -262,12 +473,7 @@ export function inspectBundle(buf, expected, limits) {
   // it is attached to, so an attacker can point the index at a benign entry
   // while byte zero holds the manifest that will actually be enforced. The
   // registry would then hash, display and approve a manifest no daemon reads.
-  const centralBytes = (() => {
-    try { return readEntry(buf, manifestEntry); } catch (e) {
-      err("E_BUNDLE_UNREADABLE", `MANIFEST.json: ${e.message}`);
-      return null;
-    }
-  })();
+  const centralBytes = read.get(manifestEntry);
   if (centralBytes === null) return done();
 
   let localBytes = null;
@@ -405,13 +611,8 @@ export function inspectBundle(buf, expected, limits) {
       err("E_MANIFEST_MISSING_FILE", `MANIFEST.files lists ${f.path}, which is not in the archive`);
       continue;
     }
-    let data;
-    try {
-      data = readEntry(buf, e);
-    } catch (ex) {
-      err("E_BUNDLE_UNREADABLE", `${f.path}: ${ex.message}`);
-      continue;
-    }
+    const data = read.get(e);
+    if (data === null) continue;
     if (f.size !== undefined && f.size !== data.length) {
       err("E_MANIFEST_SIZE_MISMATCH", `${f.path}: manifest says ${f.size} bytes, archive has ${data.length}`);
     }

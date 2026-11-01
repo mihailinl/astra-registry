@@ -26,9 +26,9 @@ export const S_IFDIR = 0o040000;
 /**
  * Parse the central directory.
  * @param {Buffer} buf whole archive
- * @returns {{entries: {name: string, method: number, crc32: number,
- *            compressedSize: number, size: number, externalAttributes: number,
- *            unixMode: number, offset: number, index: number}[]}}
+ * @returns {{entries: {name: string, rawName: Buffer, flags: number, method: number, dosTime: number, crc32: number,
+ *            compressedSize: number, size: number, extra: Buffer, externalAttributes: number,
+ *            unixMode: number, offset: number, index: number}[], centralDirectoryOffset: number}}
  */
 export function readZip(buf) {
   let eocd = -1;
@@ -57,17 +57,21 @@ export function readZip(buf) {
     entries.push({
       index: i,
       name: buf.toString("utf8", p + 46, p + 46 + nameLen),
+      rawName: buf.subarray(p + 46, p + 46 + nameLen),
+      flags: buf.readUInt16LE(p + 8),
       method: buf.readUInt16LE(p + 10),
+      dosTime: buf.readUInt32LE(p + 12),
       crc32: buf.readUInt32LE(p + 16),
       compressedSize: buf.readUInt32LE(p + 20),
       size: buf.readUInt32LE(p + 24),
+      extra: buf.subarray(p + 46 + nameLen, p + 46 + nameLen + extraLen),
       externalAttributes: external,
       unixMode: (external >>> 16) & 0xffff,
       offset: buf.readUInt32LE(p + 42),
     });
     p += 46 + nameLen + extraLen + commentLen;
   }
-  return { entries };
+  return { entries, centralDirectoryOffset: cdOffset };
 }
 
 /** Read one entry's bytes. Bounded by the declared sizes; never touches disk. */
