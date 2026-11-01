@@ -1,0 +1,36 @@
+{
+  "$comment": "Derived from FluffyTaill/astra-companion-life@v1.2.0. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "companion-life",
+  "version": "1.2.0",
+  "published_at": "2026-11-01T00:54:26Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "FluffyTaill/astra-companion-life",
+    "tag": "v1.2.0",
+    "commit": "3055100b249296244026abe4c7964c5460a74ac5"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/FluffyTaill/astra-companion-life/releases/download/v1.2.0/companion-life-1.2.0-noarch.astraplugin",
+      "filename": "companion-life-1.2.0-noarch.astraplugin",
+      "sha256": "4f70b417589a105be43d13648507106496405d83e39061091e60f0220702305a",
+      "size": 316931
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "tools",
+    "triggers",
+    "ui_contributions"
+  ],
+  "permissions": {
+    "fire_trigger": {
+      "reason": "Plays her pastimes and says her rare words through the Astra commands the plugin page creates."
+    },
+    "send_chat_message": {
+      "reason": "Optional: asks Astra for a short line in her voice now and then (off unless turned on)."
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "$comment": "Derived from FluffyTaill/astra-companion-life@v1.2.0 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "schema": "astra.registry.plugin/1",
+  "id": "companion-life",
+  "name": "Companion Life",
+  "summary": "Your avatar lives a life of her own: needs and a mood that change through the day, pastimes she picks herself, rare words.",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "FluffyTaill/astra-companion-life"
+  },
+  "added_at": "2026-11-01",
+  "description": "Your avatar lives a life of her own: needs and a mood that change through the day, pastimes she picks herself, rare words.",
+  "author": {
+    "name": "Taill"
+  },
+  "icon": "icon.svg",
+  "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "Companion Life",
+      "summary": "Аватар живёт своей жизнью: потребности и настроение меняются в течение дня, она сама находит себе занятия и изредка говорит."
+    }
+  }
+}
