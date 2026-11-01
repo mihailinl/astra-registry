@@ -1,12 +1,13 @@
 {
-  "contract_version": "6.10.0",
-  "source_commit": "0214a28aecf68f240a9e67d55d4a82dcb3616da8",
+  "contract_version": "6.11.0",
+  "source_commit": "f50f07c54cf1cbed80481c51a494493eb4ff6fd6",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
     "SCOPE-7's token file. Generated from the contract and from nothing else; no value here was invented.",
     "People read the contract, tests read this file: the plugins service, the registry (SCOPE-9) and a new client (SCOPE-10) each fail their tests on a value this file does not list for them, and on one it lists for them that they do not handle and that is neither `reserved` nor `retired` (SCOPE-8).",
     "`emitter` and `acceptor` are arrays of party strings from `parties`; §0.8's Callers letters map onto them as C client, P panel, B bot, G guest. `registry` covers the bot and the signer where an entry is not the bot's alone.",
+    "`games-bot` is the games catalogue's `work` and `report` jobs (§4.6; BOT-94), a party apart from `bot`, which is the registry's. A games operation carries its `workflow` file and `job`, which BOT-94 pins the token to, and `token`; a body the catalogue sends or reads with no `schema` member carries its members on the operation as `request_members` or `success_members`, and an answer with no body its status as `success_status`.",
     "A `service-only` entry is outside SCOPE-8's two-way test, and neither the registry's scan nor the client's expects or forbids one, except for the `members` it lists: an entry lists members, with its body's `schema`, only where the contract publishes them from a `service-only` path, and those members alone are inside the test, for the parties the entry names. The rest of that path's body stays outside. Every other `service-only` entry is listed with no members and for no party.",
     "A `service-only` entry says this path is **routed by the plugins service and outside SCOPE-8's two-way test**. It does not say a handler answers it. Unless the entry lists `members`: then the service MUST emit each listed member, and that member alone is inside SCOPE-8's two-way test, for the parties the entry names (since 3.1.0, `health`'s `accepts.reports`, the first `service-only` entry that obliges a body; minice-e4, 2026-09-27).",
     "A member's requiredness is `true`, `false` or `conditional`. `true` is carried by every entry of its kind; `false` is permitted, and **says only that this contract publishes no condition on it, never that none exists**; `conditional` is carried exactly under the condition the member's `when` states, and **a member that is `conditional` and states no `when`, or states a `when` a reader cannot evaluate, makes the file malformed: a reader MUST refuse it, or refuse every entry of that schema, and MUST NOT read the member as unconditioned** — reading it as unconditioned is the looser direction, and the looser direction is the one this field exists to close.",
@@ -25,7 +26,8 @@
     "guest",
     "service",
     "registry",
-    "author-ci"
+    "author-ci",
+    "games-bot"
   ],
   "states": [
     "live",
@@ -219,7 +221,8 @@
         "panel",
         "bot",
         "guest",
-        "author-ci"
+        "author-ci",
+        "games-bot"
       ],
       "state": "live",
       "source": "§0.8, the refusal-token table",
@@ -241,7 +244,8 @@
         "panel",
         "bot",
         "guest",
-        "author-ci"
+        "author-ci",
+        "games-bot"
       ],
       "state": "live",
       "source": "§0.8, the refusal-token table",
@@ -262,7 +266,8 @@
         "client",
         "panel",
         "bot",
-        "author-ci"
+        "author-ci",
+        "games-bot"
       ],
       "state": "live",
       "source": "§0.8, the refusal-token table",
@@ -517,7 +522,8 @@
       ],
       "acceptor": [
         "bot",
-        "author-ci"
+        "author-ci",
+        "games-bot"
       ],
       "state": "live",
       "source": "§0.8, the refusal-token table",
@@ -536,7 +542,8 @@
       ],
       "acceptor": [
         "bot",
-        "author-ci"
+        "author-ci",
+        "games-bot"
       ],
       "state": "live",
       "source": "§0.8, the refusal-token table",
@@ -554,7 +561,8 @@
         "service"
       ],
       "acceptor": [
-        "bot"
+        "bot",
+        "games-bot"
       ],
       "state": "live",
       "source": "§0.8, the refusal-token table",
@@ -573,7 +581,8 @@
       ],
       "acceptor": [
         "bot",
-        "panel"
+        "panel",
+        "games-bot"
       ],
       "state": "live",
       "source": "§0.8, the refusal-token table",
@@ -1965,6 +1974,51 @@
       ]
     },
     {
+      "id": "list:games_act_outcomes",
+      "kind": "closed_list",
+      "name": "games_act_outcomes",
+      "values": [
+        "applied",
+        "refused"
+      ],
+      "emitter": [
+        "games-bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:games_accept_results",
+      "kind": "closed_list",
+      "name": "games_accept_results",
+      "values": [
+        "listed",
+        "prerelease",
+        "held",
+        "refused",
+        "skipped"
+      ],
+      "emitter": [
+        "games-bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
       "id": "list:event_outcomes",
       "kind": "closed_list",
       "name": "event_outcomes",
@@ -2404,6 +2458,167 @@
         "SCOPE-7",
         "SCOPE-8",
         "DEC-4"
+      ]
+    },
+    {
+      "id": "schema:astra.games.ingest-result/1",
+      "kind": "schema",
+      "name": "astra.games.ingest-result/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "lease_id",
+          "required": true
+        },
+        {
+          "name": "candidate",
+          "required": true,
+          "of": [
+            "schema",
+            "request",
+            "verdict",
+            "findings",
+            "findings_total",
+            "flags",
+            "ingested_at",
+            "parts",
+            "entry"
+          ]
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "games-bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "source": "§4.6, the request and success bodies",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.games.leases/1",
+      "kind": "schema",
+      "name": "astra.games.leases/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "items",
+          "required": true,
+          "of": [
+            "lease_id",
+            "repo_id",
+            "tag",
+            "binding_token_sha256",
+            "confirmed"
+          ]
+        },
+        {
+          "name": "poll",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "games-bot"
+      ],
+      "source": "§4.6, the request and success bodies",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.games.sign-result/1",
+      "kind": "schema",
+      "name": "astra.games.sign-result/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "run_id",
+          "required": true
+        },
+        {
+          "name": "data_sha",
+          "required": true
+        },
+        {
+          "name": "issued_at",
+          "required": true
+        },
+        {
+          "name": "key_id",
+          "required": true
+        },
+        {
+          "name": "accepted",
+          "required": true,
+          "of": [
+            "request",
+            "result",
+            "reason"
+          ]
+        },
+        {
+          "name": "acts",
+          "required": true,
+          "of": [
+            "ref",
+            "outcome",
+            "seq",
+            "problems"
+          ]
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "games-bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "source": "§4.6, the request and success bodies",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.games.work/1",
+      "kind": "schema",
+      "name": "astra.games.work/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "acts",
+          "required": true
+        },
+        {
+          "name": "health",
+          "required": false
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "games-bot"
+      ],
+      "source": "§4.6, the request and success bodies",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
       ]
     },
     {
@@ -5757,6 +5972,205 @@
       ]
     },
     {
+      "id": "operation:games:games-lease",
+      "kind": "operation",
+      "name": "games lease",
+      "method": "POST",
+      "path": "bot/games/leases",
+      "path_base": "the service API base (§4.6)",
+      "workflow": "ingest.yml",
+      "job": "work",
+      "token": "games (BOT-94)",
+      "request_schema": null,
+      "success_schema": "astra.games.leases/1",
+      "request_members": [
+        {
+          "name": "run_id",
+          "required": true
+        },
+        {
+          "name": "run_attempt",
+          "required": true
+        },
+        {
+          "name": "max",
+          "required": true
+        }
+      ],
+      "emitter": [
+        "games-bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§4.6",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "BOT-94"
+      ]
+    },
+    {
+      "id": "operation:games:games-register",
+      "kind": "operation",
+      "name": "games register",
+      "method": "POST",
+      "path": "bot/games/releases",
+      "path_base": "the service API base (§4.6)",
+      "workflow": "ingest.yml",
+      "job": "work",
+      "token": "games (BOT-94)",
+      "request_schema": null,
+      "success_schema": null,
+      "request_members": [
+        {
+          "name": "run_id",
+          "required": true
+        },
+        {
+          "name": "found",
+          "required": true,
+          "of": [
+            "repo_id",
+            "tag"
+          ]
+        }
+      ],
+      "success_members": [
+        {
+          "name": "created",
+          "required": true,
+          "of": [
+            "lease_id",
+            "repo_id",
+            "tag",
+            "binding_token_sha256",
+            "confirmed"
+          ]
+        }
+      ],
+      "emitter": [
+        "games-bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§4.6",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "BOT-94"
+      ]
+    },
+    {
+      "id": "operation:games:games-ingest-result",
+      "kind": "operation",
+      "name": "games ingest result",
+      "method": "POST",
+      "path": "bot/games/ingest-results",
+      "path_base": "the service API base (§4.6)",
+      "workflow": "ingest.yml",
+      "job": "report",
+      "token": "games (BOT-94)",
+      "request_schema": "astra.games.ingest-result/1",
+      "success_schema": null,
+      "success_status": 204,
+      "emitter": [
+        "games-bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§4.6",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "BOT-94"
+      ]
+    },
+    {
+      "id": "operation:games:games-work",
+      "kind": "operation",
+      "name": "games work",
+      "method": "GET",
+      "path": "bot/games/work",
+      "path_base": "the service API base (§4.6)",
+      "workflow": "sign.yml",
+      "job": "work",
+      "token": "games (BOT-94)",
+      "request_schema": null,
+      "success_schema": "astra.games.work/1",
+      "emitter": [
+        "games-bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§4.6",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "BOT-94"
+      ]
+    },
+    {
+      "id": "operation:games:games-sign-result",
+      "kind": "operation",
+      "name": "games sign result",
+      "method": "POST",
+      "path": "bot/games/sign-results",
+      "path_base": "the service API base (§4.6)",
+      "workflow": "sign.yml",
+      "job": "report",
+      "token": "games (BOT-94)",
+      "request_schema": "astra.games.sign-result/1",
+      "success_schema": null,
+      "success_status": 204,
+      "emitter": [
+        "games-bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§4.6",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "BOT-94"
+      ]
+    },
+    {
+      "id": "operation:games:games-signed-wake",
+      "kind": "operation",
+      "name": "games signed wake",
+      "method": "POST",
+      "path": "games/signed-wake",
+      "path_base": "the service API base (§4.6)",
+      "workflow": "sign.yml",
+      "job": "report",
+      "token": "none",
+      "request_schema": null,
+      "success_schema": null,
+      "success_status": 202,
+      "emitter": [
+        "games-bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§4.6",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
       "id": "audience:author",
       "kind": "audience",
       "name": "author",
@@ -5815,6 +6229,24 @@
       "source": "ID-34",
       "requirements": [
         "ID-34",
+        "SCOPE-7"
+      ]
+    },
+    {
+      "id": "audience:games",
+      "kind": "audience",
+      "name": "games",
+      "value": "https://api.minice.ai/plugins/v1/games",
+      "emitter": [
+        "games-bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "BOT-94",
+      "requirements": [
+        "BOT-94",
         "SCOPE-7"
       ]
     },

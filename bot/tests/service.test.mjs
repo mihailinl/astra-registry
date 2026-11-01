@@ -887,11 +887,25 @@ test("the file's membered entries are four buckets, none of which may empty", ()
   // file names this repository as its acceptor, but nothing here reads it
   // yet; registry plan SERVE-39's served-set comparison will, and the entry
   // leaves this bucket in the change that makes it do so.
+  //
+  // Moved at contract 6.11.0, from 117 over 33, by exactly the games
+  // catalogue's four bodies (§4.6): 12 top-level members over four entries,
+  // `astra.games.leases/1` (`items`, `poll`), `astra.games.ingest-result/1`
+  // (`lease_id`, `candidate`), `astra.games.work/1` (`acts`, and `health`,
+  // `false` because it may be null) and `astra.games.sign-result/1`
+  // (`run_id`, `data_sha`, `issued_at`, `key_id`, `accepted`, `acts`). Read on
+  // arrival: they travel between the plugins service and the party
+  // `games-bot`, the games catalogue's `work` and `report` jobs in
+  // mihailinl/astra-games-catalogue, and nothing in this repository composes
+  // or reads one, so they belong in this bucket.
   assert.deepEqual(
     { entries: unreadEntries.length, members: countMembers(unreadEntries) },
-    { entries: 33, members: 117 },
+    { entries: 37, members: 129 },
     `${countMembers(unreadEntries)} published members over ${unreadEntries.length} entries are outside every ` +
-    "comparison in this suite; there were 117 over 33 at contract 6.0.0, whose catalogue host's witness " +
+    "comparison in this suite; there were 129 over 37 at contract 6.11.0, whose four games catalogue bodies " +
+    "`astra.games.{leases,ingest-result,work,sign-result}/1` (§4.6; 2, 2, 2 and 6 members; they travel between the " +
+    "plugins service and `games-bot`, and nothing here composes or reads them) added 12 over 4; " +
+    "117 over 33 at contract 6.0.0, whose catalogue host's witness " +
     "`astra.plugins.served/1` (Table 5-N: `schema`, `index`, `stats`, `at`, each `true`; the plugins service emits it, " +
     "the registry is its acceptor, and nothing here reads it until served-set meets registry plan SERVE-39) added 4 over 1; " +
     "113 over 32 at contract 5.7.0, whose success body of `catalogue.ticket`, " +
