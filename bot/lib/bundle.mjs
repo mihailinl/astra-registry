@@ -144,7 +144,7 @@ export function permissionsHash(permissions) {
  *
  * @param {Buffer} buf the whole .astraplugin
  * @param {{name: string, flags: number, method: number, crc32: number,
- *          compressedSize: number, size: number, offset: number}} e a `readZip` entry
+ *          compressedSize: number, size: number, extra: Buffer, offset: number}} e a `readZip` entry
  * @returns {{bytes: Buffer|null, problems: string[]}} `bytes` is null when no
  *   reading bounded by the declared sizes exists
  */
@@ -158,7 +158,12 @@ export function readEntryOneWay(buf, e) {
     problems.push("it sets general-purpose bit 3 (sizes in a trailing data descriptor). astra-plugin build never " +
       "does, and it is what lets a streaming reader and a central-directory reader disagree on where the entry ends");
   }
-  const start = e.offset + 30 + buf.readUInt16LE(e.offset + 26) + buf.readUInt16LE(e.offset + 28);
+  const localExtraAt = e.offset + 30 + buf.readUInt16LE(e.offset + 26);
+  const start = localExtraAt + buf.readUInt16LE(e.offset + 28);
+  for (const [where, extra] of [["central", e.extra], ["local", buf.subarray(localExtraAt, start)]]) {
+    const why = extraFieldProblem(extra);
+    if (why) problems.push(`its ${where} header ${why}`);
+  }
   if (start + e.compressedSize > buf.length) return fail("its data runs past the end of the file");
   const raw = buf.subarray(start, start + e.compressedSize);
   let bytes;
@@ -194,6 +199,30 @@ export function readEntryOneWay(buf, e) {
       e.crc32.toString(16).padStart(8, "0"));
   }
   return { bytes, problems };
+}
+
+/**
+ * Why an entry's extra-field block gives some reader a different entry, or null.
+ *
+ * 0x7075, Info-ZIP's Unicode Path field, RENAMES the entry for every reader that
+ * honours it: measured on astra-ce's vector wrapped as a bundle, `notes.txt`
+ * carrying one that names `bin/run` came back from this file with zero findings
+ * while `unzip -l` listed it as `bin/run` — a file written over the one the
+ * manifest describes, after it was checked. astra-plugin build never writes
+ * one. A block that does not split into whole fields is refused too: readers
+ * recover from it differently, so one may find a 0x7075 another does not.
+ *
+ * @param {Buffer} extra
+ */
+function extraFieldProblem(extra) {
+  let q = 0;
+  while (q + 4 <= extra.length) {
+    if (extra.readUInt16LE(q) === 0x7075) {
+      return "carries a 0x7075 Unicode Path extra field, which renames the entry for every reader that honours it";
+    }
+    q += 4 + extra.readUInt16LE(q + 2);
+  }
+  return q === extra.length ? null : "has an extra-field block that does not split into whole fields";
 }
 
 /**

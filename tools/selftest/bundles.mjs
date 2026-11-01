@@ -211,6 +211,46 @@ export async function run() {
       assert(f[0].message.includes(pin.says), `the finding does not say ${JSON.stringify(pin.says)}: ${f[0].message}`);
     });
   }
+  await test("a 0x7075 Unicode Path field renaming notes.txt to bin/run is refused, in both headers", () => {
+    // sec-probe's upath.zip, as a bundle: `unzip -l` lists this entry as
+    // bin/run, so a reader honouring the field writes it over the bin/run the
+    // manifest describes. Both headers carry it, as in the vector.
+    const z = cloakBundle([{ ...storedEntry("notes.txt", EVIL), extra: unicodePath("notes.txt", "bin/run") }]);
+    const f = checkBundle(z, FIXTURE_LISTING, LIMITS).filter((x) => x.level === "error");
+    assertEqual(f.map((x) => x.code).join(", "), "E_BUNDLE_UNREADABLE, E_BUNDLE_UNREADABLE", "the finding set");
+    for (const where of ["central", "local"]) {
+      assert(f.some((x) => x.message.includes(`its ${where} header carries a 0x7075`)), `the ${where} header's field was not named`);
+    }
+  });
+  const EXTRA_PINS = [
+    {
+      rule: "0x7075 in the central header only", says: "central header carries a 0x7075",
+      entry: () => ({ ...storedEntry("notes.txt", EVIL), extra: unicodePath("notes.txt", "bin/run"), local: { extra: Buffer.alloc(0) } }),
+    },
+    {
+      rule: "0x7075 in the local header only", says: "local header carries a 0x7075",
+      entry: () => ({ ...storedEntry("notes.txt", EVIL), local: { extra: unicodePath("notes.txt", "bin/run") } }),
+    },
+    {
+      // A field claiming 255 bytes in a 4-byte block: where it ends is up to the reader.
+      rule: "an extra block that does not split into fields", says: "does not split into whole fields",
+      entry: () => ({ ...storedEntry("notes.txt", EVIL), extra: Buffer.concat([u16(0x5455), u16(255)]), local: { extra: Buffer.alloc(0) } }),
+    },
+  ];
+  for (const pin of EXTRA_PINS) {
+    await test(`one reading: ${pin.rule} — refused, and by that rule alone`, () => {
+      const f = checkBundle(cloakBundle([pin.entry()]), FIXTURE_LISTING, LIMITS).filter((x) => x.level === "error");
+      assertEqual(f.length, 1,
+        `expected exactly one finding, got:\n${f.map((x) => `${x.code}: ${x.message}`).join("\n") || "nothing"}`);
+      assertEqual(f[0].code, "E_BUNDLE_UNREADABLE", "the code");
+      assert(f[0].message.includes(pin.says), `the finding does not say ${JSON.stringify(pin.says)}: ${f[0].message}`);
+    });
+  }
+  await test("one reading: an ordinary extra field (0x5455, a timestamp) in both headers is not refused", () => {
+    const stamp = Buffer.concat([u16(0x5455), u16(5), Buffer.from([1]), u32(0)]);
+    const f = checkBundle(cloakBundle([{ ...storedEntry("notes.txt", EVIL), extra: stamp }]), FIXTURE_LISTING, LIMITS);
+    assert(f.length === 0, f.map((x) => `${x.code} ${x.message}`).join("\n"));
+  });
   await test("one reading: a bundle over the extraction cap is refused before any entry is inflated", () => {
     // Inflating is bounded by each entry's DECLARED size, so the cap on the sum
     // of those is what bounds the reading; past it nothing is read. Were this
@@ -529,6 +569,14 @@ function storedEntry(name, data, mode = 0o644) {
 function deflatedEntry(name, data, over = {}) {
   const body = zlib.deflateRawSync(data);
   return { name, mode: 0o644, method: 8, crc: crc32(data), csz: body.length, usz: data.length, body, content: data, ...over };
+}
+
+const EVIL = Buffer.from("#!/bin/sh\necho pwned\n");
+
+/** Info-ZIP's Unicode Path extra field (0x7075): version 1, CRC-32 of the raw name, the name to use instead. */
+function unicodePath(raw, target) {
+  const body = Buffer.concat([Buffer.from([1]), u32(crc32(Buffer.from(raw))), Buffer.from(target)]);
+  return Buffer.concat([u16(0x7075), u16(body.length), body]);
 }
 
 /** A deflated a.txt with bit 3 and a data descriptor, every size right: bit 3 is all that is wrong. */
