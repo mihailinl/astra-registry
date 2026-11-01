@@ -1,0 +1,42 @@
+{
+  "$comment": "Derived from FluffyTaill/astra-companion-life@v1.5.0. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "companion-life",
+  "version": "1.5.0",
+  "published_at": "2026-11-01T13:38:45Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "FluffyTaill/astra-companion-life",
+    "tag": "v1.5.0",
+    "commit": "d60ab2e26f2f5dd141c09894b53b0ea210b6f7c4"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/FluffyTaill/astra-companion-life/releases/download/v1.5.0/companion-life-1.5.0-noarch.astraplugin",
+      "filename": "companion-life-1.5.0-noarch.astraplugin",
+      "sha256": "484bf4544231945761b8163a6a0cbc7112e376348792b71f4863c2c83c132c73",
+      "size": 347631
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "tools",
+    "triggers",
+    "ui_contributions"
+  ],
+  "permissions": {
+    "fire_trigger": {
+      "reason": "Plays her pastimes and says her rare words through the Astra commands the plugin page creates."
+    },
+    "send_chat_message": {
+      "reason": "Optional: asks Astra for a short line in her voice now and then (off unless turned on)."
+    },
+    "set_variable": {
+      "reason": "Publishes her mood, hunger, health, friendship level and coins as Astra variables (companion_*) for your commands and other plugins.",
+      "scopes": [
+        "session"
+      ]
+    }
+  }
+}

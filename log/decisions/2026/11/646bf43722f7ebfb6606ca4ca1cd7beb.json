@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:484bf4544231945761b8163a6a0cbc7112e376348792b71f4863c2c83c132c73"
+  ],
+  "commit": "d60ab2e26f2f5dd141c09894b53b0ea210b6f7c4",
+  "decided_at": "2026-11-01T13:39:50Z",
+  "decision_id": "646bf43722f7ebfb6606ca4ca1cd7beb",
+  "fingerprint": "c32533fbced5bc82",
+  "plugin_id": "companion-life",
+  "reasons": [
+    "P_PUBLISHED",
+    "P_REVIEW_PRIORITY"
+  ],
+  "repo": "FluffyTaill/astra-companion-life",
+  "repository_id": "1441372074",
+  "repository_owner_id": "195410205",
+  "run": "41312224007/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "3e93c5be-170e-48a9-a288-9a8b629fd66f",
+  "tag": "v1.5.0",
+  "trigger": "ci",
+  "version": "1.5.0"
+}
