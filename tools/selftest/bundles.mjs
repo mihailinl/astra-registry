@@ -254,6 +254,21 @@ export async function run() {
     const z = cloakBundle([deflatedEntry("a.txt", TEXT, { usz: LIMITS.max_extract_bytes + 1 })]);
     assertEqual(errorCodes(z, FIXTURE_LISTING).join(", "), "E_BUNDLE_TOO_LARGE_EXTRACTED", "the finding set");
   });
+  // astra-ce's vectors themselves, byte for byte (sec-probe and sec-probe2,
+  // 2026-10-31), pinned by sha256 and carried as bundles. Each draws exactly
+  // the objections named, so losing any one of them is red here as well.
+  for (const v of ASTRA_CE_VECTORS) {
+    await test(`astra-ce's ${v.file}, byte for byte inside a bundle, is refused: ${v.shape}`, () => {
+      const raw = Buffer.from(v.base64, "base64");
+      assertEqual(crypto.createHash("sha256").update(raw).digest("hex"), v.sha256, "the vector's bytes");
+      const f = checkBundle(wrapAsBundle(raw), FIXTURE_LISTING, LIMITS).filter((x) => x.level === "error");
+      assertEqual(f.map((x) => x.code).join(", "), v.says.map(() => "E_BUNDLE_UNREADABLE").join(", "),
+        `the finding set:\n${f.map((x) => `${x.code}: ${x.message}`).join("\n")}`);
+      for (const says of v.says) {
+        assert(f.some((x) => x.message.includes(says)), `no finding says ${JSON.stringify(says)}`);
+      }
+    });
+  }
   // The entries must lie end to end from byte zero to the central directory.
   // Each fixture breaks that in one place and nowhere else.
   const TILING_PINS = [
@@ -668,6 +683,45 @@ function deflatedEntry(name, data, over = {}) {
 
 const EVIL = Buffer.from("#!/bin/sh\necho pwned\n");
 
+/**
+ * astra-ce's three ZIP vectors, as base64 of the exact files measured on
+ * 2026-10-31 under /mnt/data/claude-scratch/astra-zip, and what each draws here.
+ */
+const ASTRA_CE_VECTORS = [
+  {
+    file: "sec-probe/slack.zip", sha256: "71511e42a17bb35af2db71c72f2a45fe95754ce73ddfcda417968a77a92fe6f3",
+    shape: "deflate slack behind bit 3 hides a readme.txt that swallows launch.sh",
+    says: [`"a.txt": it sets general-purpose bit 3`, `"a.txt": its deflate stream ends after`],
+    base64:
+      "UEsDBBQACAAIAAAAIQAAAAAAAAAAAAAAAAAFAAAAYS50eHTLSM3JyVcozy/KSeECAFBLBwgtOwivDgAAAAwAAABQSwMEFAAAAAAA" +
+      "AAAhAKugAuE8AAAAPAAAAAoAAAByZWFkbWUudHh0UEsDBBQAAAAAAAAAIQCiurakFQAAABUAAAAJAAAAbGF1bmNoLnNoIyEvYmlu" +
+      "L3NoCmVjaG8gcHduZWQKUEsBAhQAFAAIAAgAAAAhAC07CK9GAAAADAAAAAUAAAAAAAAAAAAAAAAAAAAAAGEudHh0UEsBAhQAFAAA" +
+      "AAAAAAAhAKK6tqQVAAAAFQAAAAkAAAAAAAAAAAAAAAAAaQAAAGxhdW5jaC5zaFBLBQYAAAAAAgACAGoAAAClAAAAAAA=",
+  },
+  {
+    file: "sec-probe/upath.zip", sha256: "4649643cdf69d4e2f650209d73b49c190ea8d9a7d80888d5c1c174af093fc59f",
+    shape: "a 0x7075 field renames notes.txt to launch.sh",
+    says: [`"notes.txt": its central header carries a 0x7075`, `"notes.txt": its local header carries a 0x7075`],
+    base64:
+      "UEsDBBQAAAAAAAAAIQAVaixCBwAAAAcAAAAJABIAbm90ZXMudHh0dXAOAAEbUpQmbGF1bmNoLnNocGF5bG9hZFBLAQIUABQAAAAA" +
+      "AAAAIQAVaixCBwAAAAcAAAAJABIAAAAAAAAAAAAAAAAAAABub3Rlcy50eHR1cA4AARtSlCZsYXVuY2guc2hQSwUGAAAAAAEAAQBJ" +
+      "AAAAQAAAAAAA",
+  },
+  {
+    // A stored entry under bit 3 has no end a streaming reader can compute, so
+    // it searches for the descriptor whose CRC and size match: the one astra-ce
+    // put after launch.sh, which makes notes.txt swallow launch.sh whole.
+    file: "sec-probe2/stored-dd.zip", sha256: "3841c473f7ade57d1efca72aa33847d9508773df2147797a8bdb873828f691fb",
+    shape: "a stored bit-3 entry whose descriptor sits after the next entry",
+    says: [`"notes.txt": it sets general-purpose bit 3`, `the 16 bytes between "launch.sh" and the central directory`],
+    base64:
+      "UEsDBBQACAAAAAAAIVAAAAAAAAAAAAAAAAAJAAAAbm90ZXMudHh0aGFybWxlc3Mgbm90ZXMKUEsDBBQAAAAAAAAAIVCiurakFQAA" +
+      "ABUAAAAJAAAAbGF1bmNoLnNoIyEvYmluL3NoCmVjaG8gcHduZWQKUEsHCMXt08xLAAAASwAAAFBLAQIUABQACAAAAAAAIVBcqLUJ" +
+      "DwAAAA8AAAAJAAAAAAAAAAAAAAAAAAAAAABub3Rlcy50eHRQSwECFAAUAAAAAAAAACFQorq2pBUAAAAVAAAACQAAAAAAAAAAAAAA" +
+      "AAA2AAAAbGF1bmNoLnNoUEsFBgAAAAACAAIAbgAAAIIAAAAAAA==",
+  },
+];
+
 /** Info-ZIP's Unicode Path extra field (0x7075): version 1, CRC-32 of the raw name, the name to use instead. */
 function unicodePath(raw, target) {
   const body = Buffer.concat([Buffer.from([1]), u32(crc32(Buffer.from(raw))), Buffer.from(target)]);
@@ -709,23 +763,56 @@ function slackEntry({ bit3 }) {
  * returns entries to write before MANIFEST.json.
  */
 function cloakBundle(rest, { lead = () => [] } = {}) {
-  const entries = [storedEntry("bin/run", Buffer.from("#!/usr/bin/env node\nprocess.exit(0);\n"), 0o755), ...rest];
-  const files = entries.filter((e) => !e.hidden).map((e) => ({
+  const entries = [runEntry(), ...rest];
+  const manifestEntry = manifestEntryFor(entries.filter((e) => !e.hidden));
+  return assembleZip([...lead(manifestEntry), manifestEntry, ...entries]);
+}
+
+const runEntry = () => storedEntry("bin/run", Buffer.from("#!/usr/bin/env node\nprocess.exit(0);\n"), 0o755);
+
+/** A stored MANIFEST.json listing each of `entries` by its `content`. */
+function manifestEntryFor(entries) {
+  const files = entries.map((e) => ({
     path: e.name,
     sha256: crypto.createHash("sha256").update(e.content).digest("hex"),
     size: e.content.length,
     mode: e.mode.toString(8).padStart(4, "0"),
   })).sort((a, b) => (a.path < b.path ? -1 : 1));
-  const manifest = Buffer.from(stableStringify({
+  return storedEntry("MANIFEST.json", Buffer.from(stableStringify({
     schema: "astra.bundle/2",
     plugin_id: FIXTURE_LISTING.id,
     version: FIXTURE_LISTING.version,
     platform: { os: "linux", arch: "x86_64" },
     entry: { command: "./bin/run", args: [] },
     files,
-  }));
-  const manifestEntry = storedEntry("MANIFEST.json", manifest);
-  return assembleZip([...lead(manifestEntry), manifestEntry, ...entries]);
+  })));
+}
+
+/**
+ * A raw ZIP carried as a bundle, its own bytes untouched: MANIFEST.json and a
+ * stored bin/run in front, then the vector's local records byte for byte, then
+ * our central records and the vector's, its offsets moved by what went in
+ * front. The manifest lists the vector's central-directory reading, so every
+ * objection left is about the vector and none about the wrapping.
+ */
+function wrapAsBundle(raw) {
+  const vector = readZip(raw);
+  const listed = vector.entries.map((e) => ({ name: e.name, mode: 0o644, content: readEntry(raw, e) }));
+  const run = runEntry();
+  const front = assembleZip([manifestEntryFor([run, ...listed]), run]);
+  const frontCd = readZip(front).centralDirectoryOffset;
+  const records = [front.subarray(frontCd, front.length - 22)];
+  let p = vector.centralDirectoryOffset;
+  for (let i = 0; i < vector.entries.length; i++) {
+    const record = Buffer.from(raw.subarray(p, p + 46 + raw.readUInt16LE(p + 28) + raw.readUInt16LE(p + 30) + raw.readUInt16LE(p + 32)));
+    record.writeUInt32LE(record.readUInt32LE(42) + frontCd, 42);
+    records.push(record);
+    p += record.length;
+  }
+  const locals = Buffer.concat([front.subarray(0, frontCd), raw.subarray(0, vector.centralDirectoryOffset)]);
+  const cd = Buffer.concat(records);
+  const n = 2 + vector.entries.length;
+  return Buffer.concat([locals, cd, u32(0x06054b50), u16(0), u16(0), u16(n), u16(n), u32(cd.length), u32(locals.length), u16(0)]);
 }
 
 /**
