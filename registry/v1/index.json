@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "yt4lDl12N0RTT1d1ebluh4ubX0UUA4BvU3vw0jeZkae17DBGhwFWPAZZQgGwhsUW/fngNwOJDtuSj7gKq/NoCQ=="
+      "sig": "3QL9RvYmdhGQYq3OfSreRiPIug/UucvqsxUf/yUhGkg6PN8Lp7ZEUDQ5a8GhdeEW2PelG/cL304H0qmdxp2xBw=="
     }
   ],
   "signed": {
-    "expires_at": "2026-11-30T14:29:44Z",
-    "issued_at": "2026-10-31T14:29:44Z",
+    "expires_at": "2026-12-01T00:59:27Z",
+    "issued_at": "2026-11-01T00:59:27Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
@@ -805,6 +805,77 @@
         "stars": 0,
         "updated_at": "2026-08-19T14:31:19Z",
         "version": "0.1.7"
+      },
+      {
+        "added_at": "2026-11-01",
+        "author": "Taill",
+        "capabilities": [
+          "tools",
+          "triggers",
+          "ui_contributions"
+        ],
+        "description": "Your avatar lives a life of her own: needs and a mood that change through the day, pastimes she picks herself, rare words.",
+        "download_url": "https://github.com/FluffyTaill/astra-companion-life/releases/download/v1.2.0/companion-life-1.2.0-noarch.astraplugin",
+        "downloads": 0,
+        "i18n": {
+          "ru": {
+            "description": "Аватар живёт своей жизнью: потребности и настроение меняются в течение дня, она сама находит себе занятия и изредка говорит.",
+            "name": "Companion Life"
+          }
+        },
+        "icon_url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PGRlZnM+PGxpbmVhckdyYWRpZW50IGlkPSJnIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjZmY4ZmM4Ii8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjOWI3YmZmIi8+PC9saW5lYXJHcmFkaWVudD48L2RlZnM+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTQiIGZpbGw9InVybCgjZykiLz48cGF0aCBkPSJNMzIgNTBzLTE1LTktMTUtMjFhOC41IDguNSAwIDAgMSAxNS01LjVBOC41IDguNSAwIDAgMSA0NyAyOWMwIDEyLTE1IDIxLTE1IDIxeiIgZmlsbD0iI2ZmZiIvPjxwYXRoIGQ9Ik0yMiAzMWg1bDMtNSA0IDkgMy02aDUiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmNmZhZSIgc3Ryb2tlLXdpZHRoPSIzIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz48L3N2Zz4K",
+        "id": "companion-life",
+        "license": "MIT",
+        "name": "Companion Life",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/FluffyTaill/astra-companion-life/releases/download/v1.2.0/companion-life-1.2.0-noarch.astraplugin",
+          "noarch": "https://github.com/FluffyTaill/astra-companion-life/releases/download/v1.2.0/companion-life-1.2.0-noarch.astraplugin",
+          "windows-x64": "https://github.com/FluffyTaill/astra-companion-life/releases/download/v1.2.0/companion-life-1.2.0-noarch.astraplugin"
+        },
+        "readme": "# Companion Life — плагин для Astra\n\nЧтобы аватар жил своей жизнью между тем, что с ним происходит.\n\n## Как это работает\n\nУ неё четыре потребности — они меняются сами и от того, что происходит:\n\n| | падает | растёт |\n|---|---|---|\n| бодрость | днём медленно, после 22:00 быстрее | в дрёме; ночь без тебя — выспалась |\n| скука | музыка, курсор на ней, задачи Astra, её собственные занятия | пока ничего не происходит |\n| общительность | пока тебя нет | пока ты рядом, от поглаживаний, разговоров с Astra |\n| радость | от одиночества | от поглаживаний, музыки, твоего возвращения |\n\nИз них настроение — **сонная, одиноко, скучает, радостная** или **спокойная** — и раз в несколько минут (когда скучно —\nчаще, когда сонная — реже) она сама находит себе занятие под настроение и время: напевает, сидит в телефоне,\nзадумывается, выглядывает, кружится, смущается, перекусывает (12–14, 16–17, 20–21 — по разу), зевает и дремлет, пока\nтебя нет (просыпается, как только тронешь мышь или клавиатуру); когда одиноко — грустит и зовёт тебя. После\nпоглаживания иногда смущается или шлёт сердечко, в игре тихо болеет за тебя, через полтора часа работы без перерыва\nпотягивается и зовёт размяться. Изредка — не чаще раза в 15 минут, только пока ты рядом и не в игре — говорит пару слов\nголосом Astra (выключается отдельно). Потребности хранятся между перезапусками.\n\n### Характер\n\nВесёлая, застенчивая, ленивая, энергичная или цундэрэ — меняет, что она любит делать (застенчивая чаще смущается и\nреже зовёт, ленивая зевает и дремлет, энергичная кружится и быстро скучает), как быстро растут потребности, как часто\nона говорит и какими словами: у каждой ситуации общий набор фраз и фразы её характера. Можно задать, как ей тебя\nзвать — имя появится в её словах.\n\n### Привязанность и дневник\n\nПривязанность растёт день за днём, что вы вместе (около двух пунктов в час рядом, от поглаживаний, разговоров с Astra,\nмини-игр) и чуть падает, если не заходить больше двух дней. Сильно привязанная, она иногда говорит тёплые слова; после\nдолгой разлуки — «ты не заходил три дня». Дневник хранит две недели: сколько ты был за компьютером, сколько раз её\nгладили, сколько она дремала, сколько играла музыка, сколько было игр, задач Astra, мини-игр и часов после полуночи;\nвечером она подводит итог дня вслух.\n\n### Что она замечает\n\n- **Приход:** утром — «доброе утро», после перерыва — «с возвращением», после долгого отсутствия — «где ты пропадал».\n- **Игры:** в игре изредка тихо болеет; после игры дольше 10 минут спрашивает, как прошло, и радуется или подбадривает.\n- **Набор текста:** долго печатаешь — «ого, как быстро»; после долгого набора замер на пару минут — «застрял?».\n- **Поздняя работа:** после полуночи раз в 50 минут мягко зовёт спать, после двух ночи — настойчивее.\n- **Вопросы:** изредка спрашивает, как прошёл день, что слушаешь, о чём мечтаешь (ответить можно в чате Astra).\n- **Мини-игры:** прятки (выглядывает из-под края окна — наведи курсор, пока не спряталась) и «поймай сердечко»\n  (наведи курсор, пока не улетело). Сама предлагает, когда скучает, не чаще раза в час; можно начать с её страницы.\n\n### Её жизнь шире (1.2.0)\n\n- **Голод и непоседливость:** проголодалась — перекусит вне обеда и скажет об этом; засиделась — закружится, выглянет, потянется.\n- **Привычки:** запоминает, когда ты обычно приходишь и ложишься; пришёл позже обычного — «я ждала»; засиделся позже обычного — напомнит.\n- **Даты:** праздники, твой день рождения, «месяц вместе», понедельник и пятница, времена года. Утром — про вчера (поздно сидел, весело было) и её сон.\n- **Погода:** берёт место из настроек погоды Astra; дождь и гроза грустнее, снег радует, есть фразы на погоду.\n- **Твои программы:** узнаёт браузер, код, музыку, видео, рисование, офис, мессенджеры и говорит о них; свои правила — «слово в окне → фраза».\n  Смотришь видео — «смотрим вместе». Долгая игра (2+ часа) — ревнует.\n- **Помидор:** таймер работа/отдых — зовёт на перерыв и обратно.\n- **Забота:** раз в пару часов — попить воды, дать отдых глазам. Цель на день в часах — «половина есть», «готово!». Утром спрашивает план и вечером — как он.\n- **Компьютер:** выключил звук — «тишина…»; громко — «ой, громко!»; садится батарея ноутбука — беспокоится; много окон — предложит прибраться;\n  закончился долгий созвон — «как поговорил?».\n- **Обиды:** долго не замечаешь её — дуется и молчит, пока не погладишь.\n- **Увлечения и желания:** раз в несколько дней новое увлечение (рисование, чтение, пение, танцы, готовка, учёба) меняет её занятия;\n  иногда чего-то хочет (погладить, музыку, поиграть, поболтать) — исполнишь, она рада.\n- **Подарки и достижения:** изредка дарит стишок в шкатулку; 16 достижений; уровни отношений — знакомые, друзья, близкие, лучшие друзья, родные души\n  (нежности — с уровня «близкие»).\n- **Небо по времени суток:** искры утром, светлячки вечером, звёзды ночью — блок в её наборе, аватар перезапускается в тихую минуту.\n- **Голос по настроению:** тише и медленнее, когда сонная или одиноко; бодрее, когда рада (две команды «сказать тихо/бодро» создаёт страница).\n- **Языки:** русский, английский, японский — или как в Astra. **Свои фразы** для любой ситуации. **Экспорт/импорт** настроек (без её памяти).\n- **График** двух недель, **«Не мешать»** на 30 мин–2 ч (и ИИ Astra может включить это сам: инструмент `companion_quiet`;\n  `companion_mood` — как она себя чувствует).\n- **По желанию:** тон твоих сообщений Astra (читает историю чата на этом ПК: похвалил — радуется, грубо — грустит; утром ловит план из твоих слов)\n  и фразы от ИИ Astra (нужно разрешение на чат — есть только у версии из каталога). Обе выключены по умолчанию.\n\n### Тихие часы\n\nНе говорит в тихие часы (по умолчанию 23:00–8:00) и пока какая-нибудь программа, кроме Astra, держит микрофон —\nсозвон, Discord, запись (Windows отмечает это в настройках конфиденциальности). Занятия при этом идут, без слов.\n\n### Любой набор\n\nПлагин ищет состояния по похожим именам (`hello`/`wave`/`greeting`, `texting`/`phone`, `think`/`thinking`…), в том\nчисле внутри длинных имён (`as_mx_wave`), так что подходит любой набор анимаций. Страница показывает, что нашлось.\nНа странице есть «Первые шаги»: команды, набор, характер, имя.\n\nПока она танцует под музыку, работает с окном задачи Astra или сидит на краю окна, плагин ничего не начинает.\n\n## Что нужно\n\n- **Свой набор анимаций у персонажа.** Занятия — это состояния её собственного набора: `texting`, `think`, `yawn`,\n  `stretch`, `eat`, `hello`, `sad`, `shy`, `spin`, `relief`… Чего в наборе нет, она пропускает — страница показывает,\n  что есть. Со встроенным набором занятий почти нет: сделай персонажу свой (например, в Anim Studio). Состояния Anim\n  Studio (`as_lively_*`, `as_peek`, `as_sleep`) тоже идут в дело, если они есть.\n- **Команды Astra** — «Companion Life: занятие», «сказать», «сказать тихо», «сказать бодро». Нажми **Создать команды**\n  на странице плагина и перезапусти Astra. Копия до изменения — `commands.json.before-companion-life`.\n\n## Что читает плагин\n\nТолько время с последнего нажатия, имя активной программы, положение курсора и занят ли микрофон (не сами клавиши и не звук), и строки\nаватар-движка в журнале Astra (музыка, поглаживания, задачи Astra, состояние); громкость, батарею и число окон (без их\nсодержимого). Погода — один запрос раз в полчаса к Open-Meteo с координатами из настроек погоды Astra (выключается\nпереключателем «Погода»). История чата Astra читается только при включённом «тоне сообщений» и только на этом ПК.\nБольше ничего никуда не отправляет.\n\n## Установка\n\nAstra → **Мастерская** → **Разработка** → **Импорт плагина** → выбери файл `.astraplugin` → отметь разрешение →\n**Установить**. Страница: меню **☰** → **Плагины** → **Companion Life**.\n\n## Сборка\n\n    bun install\n    bun run test\n    astra-plugin check . --strict\n    astra-plugin build .\n\n---\n\n# Companion Life — an Astra plugin\n\nYour avatar lives a life of her own between the things that happen to her: four needs (energy, boredom, sociability,\njoy) drift with time and with what happens, give her a mood, and for the mood, the hour and what you are doing she\npicks herself something to do every few minutes from the states of her own animation pack — and now and then says a\nword in Astra's voice. The needs persist across restarts. Since 1.2.0 also: hunger and restlessness, your habits and\ndates, the weather (Open-Meteo, with the location from Astra's weather settings), words about your programs and your own\nrules for them, a tomato timer, water and eye breaks, a daily goal and plan, sulking, hobbies, wishes, gifts, 16\nachievements, five friendship levels, the sky of the hour in her pack, a voice for the mood, Russian/English/Japanese,\nyour own phrases, settings export/import, a two-week chart, \"do not disturb\" (also as AI tools), and — off by default —\nthe tone of your chat messages (read locally) and lines written by Astra's AI (catalog version only). Needs the character's own pack and two Astra commands the\npage creates. Reads only the input idle time, the foreground process, the pointer position and the avatar engine's\nlines in Astra's log; sends nothing anywhere.\n",
+        "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "companion-life-1.2.0-noarch.astraplugin",
+                "sha256": "4f70b417589a105be43d13648507106496405d83e39061091e60f0220702305a",
+                "size": 316931,
+                "url": "https://github.com/FluffyTaill/astra-companion-life/releases/download/v1.2.0/companion-life-1.2.0-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools",
+              "triggers",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "fire_trigger": {
+                "reason": "Plays her pastimes and says her rare words through the Astra commands the plugin page creates."
+              },
+              "send_chat_message": {
+                "reason": "Optional: asks Astra for a short line in her voice now and then (off unless turned on)."
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-11-01T00:54:26Z",
+            "release": {
+              "commit": "3055100b249296244026abe4c7964c5460a74ac5",
+              "kind": "github_release",
+              "repo": "FluffyTaill/astra-companion-life",
+              "tag": "v1.2.0"
+            },
+            "review": "unreviewed",
+            "version": "1.2.0"
+          }
+        ],
+        "repository_url": "https://github.com/FluffyTaill/astra-companion-life",
+        "source": {
+          "kind": "github",
+          "repo": "FluffyTaill/astra-companion-life"
+        },
+        "stars": 0,
+        "updated_at": "2026-11-01T00:54:26Z",
+        "version": "1.2.0"
       },
       {
         "added_at": "2026-09-07",
@@ -4925,6 +4996,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 125
+    "serial": 126
   }
 }
