@@ -46,6 +46,22 @@
 - **Мини-игры:** прятки (выглядывает из-под края окна — наведи курсор, пока не спряталась) и «поймай сердечко»
   (наведи курсор, пока не улетело). Сама предлагает, когда скучает, не чаще раза в час; можно начать с её страницы.
 
+### Её личность (1.3.0)
+
+Вместо одного из пяти характеров — личность целиком, и она одна и та же в её поведении и в чате Astra.
+
+- **Основа:** при первом запуске личность берётся из «ИИ → Личность» Astra (системный промпт: черты — по его словам,
+  сам текст — её история); кнопка **«Взять из Astra»** повторяет это. Пять характеров тоже остались — как заготовки.
+- **Черты (ползунки):** разговорчивость, энергичность, застенчивость, ласковость, вредность, любопытство, терпение.
+  Они меняют, чем она занимается, как быстро устаёт и скучает, как часто говорит и спрашивает, как скоро обижается.
+- **Её день:** жаворонок или сова, любимое время суток и погода; любимые и нелюбимые занятия.
+- **Манера речи:** словечки в конце фраз и как часто, эмодзи, коротко; как она зовёт тебя, когда рада, обычно и когда грустно.
+- **Кто она:** история, что любит и не любит — своими словами.
+- **Реакции:** для поглаживаний, прихода, игр, поздних часов, музыки, работы и обид — нет / обычно / сильно.
+- **В чат Astra:** «Сохранить карточку» пишет карточку персонажа (Character Card V2) в `Документы\Companion Life`;
+  импортируй её в «ИИ → Личность → Импорт карточки персонажа» — встроенный ИИ отвечает её характером и манерой и сверяется
+  с её настроением сейчас через инструмент `companion_mood`. Плагин сам настройки ИИ Astra не меняет.
+
 ### Её жизнь шире (1.2.0)
 
 - **Голод и непоседливость:** проголодалась — перекусит вне обеда и скажет об этом; засиделась — закружится, выглянет, потянется.
@@ -120,11 +136,9 @@ Astra → **Мастерская** → **Разработка** → **Импор
 Your avatar lives a life of her own between the things that happen to her: four needs (energy, boredom, sociability,
 joy) drift with time and with what happens, give her a mood, and for the mood, the hour and what you are doing she
 picks herself something to do every few minutes from the states of her own animation pack — and now and then says a
-word in Astra's voice. The needs persist across restarts. Since 1.2.0 also: hunger and restlessness, your habits and
-dates, the weather (Open-Meteo, with the location from Astra's weather settings), words about your programs and your own
-rules for them, a tomato timer, water and eye breaks, a daily goal and plan, sulking, hobbies, wishes, gifts, 16
-achievements, five friendship levels, the sky of the hour in her pack, a voice for the mood, Russian/English/Japanese,
-your own phrases, settings export/import, a two-week chart, "do not disturb" (also as AI tools), and — off by default —
-the tone of your chat messages (read locally) and lines written by Astra's AI (catalog version only). Needs the character's own pack and two Astra commands the
-page creates. Reads only the input idle time, the foreground process, the pointer position and the avatar engine's
-lines in Astra's log; sends nothing anywhere.
+word in Astra's voice. The needs persist across restarts. Since 1.3.0 her personality is detailed rather than a preset —
+seven trait sliders, her day, likes, her speech, her story, how strongly she reacts — seeded from Astra's own AI personality and
+
+---
+
+*This README was truncated. [Read the rest on GitHub](https://github.com/FluffyTaill/astra-companion-life).*
