@@ -23,7 +23,7 @@ import { stableStringify } from "../lib/canonical.mjs";
 import { readZip, readEntry, writeZip } from "../lib/zip.mjs";
 import { makeFixtures } from "../make-fixtures.mjs";
 import {
-  checkBundle, manifestDigest, artifactDigest,
+  checkBundle, manifestDigest, artifactDigest, readEntryOneWay,
   manifestBytesFromLocalHeader, MANIFEST_DIGEST_DOMAIN,
 } from "../../bot/lib/bundle.mjs";
 import { registerSharedVectorTests, loadVectors, VECTOR_DIR } from "../../tests/shared-vectors.mjs";
@@ -201,6 +201,16 @@ export async function run() {
     },
     { rule: "inflates short of its declared size", says: "inflates to", entry: () => deflatedEntry("a.txt", TEXT, { usz: TEXT.length + 1 }) },
     { rule: "inflates past its declared size", says: "does not inflate", entry: () => deflatedEntry("a.txt", TEXT, { usz: TEXT.length - 1 }) },
+    {
+      // Sync-flushed, never finished: every byte of TEXT comes out, every input
+      // byte is consumed, size and CRC are right, and there is no final block.
+      // Running out of input is not the end of the stream.
+      rule: "a deflate stream that never ends", says: "does not inflate",
+      entry: () => {
+        const body = zlib.deflateRawSync(TEXT, { finishFlush: zlib.constants.Z_SYNC_FLUSH });
+        return deflatedEntry("a.txt", TEXT, { body, csz: body.length });
+      },
+    },
     { rule: "a CRC-32 its bytes do not have", says: "CRC-32", entry: () => deflatedEntry("a.txt", TEXT, { crc: crc32(TEXT) ^ 1 }) },
     { rule: "stored, with two sizes", says: "is stored, yet declares", entry: () => ({ ...storedEntry("a.txt", TEXT), usz: TEXT.length - 1 }) },
   ];
@@ -253,6 +263,41 @@ export async function run() {
     // entry inflated, its short stream would add a second finding.
     const z = cloakBundle([deflatedEntry("a.txt", TEXT, { usz: LIMITS.max_extract_bytes + 1 })]);
     assertEqual(errorCodes(z, FIXTURE_LISTING).join(", "), "E_BUNDLE_TOO_LARGE_EXTRACTED", "the finding set");
+  });
+  // Where the stream ends is read off the inflater after it has produced
+  // everything, not off the input it was handed: `inflateRawSync` with `info`
+  // runs the engine until it reports the end of the stream or fails, and
+  // `bytesWritten` is what it had consumed by then. These are the sizes where a
+  // reader that judges the end per output chunk, before draining, refuses honest
+  // files: near-zero data just over a multiple of 16 KiB (Node's chunk) or of
+  // 64 KiB (the window astra-ce named), where one input byte fills many chunks.
+  await test("one reading: an honest deflated 1 MiB + 1 file of zeros passes", () => {
+    const z = cloakBundle([deflatedEntry("lib/zeros.bin", Buffer.alloc((1 << 20) + 1))]);
+    const f = checkBundle(z, FIXTURE_LISTING, LIMITS);
+    assert(f.length === 0, f.map((x) => `${x.code} ${x.message}`).join("\n"));
+  });
+  await test("one reading: the deflate end is exact at every size around a 16 KiB and 64 KiB multiple, and slack after it is not", () => {
+    const wrong = [];
+    for (const unit of [16384, 65536]) for (const k of [1, 2, 3, 16]) for (const d of [-1, 0, 1]) {
+      const size = k * unit + d;
+      // Zeros, and bytes that barely compress.
+      const noisy = Buffer.from(Array.from({ length: size }, (_, i) => (Math.imul(i, 2654435761) >>> 24) & 0xff));
+      for (const data of [Buffer.alloc(size), noisy]) {
+        for (const level of [1, 9]) {
+          const body = zlib.deflateRawSync(data, { level });
+          for (const slack of [0, 1]) {
+            const e = { ...deflatedEntry("z.bin", data), body: Buffer.concat([body, Buffer.alloc(slack)]), csz: body.length + slack };
+            const zip = assembleZip([e]);
+            const { problems } = readEntryOneWay(zip, readZip(zip).entries[0]);
+            const refused = problems.some((x) => x.includes("deflate stream ends after"));
+            if (problems.length !== slack || refused !== (slack === 1)) {
+              wrong.push(`${size} bytes, level ${level}, ${slack} slack: ${problems.join("; ") || "accepted"}`);
+            }
+          }
+        }
+      }
+    }
+    assert(wrong.length === 0, wrong.slice(0, 5).join("\n"));
   });
   // astra-ce's vectors themselves, byte for byte (sec-probe and sec-probe2,
   // 2026-10-31), pinned by sha256 and carried as bundles. Each draws exactly
