@@ -257,6 +257,43 @@ export async function run() {
     const f = checkBundle(cloakBundle([{ ...storedEntry("notes.txt", EVIL), extra: stamp }]), FIXTURE_LISTING, LIMITS);
     assert(f.length === 0, f.map((x) => `${x.code} ${x.message}`).join("\n"));
   });
+  // ZIP64: 0xffffffff in a size or offset means the real value is in a ZIP64
+  // field. This reader follows none, and an entry it cannot measure must not be
+  // one the deflate-end check skips. astra-plugin build never writes ZIP64.
+  const ZIP64_PINS = [
+    {
+      // One byte of slack after the stream: only the real size could expose it.
+      rule: "a compressed size of 0xffffffff", says: "compressed size as 0xffffffff",
+      entry: () => {
+        const e = deflatedEntry("a.txt", TEXT);
+        return { ...e, body: Buffer.concat([e.body, Buffer.alloc(1)]), csz: 0xffffffff };
+      },
+    },
+    { rule: "a local header offset of 0xffffffff", says: "local header offset as 0xffffffff", entry: () => ({ ...deflatedEntry("a.txt", TEXT), centralOffset: 0xffffffff }) },
+    {
+      // Honest 32-bit sizes, and a ZIP64 field claiming others: which is real
+      // depends on the reader.
+      rule: "a 0x0001 ZIP64 field beside honest sizes", says: "0x0001 ZIP64 extended-information",
+      entry: () => {
+        const sizes = Buffer.alloc(16);
+        sizes.writeBigUInt64LE(BigInt(TEXT.length), 0);
+        sizes.writeBigUInt64LE(BigInt(TEXT.length * 2), 8);
+        return { ...deflatedEntry("a.txt", TEXT), extra: Buffer.concat([u16(0x0001), u16(16), sizes]), local: { extra: Buffer.alloc(0) } };
+      },
+    },
+  ];
+  for (const pin of ZIP64_PINS) {
+    await test(`one reading: ${pin.rule} — refused, and by that rule alone`, () => {
+      assertSoleObjection(cloakBundle([pin.entry()]), pin.says);
+    });
+  }
+  await test("one reading: an uncompressed size of 0xffffffff is refused before anything is inflated, and the reader names it", () => {
+    const z = cloakBundle([deflatedEntry("a.txt", TEXT, { usz: 0xffffffff })]);
+    assertEqual(errorCodes(z, FIXTURE_LISTING).join(", "), "E_BUNDLE_TOO_LARGE_EXTRACTED", "the finding set");
+    const { bytes, problems } = readEntryOneWay(z, readZip(z).entries.find((x) => x.name === "a.txt"));
+    assert(bytes === null && problems.some((x) => x.includes("uncompressed size as 0xffffffff")),
+      `the reader did not refuse the sentinel by name: ${problems.join("; ") || "no problems"}`);
+  });
   await test("one reading: a bundle over the extraction cap is refused before any entry is inflated", () => {
     // Inflating is bounded by each entry's DECLARED size, so the cap on the sum
     // of those is what bounds the reading; past it nothing is read. Were this
@@ -688,7 +725,8 @@ function localHeader(name, h, extra = Buffer.alloc(0)) {
  * `rawName` is the name's bytes where they are not `name` in UTF-8.
  * `hidden` writes the local record and no central one; `at` writes no bytes and
  * a central record pointing at `at(offsets)`, offsets being where each written
- * entry's local header landed, by name.
+ * entry's local header landed, by name; `centralOffset` writes the entry and
+ * gives its central record that offset instead.
  */
 function assembleZip(entries) {
   const parts = [];
@@ -708,7 +746,7 @@ function assembleZip(entries) {
     return Buffer.concat([
       u32(0x02014b50), u16(0x031e), u16(20), u16(e.flags ?? 0), u16(e.method ?? 0), u16(0), u16(0x21),
       u32(e.crc), u32(e.csz), u32(e.usz), u16(name.length), u16(extra.length), u16(0), u16(0), u16(0),
-      u32(((e.mode ?? 0o644) << 16) >>> 0), u32(e.at ? e.at(offsets) : e.writtenAt), name, extra,
+      u32(((e.mode ?? 0o644) << 16) >>> 0), u32(e.centralOffset ?? (e.at ? e.at(offsets) : e.writtenAt)), name, extra,
     ]);
   }));
   return Buffer.concat([

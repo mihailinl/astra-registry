@@ -121,6 +121,8 @@ export function permissionsHash(permissions) {
   return `sha256:${crypto.createHash("sha256").update(Buffer.from(jcs(permissions ?? {}), "utf8")).digest("hex")}`;
 }
 
+const ZIP64_SENTINEL = 0xffffffff;
+
 /**
  * One entry's bytes, read the one way every ZIP reader agrees on, and every
  * reason there could be a second way.
@@ -151,6 +153,16 @@ export function permissionsHash(permissions) {
 export function readEntryOneWay(buf, e) {
   const problems = [];
   const fail = (why) => ({ bytes: null, problems: [...problems, why] });
+  // 0xffffffff means the real value is in a ZIP64 field, which this reader does
+  // not follow: checked against the sentinel, the deflate end and the bytes
+  // would be checked against a number no reader uses. Refused instead, so no
+  // deflated entry escapes the end check; astra-plugin build never writes one.
+  const sentinels = [["compressed size", e.compressedSize], ["uncompressed size", e.size], ["local header offset", e.offset]]
+    .filter(([, value]) => value === ZIP64_SENTINEL).map(([field]) => field);
+  if (sentinels.length) {
+    return fail(`its central record gives its ${sentinels.join(" and ")} as 0xffffffff, the ZIP64 sentinel; ` +
+      "the real value is in a ZIP64 field this reader does not follow, so its end and its bytes cannot be checked");
+  }
   if (e.offset + 30 > buf.length || buf.readUInt32LE(e.offset) !== 0x04034b50) {
     return fail("the central directory points at no local file header");
   }
@@ -248,6 +260,9 @@ export function readEntryOneWay(buf, e) {
  * @returns {string[]}
  */
 export function tilingProblems(buf, entries, cdOffset) {
+  // An entry whose size or offset is a ZIP64 sentinel cannot be placed without
+  // ZIP64, and `readEntryOneWay` refuses it already.
+  if (entries.some((e) => e.compressedSize === ZIP64_SENTINEL || e.offset === ZIP64_SENTINEL)) return [];
   const problems = [];
   const label = (e) => JSON.stringify(e.name);
   let pos = 0;
@@ -292,6 +307,10 @@ function extraFieldProblem(extra) {
   while (q + 4 <= extra.length) {
     if (extra.readUInt16LE(q) === 0x7075) {
       return "carries a 0x7075 Unicode Path extra field, which renames the entry for every reader that honours it";
+    }
+    if (extra.readUInt16LE(q) === 0x0001) {
+      return "carries a 0x0001 ZIP64 extended-information field, whose sizes a reader may take in place of the " +
+        "header's while this one does not; astra-plugin build never writes one";
     }
     q += 4 + extra.readUInt16LE(q + 2);
   }
