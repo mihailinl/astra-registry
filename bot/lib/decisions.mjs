@@ -783,6 +783,11 @@ const TRAILER_GRAMMAR = {
   Submission: { re: UUID_V47_RE, uuidOk: true, says: "§0.7's lowercase UUID v4 or v7" },
   Decision: { re: DECISION_ID_RE, uuidOk: false, says: `§0.7's ${DECISION_ID_CHARS} lowercase hex` },
   "Service-Decision": { re: UUID_V47_RE, uuidOk: true, says: "§0.7's lowercase UUID v4 or v7" },
+  // The owner's passkey act a moderation commit applied (operator-acts design
+  // §4.1 step 7): its `jti`, 32 lowercase hex from the act page's
+  // `crypto.getRandomValues`. Correlation with `state/acts/<jti>.json` in the
+  // same commit, never authority: the record is what the validator verifies.
+  "Operator-Act": { re: /^[0-9a-f]{32}$/, uuidOk: false, says: "an operator act's jti, 32 lowercase hex" },
   // Last, because the plan's order is "a `Decided-At:` beside each
   // `Service-Decision:`" and `TRAILERS` is the order a commit carries them in.
   "Decided-At": { re: TIME, uuidOk: false, says: "§0.7's RFC 3339 UTC with whole seconds, ending in `Z`" },

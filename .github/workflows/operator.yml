@@ -55,16 +55,20 @@ on:
   workflow_dispatch:
     inputs:
       act:
-        description: "confirm or cancel a hold, revert an applied delist/deprecate/revoke, deny a fingerprint, or ok its operator window (owner only)"
+        description: "confirm or cancel a hold, revert an applied delist/deprecate/revoke, deny a fingerprint, ok its operator window (owner only), or revoke a passkey (owner only)"
         type: choice
         required: true
-        options: [confirm, cancel, revert, deny, ok]
+        options: [confirm, cancel, revert, deny, ok, revoke-passkey]
       service_decision_id:
         description: "the decision the act names (confirm, cancel, revert)"
         type: string
         required: false
       fingerprint:
         description: "the release fingerprint (deny and ok only)"
+        type: string
+        required: false
+      kid:
+        description: "the pinned passkey to revoke (revoke-passkey only), as bot/lib/operator-passkeys.json names it"
         type: string
         required: false
 
@@ -105,9 +109,10 @@ jobs:
         run: node tools/operator.mjs --job authority
 
       # TRUST-32 (contract 5.8.0): `ok` ends an operator window, and only the
-      # owner's pinned numeric id may. After `authority`, which every act
-      # passes; for any other act this step says so and passes. The act step
-      # checks the same pin again, so neither check alone is the boundary.
+      # owner's pinned numeric id may; `revoke-passkey` is held to the same pin
+      # (operator-acts design §2.3). After `authority`, which every act passes;
+      # for any other act this step says so and passes. The act step checks
+      # the same pin again, so neither check alone is the boundary.
       - name: An `ok` is the owner's alone, by numeric account id (TRUST-32)
         env:
           ASTRA_ACT: ${{ inputs.act }}
@@ -121,6 +126,7 @@ jobs:
           ASTRA_ACT: ${{ inputs.act }}
           ASTRA_SERVICE_DECISION_ID: ${{ inputs.service_decision_id }}
           ASTRA_FINGERPRINT: ${{ inputs.fingerprint }}
+          ASTRA_KID: ${{ inputs.kid }}
           ASTRA_ACTOR_ID: ${{ github.actor_id }}
         run: node tools/operator.mjs --job act --out operator
 

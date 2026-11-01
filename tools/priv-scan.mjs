@@ -200,6 +200,8 @@ const COMPOSED = [
   { re: /^state\/alerts\/[^/]+\.json$/, kind: "alert-record" },
   { re: /^state\/deny\/[^/]+\.json$/, kind: "deny-record" },
   { re: /^state\/ok\/[^/]+\.json$/, kind: "ok-record" },
+  { re: /^state\/acts\/[^/]+\.json$/, kind: "operator-act-record" },
+  { re: /^state\/passkeys\/revoked\/[^/]+\.json$/, kind: "passkey-revoked" },
   { re: /^state\/queue\/[^/]+\.json$/, kind: "queue-entry" },
   { re: /^state\/queue\/.*$/, kind: null },            // anything else under the queue
   { re: /^bot\/moderation\/[^/]+\.json$/, kind: "moderation-entry" },

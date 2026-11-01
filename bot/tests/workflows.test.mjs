@@ -338,8 +338,19 @@ test("no workflow lets a caller name the submitter", () => {
 // differ declares it below, with the reason, and the declaration itself goes red
 // when the step it names stops existing or stops differing that way.
 const VALIDATE_REFERENCE = "build-index.yml";
+const WRITER_MODERATION_WHY =
+  "the moderation run writes a deny, a hold's confirm or cancel, a passkey revocation and an operator revert only " +
+  "for an owner's passkey act it verified; `--writer moderation` holds its tree to that (operator-acts design " +
+  "§4.6) and asks nothing else, so the tree main may hold is the reference's. operator.yml's and every other " +
+  "gate's writer is not the moderation run";
 const VALIDATE_DIFFERENCES = Object.freeze({
   // "<file>: <step name>": { flags: ["--flag", ...], why: "..." },
+  "plugins-moderation.yml: Every registry rule, over the staged tree": {
+    flags: ["--allow-staging", "--writer moderation"], why: WRITER_MODERATION_WHY,
+  },
+  "plugins-moderation.yml: Commit once, with a Service-Decision: trailer per decision, and push": {
+    flags: ["--allow-staging", "--writer moderation"], why: WRITER_MODERATION_WHY,
+  },
 });
 
 /** The flags `tools/validate.mjs` documents, and which of them take a value, out of its own usage line. */
@@ -535,6 +546,7 @@ const ALERT_EVENTS = new Map([
   ["plugins-moderation.yml/alert", "MOD-8 alerts every advisory and hold before the push, and gates the push on it"],
   ["alarm-drill.yml/drill", "BOT-86's weekly drill pages every week, and its start signal follows a delivered alarm"],
   ["operator.yml/alert", "each refused operator act is somebody with dispatch access trying; each one pages"],
+  ["passkey-pins.yml/alert", "each key a pull request adds to the owner's passkey pin is a fingerprint he must compare; each one pages"],
 ]);
 const STATE_SPARSE = [".github/actions/alert-state", "bot/alert.mjs", "bot/lib/alert-verdict.mjs", "bot/lib/alert-checks.mjs", "tools/lib/ids.mjs"];
 
@@ -3496,4 +3508,47 @@ test("`build-index.yml`'s early-warning step annotates a candidate past 75% of t
   const gone = runStep(path.join(dir, "absent.json"));
   assert.equal(gone.status, 0, "a missing candidate failed the step; the gate before it is what fails the job");
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ── passkey-pins.yml: `pull_request_target`, and the head's JSON as data only ─
+//
+// The operator-acts design's review (finding 4) put this workflow on
+// `pull_request_target`, because environment `alerts` admits main alone. That
+// event runs main's copy with the base repository's secrets, which is safe
+// only while nothing from the head runs. These are the lines that keep it so:
+// a checkout of the head, a head ref in a script, or any program but main's
+// own reader, and this goes red.
+test("passkey-pins.yml reads the head's pin as data only: no head checkout, no head value in a script, main's reader alone", () => {
+  const text = read("passkey-pins.yml");
+  const lines = text.split("\n");
+  assert.match(text, /^on:\n  pull_request_target:\n/m, "the workflow is not on pull_request_target");
+  assert.doesNotMatch(text, /^\s+(pull_request|push|workflow_dispatch|schedule):/m, "a second trigger runs it outside main's copy");
+  const checkouts = lines.map((l, i) => [l, i]).filter(([l]) => /uses:\s*actions\/checkout@/.test(l));
+  assert.ok(checkouts.length >= 2);
+  for (const [, i] of checkouts) {
+    const block = lines.slice(i + 1, i + 5).join("\n");
+    assert.match(block, /ref: \$\{\{ github\.sha \}\}/, "a checkout is not main's commit");
+    assert.match(block, /persist-credentials: false/);
+  }
+  assert.doesNotMatch(text, /ref:\s*\$\{\{\s*github\.(event\.pull_request\.head|head_ref)/, "the head is checked out");
+  assert.doesNotMatch(text, /git (fetch|checkout|pull)|actions\/download-artifact|actions\/cache|npm |npx |yarn |pnpm /, "the head reaches the runner as something other than the pin's bytes");
+  // Every `${{ github.event... }}` sits in an `env:` value, never in a script.
+  const inRun = [];
+  let inScript = false;
+  let scriptIndent = 0;
+  for (const l of lines) {
+    const ind = l.search(/\S/);
+    if (/^\s+run: \|\s*$/.test(l)) { inScript = true; scriptIndent = ind; continue; }
+    if (inScript && l.trim() !== "" && ind <= scriptIndent) inScript = false;
+    if ((inScript || /^\s+run: [^|]/.test(l)) && /\$\{\{\s*github\.event/.test(l)) inRun.push(l.trim());
+  }
+  assert.deepEqual(inRun, [], "a pull request's value is interpolated into a script");
+  // Main's reader is the only program run, and the head's file only its `--head`.
+  const programs = lines.filter((l) => /\bnode\s/.test(l) && !l.trim().startsWith("#")).map((l) => l.trim());
+  assert.deepEqual(programs, ["node tools/passkey-pins.mjs --base bot/lib/operator-passkeys.json --head head-pin.json --out verdict.json"]);
+  assert.match(text, /Accept: application\/vnd\.github\.raw/);
+  const touching = lines.filter((l) => /head-pin\.json/.test(l) && !l.trim().startsWith("#")).map((l) => l.trim());
+  assert.equal(touching.length, 2);
+  assert.match(touching[0], /^\| head -c \d+ > head-pin\.json \|\| : > head-pin\.json$/, "the fetch does more with the head's bytes than write them");
+  assert.equal(touching[1], programs[0], "the head's bytes are opened somewhere besides the reader's `--head`");
 });

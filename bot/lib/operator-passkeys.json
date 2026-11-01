@@ -1,0 +1,7 @@
+{
+  "schema": "astra.registry.operator-passkeys/1",
+  "aud": "astra-registry:1331176498",
+  "rp_id": "",
+  "origins": [],
+  "keys": []
+}

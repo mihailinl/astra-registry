@@ -525,3 +525,18 @@ jobs:
       - name: The conformance harness, against a stub that answers each way the service could be wrong
         if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/service-conformance.test.mjs
+
+      # The owner's passkey acts (operator-acts-by-passkey design §4.3, §4.4,
+      # §4.6, as amended by its review of 2026-10-31). The suite is its own
+      # WebAuthn authenticator — P-256, RSA-2048 and Ed25519 keys made in
+      # memory, authenticatorData and clientDataJSON built byte for byte — and
+      # every mutation of the design's lane 2 list is a case that must be
+      # REFUSED: a bit flipped anywhere, another origin or RP, a framed
+      # ceremony, each flag, each time bound, a replayed jti or counter, a
+      # target that is not the tree's, a second answer. It also holds the pin's
+      # own rules (genesis, endorsement by a key active before the change,
+      # nothing deleted) and the apply code operator.yml shares. Real git
+      # repositories for the tree half. No probe, no network.
+      - name: The owner's passkey acts, verified by the bot and nothing else
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
+        run: node --test bot/tests/operator-act.test.mjs

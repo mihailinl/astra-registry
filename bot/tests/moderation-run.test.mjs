@@ -2632,7 +2632,7 @@ test("a decision refused at the list is posted `refused` once, beside the compil
 });
 
 test("the list's refusals are re-checked before they are handed on, and a malformed one fails the commit job", async () => {
-  assert.deepEqual(listRefusals(""), { decisions: [], submissions: [], fatal: [] }, "a failed or empty list refuses nothing");
+  assert.deepEqual(listRefusals(""), { decisions: [], submissions: [], acts: [], fatal: [] }, "a failed or empty list refuses nothing");
   const ok = listRefusals(JSON.stringify([{ service_decision_id: SDI2, code: "kind_refused" }, { submission_id: SUB, code: "kind_refused" }]));
   assert.deepEqual(ok.fatal, []);
   assert.equal(ok.decisions.length, 1);
@@ -2841,7 +2841,7 @@ test("the list outputs are bounded as the summary is, and a cut-short output is 
     /bound is/,
   );
   const fine = listOutputs({ shadow: true, entries: [], submissions: [], refused: [] });
-  assert.deepEqual(fine, { shadow: "true", entries: "[]", submissions: "[]", refused: "[]", listed: "[]" });
+  assert.deepEqual(fine, { shadow: "true", entries: "[]", submissions: "[]", refused: "[]", listed: "[]", acts: "[]" });
 });
 
 test("MOD-8's alarms are derivable from the list entry, before any compile", () => {
@@ -4235,7 +4235,7 @@ test("TRUST-32 (5.8.0): the workflow's own `ok` check runs after `authority`, re
   assert.ok(at("--job authority") > 0 && at("--job ok-authority") > at("--job authority") && at("--job act") > at("--job ok-authority"),
     "operator.yml must run `authority`, then `ok-authority`, then the act");
   assert.match(yml, /ASTRA_ACTOR_ID: \$\{\{ github\.actor_id \}\}/, "the check reads github.actor_id, the numeric id");
-  assert.match(yml, /options: \[confirm, cancel, revert, deny, ok\]/);
+  assert.match(yml, /options: \[confirm, cancel, revert, deny, ok, revoke-passkey\]/);
 });
 
 test("M-T3.5: the operator's allowlist admits its records, its revert paths and the two documents, and nothing else", async () => {
@@ -5155,4 +5155,252 @@ test("a stop and an M_REJECT are posted to bot/results with recorded[], equal to
   const shadowReport = await reportJob({ ASTRA_RESULTS: shadowStep.outputs.results, ASTRA_MAIN_COMMIT: shadowStep.outputs.main_commit });
   assert.equal(shadowJob.code, 0);
   assert.deepEqual(shadowReport.posts, [], "report posted a submission result under a shadow answer");
+});
+
+// ── the owner's passkey acts (operator-acts-by-passkey design §4.1–§4.4) ────
+//
+// A `/2` answer relays the owner's acts; `list` verifies each without git,
+// `alert` announces them, and `commit` verifies them again with the tree and
+// applies them BEFORE the holds are walked, so a confirm releases its hold in
+// the same commit. The flag off is a `/1` answer, and that run is today's run.
+
+import * as Auth from "./fixtures/authenticator.mjs";
+import { actResults, checkActs } from "../moderation-run.mjs";
+
+const ACT_KEY = Auth.makeKey("ES256", { kid: "owner-phone" });
+const ACT_PIN = Auth.pinOf([ACT_KEY]);
+const ACT_NOW = new Date("2026-09-20T12:30:00Z");
+const actEnv = { GITHUB_SERVER_URL: "https://github.com", GITHUB_REPOSITORY: "mihailinl/astra-registry", GITHUB_RUN_ID: "35502265394" };
+
+async function actsJob(root, { acts = [], shadow = false, delivered = "2026-09-20T12:29:00Z", entries = [], pin = ACT_PIN, now = ACT_NOW, listResult = "success", announced = acts.map((a) => a.jti) } = {}) {
+  const out = path.join(root, "moderation");
+  const logs = [];
+  const offline = () => { throw new Error("the commit job reached the network"); };
+  const code = await main(["--job", "commit", "--registry-dir", root, "--out", out], {
+    env: {
+      ...actEnv, ASTRA_ENTRIES: JSON.stringify(entries), ASTRA_SUBMISSIONS: "[]", ASTRA_SHADOW: shadow ? "true" : "false",
+      ASTRA_OVER_BOUND: "", ASTRA_ACTS: JSON.stringify(acts), ASTRA_DELIVERED_AT: delivered,
+      ASTRA_LIST_RESULT: listResult, ASTRA_ANNOUNCED: JSON.stringify(announced),
+    },
+    log: { log: (m) => logs.push(String(m)), error: (m) => logs.push(String(m)) },
+    fetchImpl: offline, now, pin, coverage: () => ({ status: "green", codes: [] }),
+  });
+  const paths = fs.readFileSync(path.join(out, "paths.txt"), "utf8").split("\n").filter(Boolean);
+  const results = JSON.parse(fs.readFileSync(path.join(out, "results.json"), "utf8"));
+  const message = fs.existsSync(path.join(out, "commit-message.txt")) ? fs.readFileSync(path.join(out, "commit-message.txt"), "utf8") : "";
+  return { code, logs, paths, results, message };
+}
+
+/** A bound hold over a full window, and a confirm act for it signed by the owner's key. */
+function heldOverFullWindow() {
+  const root = withDocuments(crowd());
+  withRemote(root);
+  withdrawnInGit(root, ["gadgets", "gizmos", "doohickeys"], "2026-09-20T11:30:00Z");
+  boundHold(root, "widgets", SDIS[0], "2026-09-20T12:00:00Z");
+  sh(["push", "-q", "origin", "HEAD:main"], root);
+  const head = sh(["rev-parse", "HEAD"], root).trim();
+  const target = { service_decision_id: SDIS[0], code: "M_DELIST", plugin_id: "widgets", held_for: "bound", held_at: "2026-09-20T12:00:00Z" };
+  const confirm = Auth.act(ACT_KEY, Auth.body({ act: "confirm", target, now: ACT_NOW.getTime() - 60_000, main: head }));
+  return { root, head, target, confirm };
+}
+
+test("passkey acts: a /1 answer (the flag off) hands on no acts, and a run with none commits exactly what it did before", async () => {
+  const root = estate();
+  const v1 = await listJob(root, answer({ shadow: false, service_decisions: [], submissions: [] }));
+  assert.equal(v1.code, 0, v1.logs.join("\n"));
+  assert.equal(v1.files.acts, "[]\n");
+  assert.deepEqual(JSON.parse(v1.files.listed), []);
+
+  const a = heldOverFullWindow();
+  const without = await measuredJob(a.root, [], { now: ACT_NOW });
+  const none = await actsJob(a.root, { acts: [] });
+  assert.equal(without.code, 0);
+  assert.deepEqual(none.paths, without.paths, "an empty act list changed what the run commits");
+  assert.deepEqual(none.results.acts, { applied: [], refused: [], deferred: [] });
+  assert.deepEqual(without.results.released_holds, [], "the hold released by itself; this fixture is for a full window");
+});
+
+test("passkey acts: a /2 answer's acts are verified in `list` without git, and a refused one is listed and handed on as refused", async () => {
+  const root = estate({ extra: { "schema/moderation-work-v2.json": read("schema/moderation-work-v2.json") } });
+  const item = Auth.act(ACT_KEY, Auth.body({ act: "deny", target: { held_decision_id: "1".repeat(32), digest: `${"a".repeat(16)}${"b".repeat(48)}`, fingerprint: "a".repeat(16), plugin_id: "widgets", version: "1.0.0", tag: "v1.0.0", repo: "acme/widgets", repository_id: "12", commit: "c".repeat(40) }, now: Date.now() }));
+  // Under the committed pin (no key yet) the act's credential is unknown.
+  const job = await listJob(root, { ...answer({ shadow: false, service_decisions: [], submissions: [] }), schema: "astra.plugins.bot-moderation-work/2", operator_acts: [item] });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(JSON.parse(job.files.acts), []);
+  assert.deepEqual(JSON.parse(job.files.refused), [{ jti: item.jti, code: "act_signature" }]);
+  assert.deepEqual(JSON.parse(job.files.listed), [item.jti], "a refused act is listed, so `settled` pages if it is never answered");
+  // Under a pin holding the key, the same act is handed on, its four assertion members only.
+  const checked = checkActs([{ ...item, extra: "x" }], { pin: ACT_PIN, now: new Date() });
+  assert.deepEqual(checked.acts, [{ jti: item.jti, body: item.body, assertion: item.assertion }]);
+  assert.deepEqual(checked.refused, []);
+});
+
+test("passkey acts: a confirm releases its hold in the same commit, over a full window, and the commit names the act", async () => {
+  const { root, confirm } = heldOverFullWindow();
+  const job = await actsJob(root, { acts: [confirm] });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.released_holds, [SDIS[0]], job.logs.join(" | "));
+  assert.deepEqual(job.results.acts.applied, [{ jti: confirm.jti, commit: null }]);
+  assert.ok(job.paths.includes(`state/acts/${confirm.jti}.json`), job.paths.join(" "));
+  assert.ok(job.paths.includes(holdEntryPath(SDIS[0])), "the hold entry is not deleted in this commit");
+  assert.ok(fs.existsSync(path.join(root, "state", "acts", `${confirm.jti}.json`)));
+  assert.ok(!fs.existsSync(path.join(root, "state", "holds", `${SDIS[0]}.confirm.json`)), "the confirm record outlived its release");
+  assert.match(job.message, new RegExp(`^Operator-Act: ${confirm.jti}$`, "m"));
+  assert.ok(unlistedOn(root, "widgets"), "the confirmed takedown did not apply");
+  // The commit lands through the workflow's own step: a record written and
+  // deleted in one run is not a deletion the step trips over.
+  const step = runApply(root);
+  assert.equal(step.status, 0, `${step.stdout}${step.stderr}`);
+  assert.ok(sh(["ls-tree", "-r", "--name-only", "HEAD", "state/acts"], root).includes(confirm.jti));
+  const report = await reportJob({ ASTRA_RESULTS: step.outputs.results, ASTRA_MAIN_COMMIT: step.outputs.main_commit });
+  assert.equal(report.code, 0, report.logs.join("\n"));
+  assert.deepEqual(report.bodies.filter((b) => b.jti),
+    [{ schema: "astra.plugins.bot-operator-act-result/1", jti: confirm.jti, outcome: "applied", commit: step.outputs.main_commit }]);
+  assert.ok(report.posts.some((p) => p.path === "bot/operator-act-results"));
+});
+
+test("passkey acts: re-presented byte for byte after landing — the redo's case — it is answered `applied` with its commit and written once", async () => {
+  const { root, confirm } = heldOverFullWindow();
+  const first = await actsJob(root, { acts: [confirm] });
+  assert.equal(first.code, 0);
+  const step = runApply(root);
+  assert.equal(step.status, 0, step.stderr);
+  const again = await actsJob(root, { acts: [confirm], now: new Date("2026-09-20T12:40:00Z") });
+  assert.equal(again.code, 0, again.logs.join("\n"));
+  assert.deepEqual(again.paths, [], "an act already on main was written again");
+  assert.deepEqual(again.results.acts.applied, [{ jti: confirm.jti, commit: step.outputs.main_commit }]);
+  // A different act with the same jti is not that act.
+  const forged = Auth.act(ACT_KEY, confirm.body.replace("12:00:00Z", "12:00:00Z"));
+  assert.notEqual(forged.assertion.signature, confirm.assertion.signature);
+  const replay = await actsJob(root, { acts: [forged], now: new Date("2026-09-20T12:41:00Z") });
+  assert.deepEqual(replay.results.acts.refused, [{ jti: confirm.jti, code: "act_replayed" }]);
+  assert.deepEqual(replay.paths, []);
+});
+
+test("passkey acts: under shadow, unannounced, or refused, nothing is applied and nothing is written", async () => {
+  const shadowed = heldOverFullWindow();
+  const s = await actsJob(shadowed.root, { acts: [shadowed.confirm], shadow: true });
+  assert.equal(s.code, 0);
+  assert.deepEqual(s.paths, []);
+  assert.deepEqual(s.results.acts, { applied: [], refused: [], deferred: [] });
+  assert.deepEqual(s.results.shadow_withheld.acts, [shadowed.confirm.jti]);
+  assert.deepEqual(actResults(s.results, { commit: "a".repeat(40) }), [], "a result was owed under shadow");
+
+  const quiet = heldOverFullWindow();
+  const q = await actsJob(quiet.root, { acts: [quiet.confirm], delivered: "" });
+  assert.equal(q.code, 0);
+  assert.deepEqual(q.paths, [], "an act nobody was told about was applied");
+  assert.deepEqual(q.results.acts.deferred, [{ jti: quiet.confirm.jti }]);
+  assert.ok(!fs.existsSync(path.join(quiet.root, "state", "holds", `${SDIS[0]}.confirm.json`)));
+
+  const bad = heldOverFullWindow();
+  const tampered = { ...bad.confirm, body: bad.confirm.body.replace('"widgets"', '"gadgets"') };
+  const r = await actsJob(bad.root, { acts: [tampered] });
+  assert.equal(r.code, 0);
+  assert.deepEqual(r.paths, []);
+  assert.deepEqual(r.results.acts.refused, [{ jti: bad.confirm.jti, code: "act_signature" }]);
+  assert.deepEqual(actResults(r.results), [{ jti: bad.confirm.jti, outcome: "refused", refusal_code: "act_signature" }]);
+  assert.ok(!fs.existsSync(path.join(bad.root, "state", "acts")), "a refused act left a file behind");
+});
+
+test("passkey acts: the moderation allowlist admits an act's paths and nothing more under state/", () => {
+  for (const good of ["state/acts/0123456789abcdef0123456789abcdef.json", "state/deny/0123456789abcdef.json", "state/passkeys/revoked/owner-pc.json"]) {
+    assert.equal(allowedPath(good), true, good);
+  }
+  for (const bad of ["state/ok/0123456789abcdef.json", "state/alerts/0123456789abcdef.json", "state/passkeys/other.json", "bot/lib/operator-passkeys.json"]) {
+    assert.equal(allowedPath(bad), false, bad);
+  }
+});
+
+test("passkey acts: both gates on the moderation commit run the validator with `--writer moderation`, and operator.yml does not", () => {
+  const yml = read(".github/workflows/plugins-moderation.yml");
+  const lines = yml.split("\n").filter((l) => /node tools\/validate\.mjs/.test(l) && !l.trim().startsWith("#"));
+  assert.equal(lines.length, 2);
+  for (const l of lines) assert.match(l, /--allow-staging --writer moderation\s*$/);
+  assert.doesNotMatch(read(".github/workflows/operator.yml"), /--writer/);
+  assert.match(yml, /ASTRA_ACTS: \$\{\{ needs\.list\.outputs\.acts \}\}/);
+});
+
+test("passkey acts (review 1): only acts `alert` announced, and only after a `list` that succeeded, are applied", async () => {
+  for (const [what, opts] of [
+    ["a failed list whose outputs still flowed", { listResult: "failure" }],
+    ["a skipped list", { listResult: "skipped" }],
+    ["an act the alert did not name", { announced: [] }],
+    ["an alert that named another act", { announced: ["f".repeat(32)] }],
+  ]) {
+    const { root, confirm } = heldOverFullWindow();
+    const job = await actsJob(root, { acts: [confirm], ...opts });
+    assert.equal(job.code, 0, job.logs.join("\n"));
+    assert.deepEqual(job.paths, [], `${what}: an act was applied`);
+    assert.deepEqual(job.results.acts.deferred, [{ jti: confirm.jti }], what);
+    assert.ok(!fs.existsSync(path.join(root, "state", "holds", `${SDIS[0]}.confirm.json`)), what);
+  }
+  // The alert step hands on exactly the jtis its verdict named, and `[]` on a failed list.
+  const yml = read(".github/workflows/plugins-moderation.yml");
+  assert.match(yml, /announced: \$\{\{ steps\.verdict\.outputs\.announced \}\}/);
+  assert.match(yml, /echo '\[\]' > announced\.json\n\s+else\n\s+node bot\/moderation-run\.mjs --job alarms .*--announced announced\.json/);
+  assert.equal((yml.match(/ASTRA_ANNOUNCED: \$\{\{ needs\.alert\.outputs\.announced \}\}/g) ?? []).length, 2, "the compile and the redo both read `announced`");
+  assert.equal((yml.match(/ASTRA_LIST_RESULT: \$\{\{ needs\.list\.result \}\}/g) ?? []).length, 3);
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-alarms-"));
+  tmpRoots.push(out);
+  const { confirm } = heldOverFullWindow();
+  const code = await main(["--job", "alarms", "--entries", "[]", "--out", path.join(out, "v.json"), "--announced", path.join(out, "a.json")],
+    { env: { ...actEnv, ASTRA_ACTS: JSON.stringify([confirm, { jti: "e".repeat(32), body: "{}", assertion: {} }]) }, log: { log() {}, error() {} }, pin: ACT_PIN });
+  assert.equal(code, 0);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(out, "a.json"), "utf8")), [confirm.jti], "an act the message did not carry is listed as announced");
+});
+
+test("passkey acts (review 4): an act already on main, listed again, is handed on for `applied`, not refused for its age or key", async () => {
+  const stale = Auth.act(ACT_KEY, Auth.body({ act: "deny", target: { held_decision_id: "1".repeat(32), digest: `${"a".repeat(16)}${"b".repeat(48)}`, fingerprint: "a".repeat(16), plugin_id: "widgets", version: "1.0.0", tag: "v1.0.0", repo: "acme/widgets", repository_id: "12", commit: "c".repeat(40) }, now: Date.parse("2026-01-01T00:00:00Z") }));
+  const root = estate({ extra: {
+    "schema/moderation-work-v2.json": read("schema/moderation-work-v2.json"),
+    [`state/acts/${stale.jti}.json`]: { schema: "astra.registry.operator-act/1", jti: stale.jti, body: stale.body, assertion: stale.assertion, run: "https://github.com/o/r/actions/runs/1", at: "2026-01-01T00:01:00Z" },
+  } });
+  const body = { ...answer({ shadow: false, service_decisions: [], submissions: [] }), schema: "astra.plugins.bot-moderation-work/2", operator_acts: [stale] };
+  const job = await listJob(root, body);
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(JSON.parse(job.files.acts).map((a) => a.jti), [stale.jti], "a re-listed act on main was not handed on");
+  assert.deepEqual(JSON.parse(job.files.refused), [], "a re-listed act on main was refused, so its `applied` is never posted");
+  // A different act under that jti is not that act: it is judged as any other.
+  const other = { ...stale, assertion: { ...stale.assertion, signature: stale.assertion.signature.replace(/^./, (c) => (c === "A" ? "B" : "A")) } };
+  const again = await listJob(root, { ...body, operator_acts: [other] });
+  assert.deepEqual(JSON.parse(again.files.acts), []);
+  assert.equal(JSON.parse(again.files.refused)[0].jti, stale.jti);
+});
+
+test("passkey acts (review 7): under shadow `list` judges no act, so nothing is announced, refused or listed", async () => {
+  const root = estate({ extra: { "schema/moderation-work-v2.json": read("schema/moderation-work-v2.json") } });
+  const item = Auth.act(ACT_KEY, Auth.body({ act: "deny", target: { held_decision_id: "1".repeat(32), digest: `${"a".repeat(16)}${"b".repeat(48)}`, fingerprint: "a".repeat(16), plugin_id: "widgets", version: "1.0.0", tag: "v1.0.0", repo: "acme/widgets", repository_id: "12", commit: "c".repeat(40) }, now: Date.now() }));
+  const job = await listJob(root, { ...answer({ shadow: true, service_decisions: [], submissions: [] }), schema: "astra.plugins.bot-moderation-work/2", operator_acts: [item] });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual([JSON.parse(job.files.acts), JSON.parse(job.files.refused), JSON.parse(job.files.listed)], [[], [], []]);
+});
+
+test("passkey acts (review 8): under a pin that fails its own rules every act is refused, in `list` and in `commit`", async () => {
+  const broken = Auth.pinOf([{ ...ACT_KEY.pinKey, enrolment: null }]);
+  const { root, confirm } = heldOverFullWindow();
+  const listed = checkActs([confirm], { pin: broken, now: ACT_NOW, root });
+  assert.deepEqual(listed.refused, [{ jti: confirm.jti, code: "act_not_permitted" }]);
+  assert.deepEqual(listed.acts, []);
+  const job = await actsJob(root, { acts: [confirm], pin: broken });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.paths, []);
+  assert.deepEqual(job.results.acts.refused, [{ jti: confirm.jti, code: "act_not_permitted" }]);
+  // The same act under a sound pin is applied: the refusal is the pin's.
+  assert.deepEqual(checkActs([confirm], { pin: ACT_PIN, now: ACT_NOW, root }).refused, []);
+});
+
+test("passkey acts (review 9): many acts' plugin ids are cut and said, and MOD-8's alarms still go out whole", async () => {
+  const entries = Array.from({ length: 30 }, (_, i) => decision({ service_decision_id: `0192f3a4-5b6c-7d8e-9f01-2345678920${String(i).padStart(2, "0")}`, plugin_id: `p${i}`, code: "M_REVOKE", category: "malicious", severity: "high", action: "warn", moderator: "amoderator", versions: ["1.0.0"] }));
+  const acts = Array.from({ length: 20 }, (_, i) => Auth.act(ACT_KEY, Auth.body({ act: "deny", target: { held_decision_id: "1".repeat(32), digest: `${"a".repeat(16)}${"b".repeat(48)}`, fingerprint: "a".repeat(16), plugin_id: `q${i}`, version: "1.0.0", tag: "v1.0.0", repo: "acme/widgets", repository_id: "12", commit: "c".repeat(40) }, now: Date.now() })));
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-alarms-"));
+  tmpRoots.push(out);
+  const code = await main(["--job", "alarms", "--entries", JSON.stringify(entries), "--out", path.join(out, "v.json"), "--announced", path.join(out, "a.json")],
+    { env: { ...actEnv, ASTRA_ACTS: JSON.stringify(acts) }, log: { log() {}, error() {} }, pin: ACT_PIN });
+  assert.equal(code, 0);
+  const v = JSON.parse(fs.readFileSync(path.join(out, "v.json"), "utf8"));
+  assert.equal(v.ids.length, 40);
+  for (let i = 0; i < 30; i++) assert.ok(v.ids.includes(`p${i}`), `MOD-8's id p${i} was cut for an act's`);
+  assert.ok(v.codes.includes("OPERATOR_ACT_IDS_ELIDED") && v.codes.includes("OPERATOR_ACT_DENY"));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(out, "a.json"), "utf8")).length, 20, "every act is still announced by its code");
 });
