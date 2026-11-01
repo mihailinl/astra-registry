@@ -143,7 +143,7 @@ export function permissionsHash(permissions) {
  * and encryption bits).
  *
  * @param {Buffer} buf the whole .astraplugin
- * @param {{name: string, flags: number, method: number, crc32: number,
+ * @param {{name: string, rawName: Buffer, flags: number, method: number, dosTime: number, crc32: number,
  *          compressedSize: number, size: number, extra: Buffer, offset: number}} e a `readZip` entry
  * @returns {{bytes: Buffer|null, problems: string[]}} `bytes` is null when no
  *   reading bounded by the declared sizes exists
@@ -157,6 +157,33 @@ export function readEntryOneWay(buf, e) {
   if ((e.flags | buf.readUInt16LE(e.offset + 6)) & 0x0008) {
     problems.push("it sets general-purpose bit 3 (sizes in a trailing data descriptor). astra-plugin build never " +
       "does, and it is what lets a streaming reader and a central-directory reader disagree on where the entry ends");
+  }
+  // The local header must say what the central record says: a streaming reader
+  // knows only the former, this file only the latter. zip 9's
+  // validate_header_consistency, which the daemon applies, compares these too,
+  // so a bundle passing here is not refused there. Measured before this check:
+  // an entry whose central record said `lib/x` and whose local header said
+  // `bin/run` drew zero findings. Under bit 3 the local CRC and sizes are
+  // pending in a descriptor, as zip 9 also allows; bit 3 is refused above.
+  const localName = buf.subarray(e.offset + 30, e.offset + 30 + buf.readUInt16LE(e.offset + 26));
+  const localFlags = buf.readUInt16LE(e.offset + 6);
+  const hex = (n, width = 4) => `0x${n.toString(16).padStart(width, "0")}`;
+  const disagree = [
+    // Bytes, not decoded text: two malformed names can decode to one string here
+    // and to two in a reader that decodes them otherwise.
+    ["name", `${JSON.stringify(localName.toString("utf8"))} (${localName.toString("hex")})`,
+      `${JSON.stringify(e.name)} (${e.rawName.toString("hex")})`, !localName.equals(e.rawName)],
+    ["method", buf.readUInt16LE(e.offset + 8), e.method],
+    ["flags", hex(localFlags & ~0x0008), hex(e.flags & ~0x0008)],
+    ["modification time", hex(buf.readUInt32LE(e.offset + 10), 8), hex(e.dosTime, 8)],
+    ...(localFlags & 0x0008 ? [] : [
+      ["CRC-32", hex(buf.readUInt32LE(e.offset + 14), 8), hex(e.crc32, 8)],
+      ["compressed size", buf.readUInt32LE(e.offset + 18), e.compressedSize],
+      ["uncompressed size", buf.readUInt32LE(e.offset + 22), e.size],
+    ]),
+  ].filter(([, local, central, differs = local !== central]) => differs);
+  for (const [field, local, central] of disagree) {
+    problems.push(`its local header says ${field} ${local} and its central record ${central}`);
   }
   const localExtraAt = e.offset + 30 + buf.readUInt16LE(e.offset + 26);
   const start = localExtraAt + buf.readUInt16LE(e.offset + 28);

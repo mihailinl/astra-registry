@@ -192,8 +192,12 @@ export async function run() {
   const ONE_READING_PINS = [
     { rule: "bit 3, every size right", says: "general-purpose bit 3", entry: () => bit3Entry() },
     {
-      rule: "deflate slack, no bit 3, honest local header", says: "deflate stream ends after",
+      // Both headers declare the slack, so they agree and tile; only the deflate
+      // stream's own end says otherwise, and a reader that trusts it over the
+      // header walks into the hidden bin/run.
+      rule: "deflate slack, no bit 3, both headers declaring it", says: "deflate stream ends after",
       entry: () => slackEntry({ bit3: false }), streams: "MANIFEST.json,bin/run,a.txt,bin/run",
+      walk: { trustDeflateEnd: true },
     },
     { rule: "inflates short of its declared size", says: "inflates to", entry: () => deflatedEntry("a.txt", TEXT, { usz: TEXT.length + 1 }) },
     { rule: "inflates past its declared size", says: "does not inflate", entry: () => deflatedEntry("a.txt", TEXT, { usz: TEXT.length - 1 }) },
@@ -203,7 +207,7 @@ export async function run() {
   for (const pin of ONE_READING_PINS) {
     await test(`one reading: ${pin.rule} — refused, and by that rule alone`, () => {
       const z = cloakBundle([pin.entry()]);
-      if (pin.streams) assertEqual(streamingNames(z).join(","), pin.streams, "the streaming walk");
+      if (pin.streams) assertEqual(streamingNames(z, pin.walk).join(","), pin.streams, "the streaming walk");
       assertSoleObjection(z, pin.says);
     });
   }
@@ -298,6 +302,31 @@ export async function run() {
       assertSoleObjection(z, pin.says);
     });
   }
+  // Every entry's local header must agree with its central record, field by
+  // field, as zip 9's validate_header_consistency requires on the daemon's side.
+  // Each fixture changes one field of a.txt's local header and nothing else.
+  const HEADER_PINS = [
+    { field: "name", local: { name: "bin/run" }, streams: "MANIFEST.json,bin/run,bin/run" },
+    {
+      // 0xff and 0xfe are each malformed UTF-8 and both decode here to U+FFFD,
+      // so only a comparison of bytes sees two names; CP437 reads "ÿ" and "■".
+      field: "name", as: "bytes that decode to one string", name: "a\ufffd.txt",
+      rawName: Buffer.from("a\xff.txt", "latin1"), local: { name: Buffer.from("a\xfe.txt", "latin1") },
+    },
+    { field: "method", local: { method: 8 } },
+    { field: "flags", local: { flags: 0x0800 } },
+    { field: "modification time", local: { time: 0x1234 } },
+    { field: "CRC-32", local: { crc: crc32(TEXT) ^ 1 } },
+    { field: "compressed size", local: { csz: TEXT.length + 1 } },
+    { field: "uncompressed size", local: { usz: TEXT.length + 1 } },
+  ];
+  for (const pin of HEADER_PINS) {
+    await test(`one reading: the local header disagreeing on ${pin.field}${pin.as ? `, as ${pin.as}` : ""} — refused, and by that rule alone`, () => {
+      const z = cloakBundle([{ ...storedEntry(pin.name ?? "a.txt", TEXT), rawName: pin.rawName, local: pin.local }]);
+      if (pin.streams) assertEqual(streamingNames(z).join(","), pin.streams, "the streaming walk");
+      assertSoleObjection(z, `its local header says ${pin.field} `);
+    });
+  }
 
   // ── each rule on its own terms ──────────────────────────────────────────────
   //
@@ -368,14 +397,21 @@ export async function run() {
     },
     {
       rule: "E_MANIFEST_HEADER_DISAGREE", vector: "header-disagree",
-      // E_BUNDLE_UNREADABLE three times, from two checks this set once lacked.
+      // E_BUNDLE_UNREADABLE six times, from three checks this set once lacked.
       // The CRC-32 check: the central record declares the real manifest's size
       // and CRC over the decoy at offset 1186, whose first 760 bytes fail it.
       // The tiling check, twice: the real manifest's 803 bytes at byte zero are
       // indexed by nothing, and neither are the decoy's last 165, past that size.
-      // The old set was incomplete because nothing here read the archive's
-      // layout; this vector was always the forged archive those checks describe.
-      rest: ["E_BUNDLE_UNREADABLE", "E_BUNDLE_UNREADABLE", "E_BUNDLE_UNREADABLE", "E_MANIFEST_INVALID"],
+      // The header-consistency check, three times: the decoy's local header says
+      // CRC-32, compressed and uncompressed size other than its central record.
+      // The old set was incomplete because the only local-against-central
+      // comparison here was E_MANIFEST_HEADER_DISAGREE's, of MANIFEST.json's
+      // bytes, and nothing read the archive's layout; this vector was always the
+      // forged archive those checks describe.
+      rest: [
+        "E_BUNDLE_UNREADABLE", "E_BUNDLE_UNREADABLE", "E_BUNDLE_UNREADABLE",
+        "E_BUNDLE_UNREADABLE", "E_BUNDLE_UNREADABLE", "E_BUNDLE_UNREADABLE", "E_MANIFEST_INVALID",
+      ],
       otherwise: "the decoy manifest failing to parse, which is a property of that decoy and not of the comparison, " +
         "and the decoy's bytes failing the CRC-32 and the layout the central directory declares for MANIFEST.json",
     },
@@ -387,6 +423,11 @@ export async function run() {
         "passes it and this rule is the only objection left",
     },
     {
+      // Unchanged by the tiling and header-consistency checks, deliberately: in
+      // offset order its entries lie end to end (plugin.toml at 0, MANIFEST.json
+      // at 259, bin/fixture at 1062, the central directory at 1136) and every
+      // local header agrees with its record. Index order is not offset order,
+      // and neither check reads index order, so the rule stays alone here.
       rule: "E_MANIFEST_LOCAL_HEADER", vector: "manifest-first-by-index-only",
       rest: [],
       otherwise:
@@ -575,7 +616,7 @@ const u32 = (n) => { const b = Buffer.alloc(4); b.writeUInt32LE(n >>> 0); return
 
 function localHeader(name, h, extra = Buffer.alloc(0)) {
   return Buffer.concat([
-    u32(0x04034b50), u16(20), u16(h.flags ?? 0), u16(h.method ?? 0), u16(0), u16(0x21),
+    u32(0x04034b50), u16(20), u16(h.flags ?? 0), u16(h.method ?? 0), u16(h.time ?? 0), u16(0x21),
     u32(h.crc), u32(h.csz), u32(h.usz), u16(Buffer.byteLength(name)), u16(extra.length), Buffer.from(name), extra,
   ]);
 }
@@ -584,6 +625,7 @@ function localHeader(name, h, extra = Buffer.alloc(0)) {
  * Entries in byte order. Each is the CENTRAL record's fields — `name`, `method`,
  * `flags`, `crc`, `csz`, `usz`, `mode`, `extra` — plus `body`, the bytes after
  * its local header, and `local`, any fields the local header says differently.
+ * `rawName` is the name's bytes where they are not `name` in UTF-8.
  * `hidden` writes the local record and no central one; `at` writes no bytes and
  * a central record pointing at `at(offsets)`, offsets being where each written
  * entry's local header landed, by name.
@@ -593,7 +635,7 @@ function assembleZip(entries) {
   const offsets = {};
   let offset = 0;
   for (const e of entries.filter((x) => !x.at)) {
-    const local = localHeader(e.name, { ...e, ...(e.local ?? {}) }, e.local?.extra ?? e.extra);
+    const local = localHeader(e.local?.name ?? e.rawName ?? e.name, { ...e, ...(e.local ?? {}) }, e.local?.extra ?? e.extra);
     offsets[e.name] ??= offset;
     e.writtenAt = offset;
     parts.push(local, e.body);
@@ -602,10 +644,11 @@ function assembleZip(entries) {
   const indexed = entries.filter((x) => !x.hidden);
   const cd = Buffer.concat(indexed.map((e) => {
     const extra = e.extra ?? Buffer.alloc(0);
+    const name = e.rawName ?? Buffer.from(e.name);
     return Buffer.concat([
       u32(0x02014b50), u16(0x031e), u16(20), u16(e.flags ?? 0), u16(e.method ?? 0), u16(0), u16(0x21),
-      u32(e.crc), u32(e.csz), u32(e.usz), u16(Buffer.byteLength(e.name)), u16(extra.length), u16(0), u16(0), u16(0),
-      u32(((e.mode ?? 0o644) << 16) >>> 0), u32(e.at ? e.at(offsets) : e.writtenAt), Buffer.from(e.name), extra,
+      u32(e.crc), u32(e.csz), u32(e.usz), u16(name.length), u16(extra.length), u16(0), u16(0), u16(0),
+      u32(((e.mode ?? 0o644) << 16) >>> 0), u32(e.at ? e.at(offsets) : e.writtenAt), name, extra,
     ]);
   }));
   return Buffer.concat([
@@ -644,9 +687,9 @@ function bit3Entry() {
 /**
  * sec-probe's slack.zip, as a bundle entry: a.txt's central compressed size runs
  * past the end of its deflate stream, over a local header for a second bin/run.
- * With `bit3` the local header carries no sizes (sec-probe's shape); without it
- * the local header carries the TRUE compressed size and only the central record
- * lies. A streaming reader follows the local header into the slack either way.
+ * With `bit3` the local header carries no sizes (sec-probe's shape) and a
+ * streaming reader inflates into the slack; without it both headers declare the
+ * long size, and only a reader that trusts the stream's end over it gets there.
  */
 function slackEntry({ bit3 }) {
   const e = deflatedEntry("a.txt", TEXT);
@@ -656,7 +699,7 @@ function slackEntry({ bit3 }) {
   const body = Buffer.concat([e.body, descriptor, hidden]);
   return {
     ...e, body, csz: body.length,
-    flags: bit3 ? 0x08 : 0, local: bit3 ? { crc: 0, csz: 0, usz: 0 } : { csz: e.body.length },
+    flags: bit3 ? 0x08 : 0, local: bit3 ? { crc: 0, csz: 0, usz: 0 } : undefined,
   };
 }
 
@@ -689,18 +732,20 @@ function cloakBundle(rest, { lead = () => [] } = {}) {
  * Entry names in the order a STREAMING extractor meets them: local headers from
  * byte zero, the central directory never read. A bit-3 entry has no sizes in its
  * header, so the walk inflates to the end of the stream and steps over the data
- * descriptor, as such a reader must.
+ * descriptor, as such a reader must; `trustDeflateEnd` does that for every
+ * deflated entry, as a reader that never consults the header's size does.
  */
-function streamingNames(buf) {
+function streamingNames(buf, { trustDeflateEnd = false } = {}) {
   const names = [];
   let p = 0;
   while (p + 30 <= buf.length && buf.readUInt32LE(p) === 0x04034b50) {
     const nameLen = buf.readUInt16LE(p + 26);
     const start = p + 30 + nameLen + buf.readUInt16LE(p + 28);
     names.push(buf.toString("utf8", p + 30, p + 30 + nameLen));
-    if (buf.readUInt16LE(p + 6) & 0x08) {
+    const bit3 = buf.readUInt16LE(p + 6) & 0x08;
+    if (bit3 || (trustDeflateEnd && buf.readUInt16LE(p + 8) === 8)) {
       p = start + zlib.inflateRawSync(buf.subarray(start), { info: true }).engine.bytesWritten;
-      p += (buf.readUInt32LE(p) === 0x08074b50 ? 4 : 0) + 12;
+      if (bit3) p += (buf.readUInt32LE(p) === 0x08074b50 ? 4 : 0) + 12;
     } else {
       p = start + buf.readUInt32LE(p + 18);
     }
