@@ -204,11 +204,7 @@ export async function run() {
     await test(`one reading: ${pin.rule} — refused, and by that rule alone`, () => {
       const z = cloakBundle([pin.entry()]);
       if (pin.streams) assertEqual(streamingNames(z).join(","), pin.streams, "the streaming walk");
-      const f = checkBundle(z, FIXTURE_LISTING, LIMITS).filter((x) => x.level === "error");
-      assertEqual(f.length, 1,
-        `expected exactly one finding, got:\n${f.map((x) => `${x.code}: ${x.message}`).join("\n") || "nothing"}`);
-      assertEqual(f[0].code, "E_BUNDLE_UNREADABLE", "the code");
-      assert(f[0].message.includes(pin.says), `the finding does not say ${JSON.stringify(pin.says)}: ${f[0].message}`);
+      assertSoleObjection(z, pin.says);
     });
   }
   await test("a 0x7075 Unicode Path field renaming notes.txt to bin/run is refused, in both headers", () => {
@@ -239,11 +235,7 @@ export async function run() {
   ];
   for (const pin of EXTRA_PINS) {
     await test(`one reading: ${pin.rule} — refused, and by that rule alone`, () => {
-      const f = checkBundle(cloakBundle([pin.entry()]), FIXTURE_LISTING, LIMITS).filter((x) => x.level === "error");
-      assertEqual(f.length, 1,
-        `expected exactly one finding, got:\n${f.map((x) => `${x.code}: ${x.message}`).join("\n") || "nothing"}`);
-      assertEqual(f[0].code, "E_BUNDLE_UNREADABLE", "the code");
-      assert(f[0].message.includes(pin.says), `the finding does not say ${JSON.stringify(pin.says)}: ${f[0].message}`);
+      assertSoleObjection(cloakBundle([pin.entry()]), pin.says);
     });
   }
   await test("one reading: an ordinary extra field (0x5455, a timestamp) in both headers is not refused", () => {
@@ -258,6 +250,54 @@ export async function run() {
     const z = cloakBundle([deflatedEntry("a.txt", TEXT, { usz: LIMITS.max_extract_bytes + 1 })]);
     assertEqual(errorCodes(z, FIXTURE_LISTING).join(", "), "E_BUNDLE_TOO_LARGE_EXTRACTED", "the finding set");
   });
+  // The entries must lie end to end from byte zero to the central directory.
+  // Each fixture breaks that in one place and nowhere else.
+  const TILING_PINS = [
+    {
+      // A byte-identical MANIFEST.json at byte zero that nothing indexes, so the
+      // byte-zero reading still agrees and only the layout is wrong.
+      rule: "leading bytes", says: "the first ", lead: (m) => [{ ...m, hidden: true }],
+      streams: "MANIFEST.json,MANIFEST.json,bin/run,a.txt", rest: () => [storedEntry("a.txt", TEXT)],
+    },
+    {
+      rule: "an unindexed local header between entries", says: `bytes between "bin/run" and "a.txt"`,
+      streams: "MANIFEST.json,bin/run,bin/run,a.txt",
+      rest: () => [{ ...storedEntry("bin/run", EVIL), hidden: true }, storedEntry("a.txt", TEXT)],
+    },
+    {
+      rule: "an unindexed local header after the last entry", says: `bytes between "a.txt" and the central directory`,
+      streams: "MANIFEST.json,bin/run,a.txt,bin/run",
+      rest: () => [storedEntry("a.txt", TEXT), { ...storedEntry("bin/run", EVIL), hidden: true }],
+    },
+    {
+      // lib/outer is stored, and its bytes ARE lib/inner's whole local record; the
+      // central directory points into them. A streaming reader skips lib/inner.
+      rule: "an entry inside another", says: `"lib/inner" begins`, streams: "MANIFEST.json,bin/run,lib/outer",
+      rest: () => {
+        const inner = storedEntry("lib/inner", EVIL);
+        return [
+          storedEntry("lib/outer", Buffer.concat([localHeader("lib/inner", inner), EVIL])),
+          { ...inner, at: (o) => o["lib/outer"] + 30 + "lib/outer".length },
+        ];
+      },
+    },
+    {
+      // a.txt's declared size takes in the first 16 bytes of the central
+      // directory, which precede any CRC field, so its CRC can be right.
+      rule: "an entry running into the central directory", says: "bytes into the central directory",
+      rest: () => {
+        const cdHead = Buffer.concat([u32(0x02014b50), u16(0x031e), u16(20), u16(0), u16(0), u16(0), u16(0x21)]);
+        return [{ ...storedEntry("a.txt", Buffer.concat([TEXT, cdHead])), body: TEXT }];
+      },
+    },
+  ];
+  for (const pin of TILING_PINS) {
+    await test(`one reading: ${pin.rule} — refused, and by that rule alone`, () => {
+      const z = cloakBundle(pin.rest(), { lead: pin.lead });
+      if (pin.streams) assertEqual(streamingNames(z).join(","), pin.streams, "the streaming walk");
+      assertSoleObjection(z, pin.says);
+    });
+  }
 
   // ── each rule on its own terms ──────────────────────────────────────────────
   //
@@ -328,11 +368,16 @@ export async function run() {
     },
     {
       rule: "E_MANIFEST_HEADER_DISAGREE", vector: "header-disagree",
-      // E_BUNDLE_UNREADABLE since every entry is held to its own CRC-32: the
-      // central record still declares the real manifest's, over the decoy's bytes.
-      rest: ["E_BUNDLE_UNREADABLE", "E_MANIFEST_INVALID"],
+      // E_BUNDLE_UNREADABLE three times, from two checks this set once lacked.
+      // The CRC-32 check: the central record declares the real manifest's size
+      // and CRC over the decoy at offset 1186, whose first 760 bytes fail it.
+      // The tiling check, twice: the real manifest's 803 bytes at byte zero are
+      // indexed by nothing, and neither are the decoy's last 165, past that size.
+      // The old set was incomplete because nothing here read the archive's
+      // layout; this vector was always the forged archive those checks describe.
+      rest: ["E_BUNDLE_UNREADABLE", "E_BUNDLE_UNREADABLE", "E_BUNDLE_UNREADABLE", "E_MANIFEST_INVALID"],
       otherwise: "the decoy manifest failing to parse, which is a property of that decoy and not of the comparison, " +
-        "and the decoy's bytes failing the CRC-32 the central record declares for MANIFEST.json",
+        "and the decoy's bytes failing the CRC-32 and the layout the central directory declares for MANIFEST.json",
     },
     {
       rule: "E_MANIFEST_NOT_FIRST", vector: "manifest-first-by-offset-only",
@@ -539,26 +584,33 @@ function localHeader(name, h, extra = Buffer.alloc(0)) {
  * Entries in byte order. Each is the CENTRAL record's fields — `name`, `method`,
  * `flags`, `crc`, `csz`, `usz`, `mode`, `extra` — plus `body`, the bytes after
  * its local header, and `local`, any fields the local header says differently.
+ * `hidden` writes the local record and no central one; `at` writes no bytes and
+ * a central record pointing at `at(offsets)`, offsets being where each written
+ * entry's local header landed, by name.
  */
 function assembleZip(entries) {
   const parts = [];
-  const central = [];
+  const offsets = {};
   let offset = 0;
-  for (const e of entries) {
-    const extra = e.extra ?? Buffer.alloc(0);
-    const local = localHeader(e.name, { ...e, ...(e.local ?? {}) }, e.local?.extra ?? extra);
-    central.push(Buffer.concat([
-      u32(0x02014b50), u16(0x031e), u16(20), u16(e.flags ?? 0), u16(e.method ?? 0), u16(0), u16(0x21),
-      u32(e.crc), u32(e.csz), u32(e.usz), u16(Buffer.byteLength(e.name)), u16(extra.length), u16(0), u16(0), u16(0),
-      u32(((e.mode ?? 0o644) << 16) >>> 0), u32(offset), Buffer.from(e.name), extra,
-    ]));
+  for (const e of entries.filter((x) => !x.at)) {
+    const local = localHeader(e.name, { ...e, ...(e.local ?? {}) }, e.local?.extra ?? e.extra);
+    offsets[e.name] ??= offset;
+    e.writtenAt = offset;
     parts.push(local, e.body);
     offset += local.length + e.body.length;
   }
-  const cd = Buffer.concat(central);
+  const indexed = entries.filter((x) => !x.hidden);
+  const cd = Buffer.concat(indexed.map((e) => {
+    const extra = e.extra ?? Buffer.alloc(0);
+    return Buffer.concat([
+      u32(0x02014b50), u16(0x031e), u16(20), u16(e.flags ?? 0), u16(e.method ?? 0), u16(0), u16(0x21),
+      u32(e.crc), u32(e.csz), u32(e.usz), u16(Buffer.byteLength(e.name)), u16(extra.length), u16(0), u16(0), u16(0),
+      u32(((e.mode ?? 0o644) << 16) >>> 0), u32(e.at ? e.at(offsets) : e.writtenAt), Buffer.from(e.name), extra,
+    ]);
+  }));
   return Buffer.concat([
     ...parts, cd,
-    u32(0x06054b50), u16(0), u16(0), u16(entries.length), u16(entries.length), u32(cd.length), u32(offset), u16(0),
+    u32(0x06054b50), u16(0), u16(0), u16(indexed.length), u16(indexed.length), u32(cd.length), u32(offset), u16(0),
   ]);
 }
 
@@ -579,11 +631,14 @@ function unicodePath(raw, target) {
   return Buffer.concat([u16(0x7075), u16(body.length), body]);
 }
 
-/** A deflated a.txt with bit 3 and a data descriptor, every size right: bit 3 is all that is wrong. */
+/**
+ * A deflated a.txt flagged bit 3 in both headers, with every size and the CRC in
+ * both and no data descriptor: bit 3 is all that is wrong. A real descriptor
+ * would sit between the entry and the next header, where the tiling check
+ * objects to it too.
+ */
 function bit3Entry() {
-  const e = deflatedEntry("a.txt", TEXT);
-  const descriptor = Buffer.concat([u32(0x08074b50), u32(e.crc), u32(e.csz), u32(e.usz)]);
-  return { ...e, flags: 0x08, local: { crc: 0, csz: 0, usz: 0 }, body: Buffer.concat([e.body, descriptor]) };
+  return { ...deflatedEntry("a.txt", TEXT), flags: 0x08 };
 }
 
 /**
@@ -605,10 +660,14 @@ function slackEntry({ bit3 }) {
   };
 }
 
-/** MANIFEST.json, a stored bin/run, then `rest`; the manifest lists every entry's central reading. */
-function cloakBundle(rest) {
+/**
+ * MANIFEST.json, a stored bin/run, then `rest`; the manifest lists the central
+ * reading of every entry the central directory indexes. `lead(manifestEntry)`
+ * returns entries to write before MANIFEST.json.
+ */
+function cloakBundle(rest, { lead = () => [] } = {}) {
   const entries = [storedEntry("bin/run", Buffer.from("#!/usr/bin/env node\nprocess.exit(0);\n"), 0o755), ...rest];
-  const files = entries.map((e) => ({
+  const files = entries.filter((e) => !e.hidden).map((e) => ({
     path: e.name,
     sha256: crypto.createHash("sha256").update(e.content).digest("hex"),
     size: e.content.length,
@@ -622,7 +681,8 @@ function cloakBundle(rest) {
     entry: { command: "./bin/run", args: [] },
     files,
   }));
-  return assembleZip([storedEntry("MANIFEST.json", manifest), ...entries]);
+  const manifestEntry = storedEntry("MANIFEST.json", manifest);
+  return assembleZip([...lead(manifestEntry), manifestEntry, ...entries]);
 }
 
 /**
@@ -646,4 +706,13 @@ function streamingNames(buf) {
     }
   }
   return names;
+}
+
+/** The bundle draws exactly one error, E_BUNDLE_UNREADABLE, and it says `says`. */
+function assertSoleObjection(z, says) {
+  const f = checkBundle(z, FIXTURE_LISTING, LIMITS).filter((x) => x.level === "error");
+  assertEqual(f.length, 1,
+    `expected exactly one finding, got:\n${f.map((x) => `${x.code}: ${x.message}`).join("\n") || "nothing"}`);
+  assertEqual(f[0].code, "E_BUNDLE_UNREADABLE", "the code");
+  assert(f[0].message.includes(says), `the finding does not say ${JSON.stringify(says)}: ${f[0].message}`);
 }

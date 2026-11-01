@@ -28,7 +28,7 @@ export const S_IFDIR = 0o040000;
  * @param {Buffer} buf whole archive
  * @returns {{entries: {name: string, flags: number, method: number, crc32: number,
  *            compressedSize: number, size: number, extra: Buffer, externalAttributes: number,
- *            unixMode: number, offset: number, index: number}[]}}
+ *            unixMode: number, offset: number, index: number}[], centralDirectoryOffset: number}}
  */
 export function readZip(buf) {
   let eocd = -1;
@@ -69,7 +69,7 @@ export function readZip(buf) {
     });
     p += 46 + nameLen + extraLen + commentLen;
   }
-  return { entries };
+  return { entries, centralDirectoryOffset: cdOffset };
 }
 
 /** Read one entry's bytes. Bounded by the declared sizes; never touches disk. */

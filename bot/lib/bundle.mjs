@@ -202,6 +202,52 @@ export function readEntryOneWay(buf, e) {
 }
 
 /**
+ * Every way the entries fail to tile the file from byte zero to the central
+ * directory: bytes no entry owns, before, between or after them, and entries
+ * that start inside another or run into the central directory.
+ *
+ * A streaming reader takes each local header to begin where the previous
+ * entry's data ends; the central directory names its own offsets. They meet
+ * only if the entries it lists are laid end to end over exactly that range.
+ * Measured on this branch before this check: a local header for a second
+ * `bin/run` between the last entry and the central directory, which a
+ * streaming reader extracts and nothing here indexes, came back with zero
+ * findings. Entries are taken in offset order, which need not be index order,
+ * and a bit-3 data descriptor is not allowed for: bit 3 is refused already.
+ *
+ * @param {Buffer} buf the whole .astraplugin
+ * @param {{name: string, offset: number, compressedSize: number}[]} entries `readZip`'s
+ * @param {number} cdOffset where the central directory starts
+ * @returns {string[]}
+ */
+export function tilingProblems(buf, entries, cdOffset) {
+  const problems = [];
+  const label = (e) => JSON.stringify(e.name);
+  let pos = 0;
+  let prev = null;
+  for (const e of [...entries].sort((a, b) => a.offset - b.offset)) {
+    if (e.offset > pos) {
+      problems.push(prev
+        ? `the ${e.offset - pos} bytes between ${label(prev)} and ${label(e)} belong to no entry the central directory lists`
+        : `the first ${e.offset} bytes of the file belong to no entry the central directory lists`);
+    } else if (e.offset < pos) {
+      problems.push(`${label(e)} begins ${pos - e.offset} bytes inside ${label(prev)}, so a streaming reader never meets its header`);
+    }
+    // No local header to measure: refused already, and nothing after it can be placed.
+    if (e.offset + 30 > buf.length || buf.readUInt32LE(e.offset) !== 0x04034b50) return problems;
+    const end = e.offset + 30 + buf.readUInt16LE(e.offset + 26) + buf.readUInt16LE(e.offset + 28) + e.compressedSize;
+    if (end > pos) { pos = end; prev = e; }
+  }
+  if (pos < cdOffset) {
+    problems.push(`the ${cdOffset - pos} bytes between ${prev ? label(prev) : "the start of the file"} and the central ` +
+      "directory belong to no entry it lists, and a streaming reader reads whatever local header they hold");
+  } else if (pos > cdOffset) {
+    problems.push(`${label(prev)} runs ${pos - cdOffset} bytes into the central directory`);
+  }
+  return problems;
+}
+
+/**
  * Why an entry's extra-field block gives some reader a different entry, or null.
  *
  * 0x7075, Info-ZIP's Unicode Path field, RENAMES the entry for every reader that
@@ -354,6 +400,9 @@ export function inspectBundle(buf, expected, limits) {
     const { bytes, problems } = readEntryOneWay(buf, e);
     for (const why of problems) err("E_BUNDLE_UNREADABLE", `${JSON.stringify(e.name)}: ${why}`);
     read.set(e, bytes);
+  }
+  for (const why of tilingProblems(buf, entries, zip.centralDirectoryOffset)) {
+    err("E_BUNDLE_UNREADABLE", `the archive's layout: ${why}`);
   }
 
   const manifestEntry = entries.find((e) => e.name === "MANIFEST.json");
