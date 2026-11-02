@@ -10,10 +10,11 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 import { REPO_ROOT } from "../lib/sources.mjs";
-import { privateKeyFromSeed, publicKeyBase64 } from "../../bot/lib/sign.mjs";
+import { stableStringify } from "../lib/canonical.mjs";
+import { TRUST_SCHEMA, privateKeyFromSeed, publicKeyBase64, signEnvelope } from "../../bot/lib/sign.mjs";
 import { test, assert, tmp } from "./harness.mjs";
 import { TRUST_ROOT_A, sandboxWithRoot } from "./fixtures.mjs";
 
@@ -166,18 +167,16 @@ export async function run() {
   // every catalogue stops verifying, and a DROPPED value is an end of life
   // removed by a ceremony that never decided to.
 
+  // stderr on success too: the signing summary (what was delegated, what was
+  // DROPPED) is written there.
   const signTrust = (dir, extra) => {
-    try {
-      const stdout = execFileSync(
-        "node",
-        ["tools/sign-trust.mjs", "--root-key", TRUST_ROOT_A.file, "--index-key-file", INDEX_PUB,
-         "--workflow-sha", "1".repeat(40), "--out", path.join(dir, "registry", "v1", "trust.json"), ...extra],
-        { cwd: dir, stdio: "pipe" },
-      );
-      return { status: 0, stderr: "", stdout: String(stdout) };
-    } catch (e) {
-      return { status: e.status, stderr: String(e.stderr), stdout: String(e.stdout) };
-    }
+    const r = spawnSync(
+      "node",
+      ["tools/sign-trust.mjs", "--root-key", TRUST_ROOT_A.file, "--index-key-file", INDEX_PUB,
+       "--workflow-sha", "1".repeat(40), "--out", path.join(dir, "registry", "v1", "trust.json"), ...extra],
+      { cwd: dir, stdio: "pipe" },
+    );
+    return { status: r.status, stderr: String(r.stderr), stdout: String(r.stdout) };
   };
   const NOT_AFTER = "2099-01-02T03:04:05Z";
 
@@ -240,5 +239,220 @@ export async function run() {
     const s = JSON.parse(fs.readFileSync(path.join(dir, "registry", "v1", "trust.json"), "utf8")).signed;
     assert(s.index_keys[0].not_after === NOT_AFTER, `not_after ${s.index_keys[0].not_after}`);
     assert(JSON.stringify(s.reusable_workflow_shas) === JSON.stringify(["1".repeat(40), "2".repeat(40)]), String(s.reusable_workflow_shas));
+  });
+
+  // ── kind_keys (minice content-catalogue design §5 "Keys") ─────────────────
+  //
+  // The content catalogues' keys: exactly one current and one next per kind,
+  // next valid strictly later than current, never an index key. A reader takes
+  // a kind whose pair breaks a rule as having NO keys, so a wrong document here
+  // switches a whole kind off on every client — and a re-sign that forgets one
+  // does the same silently. The writer and --verify share one judge
+  // (kindKeyProblems), and each rule is tested from both ends: the writer
+  // refuses to write it, and --verify refuses a root-signed document carrying it.
+
+  const KIND_TMP = path.join(tmp, "kind-keys");
+  fs.mkdirSync(KIND_TMP, { recursive: true });
+  const kindFile = (o) => {
+    const f = path.join(KIND_TMP, `${crypto.randomUUID()}.kind-key.json`);
+    fs.writeFileSync(f, JSON.stringify({
+      key_id: o.key_id,
+      algorithm: o.algorithm ?? "ed25519",
+      public_key: o.public_key ?? publicKeyBase64(crypto.generateKeyPairSync("ed25519").privateKey),
+      kind: o.kind,
+      role: o.role,
+      ...(o.not_before !== undefined ? { not_before: o.not_before } : {}),
+    }));
+    return f;
+  };
+  const pairFiles = (kind) => [
+    kindFile({ kind, role: "current", key_id: `astra-${kind}-2026a` }),
+    kindFile({ kind, role: "next", key_id: `astra-${kind}-2026b` }),
+  ];
+  const kindArgs = (files) => files.flatMap((f) => ["--kind-key-file", f]);
+  const trustOut = (dir) => path.join(dir, "registry", "v1", "trust.json");
+  const verifyOut = (dir) => {
+    try {
+      return { status: 0, stdout: String(execFileSync("node", ["tools/sign-trust.mjs", "--verify", trustOut(dir)], { cwd: dir, stdio: "pipe" })), stderr: "" };
+    } catch (e) {
+      return { status: e.status, stdout: String(e.stdout), stderr: String(e.stderr) };
+    }
+  };
+  // A document whose envelope is a PUBLISHED root's — so --verify gets past the
+  // signature and has only kind_keys left to judge — with `edit` applied to a
+  // well-formed signed member first.
+  const resignedWith = (dir, edit) => {
+    assert(signTrust(dir, kindArgs(pairFiles("games"))).status === 0, "the base signing");
+    const signed = JSON.parse(fs.readFileSync(trustOut(dir), "utf8")).signed;
+    edit(signed);
+    const privateKey = crypto.createPrivateKey(fs.readFileSync(TRUST_ROOT_A.file));
+    const doc = signEnvelope({ domain: TRUST_SCHEMA, signed, signers: [{ key_id: TRUST_ROOT_A.keyId, privateKey }] });
+    fs.writeFileSync(trustOut(dir), `${stableStringify(doc)}\n`);
+    return verifyOut(dir);
+  };
+  const plusSeconds = (s, n) => new Date(Date.parse(s) + n * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");
+
+  // Watched failing with the `kind_keys` spread removed from `signed`: the
+  // document verified and carried no kind keys.
+  await test("kind keys: six kinds' pairs are written sorted, current from the signing instant and next 60 s later, and --verify lists them", () => {
+    const dir = sandboxWithRoot("trust-kind-ok", TRUST_ROOT_A.keyId, TRUST_ROOT_A.publicKey);
+    const kinds = ["packs", "games", "commands", "models", "characters", "animsets"];
+    const files = kinds.flatMap(pairFiles).reverse();
+    const r = signTrust(dir, kindArgs(files));
+    assert(r.status === 0, r.stderr);
+    const s = JSON.parse(fs.readFileSync(trustOut(dir), "utf8")).signed;
+    assert(s.kind_keys.length === 12, `${s.kind_keys.length} kind keys`);
+    const order = s.kind_keys.map((k) => `${k.kind}/${k.role}`);
+    const want = [...kinds].sort().flatMap((k) => [`${k}/current`, `${k}/next`]);
+    assert(JSON.stringify(order) === JSON.stringify(want), order.join(" "));
+    for (const k of s.kind_keys) {
+      assert(Object.keys(k).sort().join(",") === "alg,key_id,kind,not_before,public_key,role", Object.keys(k).join(","));
+      assert(k.alg === "ed25519", k.alg);
+      assert(k.key_id === `astra-${k.kind}-2026${k.role === "current" ? "a" : "b"}`, k.key_id);
+      const at = k.role === "current" ? s.issued_at : plusSeconds(s.issued_at, 60);
+      assert(k.not_before === at, `${k.key_id} not_before ${k.not_before}, want ${at}`);
+    }
+    assert(!s.index_keys.some((i) => s.kind_keys.some((k) => k.public_key === i.public_key)), "a kind key in index_keys");
+    const v = verifyOut(dir);
+    assert(v.status === 0, v.stderr);
+    for (const k of s.kind_keys) assert(v.stdout.includes(k.key_id), `--verify does not list ${k.key_id}`);
+  });
+
+  // Watched failing with the next-after-current comparison removed from
+  // kindKeyProblems: both the signing and the --verify exited 0.
+  await test("kind keys: a next not later than its current is refused, by the writer and by --verify", () => {
+    for (const [cur, nxt] of [["2099-01-01T00:00:00Z", "2099-01-01T00:00:00Z"], ["2099-01-01T00:01:00Z", "2099-01-01T00:00:00Z"]]) {
+      const dir = sandboxWithRoot(`trust-kind-order-${crypto.randomUUID()}`, TRUST_ROOT_A.keyId, TRUST_ROOT_A.publicKey);
+      const r = signTrust(dir, kindArgs([
+        kindFile({ kind: "games", role: "current", key_id: "astra-games-2026a", not_before: cur }),
+        kindFile({ kind: "games", role: "next", key_id: "astra-games-2026b", not_before: nxt }),
+      ]));
+      assert(r.status === 1, `${cur}/${nxt}: exit ${r.status}`);
+      assert(r.stderr.includes("not later than current"), r.stderr);
+      assert(!fs.existsSync(trustOut(dir)), `${cur}/${nxt} wrote a document`);
+    }
+    const dir = sandboxWithRoot("trust-kind-order-verify", TRUST_ROOT_A.keyId, TRUST_ROOT_A.publicKey);
+    const v = resignedWith(dir, (s) => {
+      for (const k of s.kind_keys) k.not_before = "2026-11-02T00:00:00Z";
+    });
+    assert(v.status === 1, `--verify exit ${v.status}`);
+    assert(v.stderr.includes("not later than current"), v.stderr);
+  });
+
+  // Watched failing with the exactly-one-current-and-one-next check removed
+  // from kindKeyProblems: a second games current was written and verified.
+  await test("kind keys: a kind with a second current, a third key or a lone key is refused, by the writer and by --verify", () => {
+    const cases = [
+      [[...pairFiles("games"), kindFile({ kind: "games", role: "current", key_id: "astra-games-2026c" })], "exactly one current and one next"],
+      [[kindFile({ kind: "games", role: "current", key_id: "astra-games-2026a" })], "exactly one current and one next"],
+      [[kindFile({ kind: "games", role: "current", key_id: "astra-games-2026a" }), kindFile({ kind: "games", role: "current", key_id: "astra-games-2026b" })], "exactly one current and one next"],
+    ];
+    for (const [files, says] of cases) {
+      const dir = sandboxWithRoot(`trust-kind-dup-${crypto.randomUUID()}`, TRUST_ROOT_A.keyId, TRUST_ROOT_A.publicKey);
+      const r = signTrust(dir, kindArgs(files));
+      assert(r.status === 1, `${files.length} file(s): exit ${r.status}`);
+      assert(r.stderr.includes(says), r.stderr);
+      assert(!fs.existsSync(trustOut(dir)), `${files.length} file(s) wrote a document`);
+    }
+    const dir = sandboxWithRoot("trust-kind-dup-verify", TRUST_ROOT_A.keyId, TRUST_ROOT_A.publicKey);
+    const v = resignedWith(dir, (s) => {
+      s.kind_keys.splice(1, 0, {
+        ...s.kind_keys[0],
+        key_id: "astra-games-2026c",
+        public_key: publicKeyBase64(crypto.generateKeyPairSync("ed25519").privateKey),
+      });
+    });
+    assert(v.status === 1, `--verify exit ${v.status}`);
+    assert(v.stderr.includes("exactly one current and one next"), v.stderr);
+  });
+
+  // Watched failing with the index_keys comparison removed from kindKeyProblems.
+  await test("kind keys: a kind key that is also an index key is refused, by the writer and by --verify", () => {
+    const indexPub = JSON.parse(fs.readFileSync(INDEX_PUB, "utf8")).public_key;
+    const dir = sandboxWithRoot("trust-kind-index", TRUST_ROOT_A.keyId, TRUST_ROOT_A.publicKey);
+    const r = signTrust(dir, kindArgs([
+      kindFile({ kind: "games", role: "current", key_id: "astra-games-2026a", public_key: indexPub }),
+      kindFile({ kind: "games", role: "next", key_id: "astra-games-2026b" }),
+    ]));
+    assert(r.status === 1, `exit ${r.status}`);
+    assert(r.stderr.includes("never goes in index_keys"), r.stderr);
+    assert(!fs.existsSync(trustOut(dir)), "it wrote a document");
+    const dir2 = sandboxWithRoot("trust-kind-index-verify", TRUST_ROOT_A.keyId, TRUST_ROOT_A.publicKey);
+    const v = resignedWith(dir2, (s) => {
+      s.kind_keys[1].public_key = s.index_keys[0].public_key;
+    });
+    assert(v.status === 1, `--verify exit ${v.status}`);
+    assert(v.stderr.includes("never goes in index_keys"), v.stderr);
+  });
+
+  // Watched failing with each refusal commented out in turn.
+  await test("kind keys: an unknown kind, an unknown role, a non-ed25519 key, a misnamed id, a key in two kinds and a TEST key are refused", () => {
+    const shared = publicKeyBase64(crypto.generateKeyPairSync("ed25519").privateKey);
+    const testPub = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "tools", "testkeys", "TEST-ONLY-DO-NOT-TRUST-index-2026a.pub.json"), "utf8"));
+    const cases = [
+      [[kindFile({ kind: "game", role: "current", key_id: "astra-game-2026a" }), kindFile({ kind: "game", role: "next", key_id: "astra-game-2026b" })], "is not one of"],
+      [[kindFile({ kind: "games", role: "current", key_id: "astra-games-2026a" }), kindFile({ kind: "games", role: "previous", key_id: "astra-games-2026b" })], "is not current or next"],
+      [[kindFile({ kind: "games", role: "current", key_id: "astra-games-2026a", algorithm: "rsa" }), kindFile({ kind: "games", role: "next", key_id: "astra-games-2026b" })], "a kind key is ed25519"],
+      [[kindFile({ kind: "games", role: "current", key_id: "astra-packs-2026a" }), kindFile({ kind: "games", role: "next", key_id: "astra-games-2026b" })], "the index key's naming"],
+      [[...pairFiles("games"), kindFile({ kind: "packs", role: "current", key_id: "astra-packs-2026a", public_key: shared }),
+        kindFile({ kind: "packs", role: "next", key_id: "astra-packs-2026b" }), kindFile({ kind: "models", role: "current", key_id: "astra-models-2026a", public_key: shared }),
+        kindFile({ kind: "models", role: "next", key_id: "astra-models-2026b" })], "one key is authorised for one kind"],
+      [[kindFile({ kind: "games", role: "current", key_id: testPub.key_id, public_key: testPub.public_key }), kindFile({ kind: "games", role: "next", key_id: "astra-games-2026b" })], "TEST key"],
+    ];
+    for (const [files, says] of cases) {
+      const dir = sandboxWithRoot(`trust-kind-shape-${crypto.randomUUID()}`, TRUST_ROOT_A.keyId, TRUST_ROOT_A.publicKey);
+      const r = signTrust(dir, kindArgs(files));
+      assert(r.status === 1, `${says}: exit ${r.status}`);
+      assert(r.stderr.includes(says), `${says}: ${r.stderr}`);
+      assert(!fs.existsSync(trustOut(dir)), `${says}: wrote a document`);
+    }
+  });
+
+  // Watched failing with the `carried` loop in kindKeysToWrite removed: the
+  // re-sign without the files exited 0 and wrote a document with no kind_keys.
+  await test("kind keys the published document carries are never dropped by omission; restated, they keep their not_before", () => {
+    const dir = sandboxWithRoot("trust-kind-carry", TRUST_ROOT_A.keyId, TRUST_ROOT_A.publicKey);
+    const games = pairFiles("games");
+    assert(signTrust(dir, kindArgs(games)).status === 0, "first signing");
+    const before = fs.readFileSync(trustOut(dir), "utf8");
+    const first = JSON.parse(before).signed.kind_keys;
+
+    const dropped = signTrust(dir, []);
+    assert(dropped.status === 1, `exit ${dropped.status}`);
+    assert(dropped.stderr.includes("would drop it") && dropped.stderr.includes("astra-games-2026a"), dropped.stderr);
+    assert(fs.readFileSync(trustOut(dir), "utf8") === before, "the refused signing changed the published document");
+
+    const halfDropped = signTrust(dir, kindArgs([games[0]]));
+    assert(halfDropped.status === 1 && halfDropped.stderr.includes("astra-games-2026b"), `half: ${halfDropped.status} ${halfDropped.stderr}`);
+
+    const swapped = signTrust(dir, kindArgs([kindFile({ kind: "games", role: "current", key_id: "astra-games-2026a" }), games[1]]));
+    assert(swapped.status === 1 && swapped.stderr.includes("a key id names one key for good"), `swapped: ${swapped.status} ${swapped.stderr}`);
+
+    const kept = signTrust(dir, ["--serial", "50", ...kindArgs(games)]);
+    assert(kept.status === 0, kept.stderr);
+    const again = JSON.parse(fs.readFileSync(trustOut(dir), "utf8")).signed;
+    assert(JSON.stringify(again.kind_keys) === JSON.stringify(first), `restated keys changed: ${JSON.stringify(again.kind_keys)}`);
+
+    const unknownDrop = signTrust(dir, [...kindArgs(games), "--drop-kind-key", "astra-packs-2026a"]);
+    assert(unknownDrop.status === 1 && unknownDrop.stderr.includes("authorises no kind key"), `unknown drop: ${unknownDrop.status} ${unknownDrop.stderr}`);
+
+    const removed = signTrust(dir, ["--drop-kind-key", "astra-games-2026a", "--drop-kind-key", "astra-games-2026b"]);
+    assert(removed.status === 0, `removed: ${removed.stderr}`);
+    assert(removed.stderr.includes("DROPPED"), removed.stderr);
+    const none = JSON.parse(fs.readFileSync(trustOut(dir), "utf8")).signed;
+    assert(!("kind_keys" in none), "a document with no kind keys carries an empty kind_keys member");
+  });
+
+  // Watched failing with the kind-key block removed from the script:
+  // sign-trust refused the re-sign (the guard above), so the allowlist could not widen.
+  await test("ceremony-allowlist-workflow.sh carries the kind keys forward, not_before included", () => {
+    const dir = sandboxWithRoot("trust-kind-allowlist", TRUST_ROOT_A.keyId, TRUST_ROOT_A.publicKey);
+    fs.copyFileSync(path.join(REPO_ROOT, "tools", "ceremony-allowlist-workflow.sh"), path.join(dir, "tools", "ceremony-allowlist-workflow.sh"));
+    assert(signTrust(dir, kindArgs([...pairFiles("games"), ...pairFiles("commands")])).status === 0, "first signing");
+    const first = JSON.parse(fs.readFileSync(trustOut(dir), "utf8")).signed.kind_keys;
+    execFileSync("bash", ["tools/ceremony-allowlist-workflow.sh", TRUST_ROOT_A.file, "2".repeat(40)], { cwd: dir, stdio: "pipe" });
+    const s = JSON.parse(fs.readFileSync(trustOut(dir), "utf8")).signed;
+    assert(JSON.stringify(s.kind_keys) === JSON.stringify(first), `kind_keys ${JSON.stringify(s.kind_keys)}`);
+    assert(s.reusable_workflow_shas.includes("2".repeat(40)), "the allowlist did not widen");
   });
 }

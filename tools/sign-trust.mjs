@@ -10,6 +10,11 @@
 // `--not-after` is repeatable and optional, and REQUIRED for a key whose
 // not_after the document at --out already carries: restate it to keep it.
 //
+// `--kind-key-file <kind-key.json>` (repeatable) authorises a content-catalogue
+// kind key in `kind_keys` — see "kind keys" below. Each one the document at
+// --out already carries must be passed again, or removed by name with
+// `--drop-kind-key <key_id>`.
+//
 //   node tools/sign-trust.mjs --verify registry/v1/trust.json
 //
 // ── what this document is for ──────────────────────────────────────────────
@@ -256,6 +261,204 @@ function notAfterFlags(indexKeys, now) {
   return out;
 }
 
+// ── kind keys (minice docs/architecture/2026-11-01-content-catalogue.md §5) ──
+//
+// `kind_keys` authorises the keys that sign the content catalogues — commands,
+// characters, models, animsets, packs, games — each kind its own pair, signed
+// by the same roots as `index_keys` and NEVER in `index_keys`: a client that
+// predates `kind_keys` reads only `index_keys`, so the separation is what stops
+// it accepting a kind key for the plugin index. The shape, one per entry:
+//
+//   { kind, role: "current"|"next", key_id: "astra-<kind>-2026a",
+//     alg: "ed25519", public_key: <base64 of 32 bytes>, not_before: <RFC 3339> }
+//
+// EXACTLY two per kind, one `current` and one `next`, both pre-authorised, so a
+// routine rotation is the signer switching to `next` with no ceremony. A key is
+// valid from its `not_before`, and `next`'s must be LATER than `current`'s;
+// readers take a kind whose pair breaks any rule as having no keys at all (fail
+// closed), so this tool refuses to write such a pair and `--verify` refuses to
+// pass one. The one reader today is astra-games-catalogue `lib/trust.mjs`.
+//
+// A key file is the `.pub.json` keygen-index.sh writes plus `kind` and `role`,
+// and optionally `not_before`. Without one, a NEW key gets the signing instant
+// (`current`) or the signing instant + NEXT_AFTER_SECONDS (`next`): the next
+// key is authorised at once, for an emergency rotation without a ceremony,
+// while its private half stays offline. A key the document at --out already
+// carries keeps its own `not_before`: a re-sign never moves when a key became
+// valid (a document it signed would stop verifying on a strict reader).
+
+/** The kinds a kind key can sign for. Closed: a new kind is an edit here. */
+export const KINDS = Object.freeze(["animsets", "characters", "commands", "games", "models", "packs"]);
+const ROLES = Object.freeze(["current", "next"]);
+const KIND_KEY_MEMBERS = "alg,key_id,kind,not_before,public_key,role";
+/** A new `next` key's not_before is a new `current`'s plus this. */
+export const NEXT_AFTER_SECONDS = 60;
+
+const iso = (t) => t.toISOString().replace(/\.\d{3}Z$/, "Z");
+
+function isRawEd25519(b64) {
+  if (typeof b64 !== "string") return false;
+  const raw = Buffer.from(b64, "base64");
+  if (raw.length !== 32 || raw.toString("base64") !== b64) return false;
+  try {
+    publicKeyFromBase64(b64);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Every way `signed.kind_keys` breaks §5, as sentences; empty when it holds.
+ * The writer and `--verify` both judge with this one function, so a document
+ * this tool writes is one its verifier passes and nothing else is.
+ */
+export function kindKeyProblems(signed) {
+  const all = signed?.kind_keys;
+  if (all === undefined) return [];
+  if (!Array.isArray(all)) return ["kind_keys is not an array"];
+  const problems = [];
+  const indexKeys = Array.isArray(signed.index_keys) ? signed.index_keys : [];
+  const byKind = new Map();
+  const ids = new Map();
+  const pubs = new Map();
+  for (const k of all) {
+    const name = k?.key_id ?? JSON.stringify(k);
+    if (!k || typeof k !== "object" || Object.keys(k).sort().join(",") !== KIND_KEY_MEMBERS) {
+      problems.push(`${name}: a kind key has exactly the members ${KIND_KEY_MEMBERS}`);
+      continue;
+    }
+    if (!KINDS.includes(k.kind)) problems.push(`${name}: kind ${JSON.stringify(k.kind)} is not one of ${KINDS.join(", ")}`);
+    if (!ROLES.includes(k.role)) problems.push(`${name}: role ${JSON.stringify(k.role)} is not current or next`);
+    if (k.alg !== "ed25519") problems.push(`${name}: alg ${JSON.stringify(k.alg)} is not ed25519`);
+    if (typeof k.key_id !== "string" || !new RegExp(`^astra-${k.kind}-\\d{4}[a-z]$`).test(k.key_id)) {
+      problems.push(`${name}: key_id is not astra-${k.kind}-<year><letter>, the index key's naming`);
+    }
+    if (!isRawEd25519(k.public_key)) problems.push(`${name}: public_key is not the base64 of a 32-byte Ed25519 key`);
+    if (!strictTime(k.not_before)) problems.push(`${name}: not_before ${JSON.stringify(k.not_before)} is not a YYYY-MM-DDTHH:MM:SSZ instant`);
+    if (ids.has(k.key_id)) problems.push(`${name}: key_id appears twice in kind_keys`);
+    ids.set(k.key_id, k);
+    if (pubs.has(k.public_key)) {
+      problems.push(`${name}: the same public key as ${pubs.get(k.public_key).key_id}; one key is authorised for one kind and one role`);
+    }
+    pubs.set(k.public_key, k);
+    if (indexKeys.some((i) => i?.key_id === k.key_id || i?.public_key === k.public_key)) {
+      problems.push(`${name}: also in index_keys; a kind key never goes in index_keys`);
+    }
+    if (!byKind.has(k.kind)) byKind.set(k.kind, []);
+    byKind.get(k.kind).push(k);
+  }
+  for (const [kind, keys] of byKind) {
+    const roles = keys.map((k) => k.role).sort();
+    if (roles.length !== 2 || roles[0] !== "current" || roles[1] !== "next") {
+      problems.push(`${kind}: kind_keys must hold exactly one current and one next key; it holds ${JSON.stringify(roles)}`);
+      continue;
+    }
+    const cur = keys.find((k) => k.role === "current");
+    const nxt = keys.find((k) => k.role === "next");
+    if (!(Date.parse(nxt.not_before) > Date.parse(cur.not_before))) {
+      problems.push(
+        `${kind}: next ${nxt.key_id} is valid from ${nxt.not_before}, not later than current ${cur.key_id} ` +
+          `(${cur.not_before}); readers take the kind as having no keys`,
+      );
+    }
+  }
+  const order = all.map((k) => `${k?.kind}\u0000${k?.role}`);
+  if (order.some((o, i) => i > 0 && order[i - 1] > o)) problems.push("kind_keys is not sorted by kind, then role");
+  return problems;
+}
+
+/** One kind key from a `--kind-key-file`: keygen-index.sh's .pub.json plus kind, role and an optional not_before. */
+function kindKeyFromFile(file) {
+  let doc;
+  try {
+    doc = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (e) {
+    die(`cannot read the kind key at ${file}: ${e.message}`);
+  }
+  if (!doc.key_id || !doc.public_key || !doc.kind || !doc.role) {
+    die(`${file} has no key_id/public_key/kind/role — a kind key file is keygen-index.sh's .pub.json plus kind and role`);
+  }
+  if (/^TEST-ONLY/i.test(doc.key_id)) {
+    die(`${file} is a TEST key (${doc.key_id}). Its private half is published in this repository.`);
+  }
+  const alg = doc.alg ?? doc.algorithm ?? "ed25519";
+  if (alg !== "ed25519") die(`${file}: ${doc.key_id} is ${alg}; a kind key is ed25519`);
+  if (doc.not_before !== undefined && !strictTime(doc.not_before)) {
+    die(`${file}: not_before ${JSON.stringify(doc.not_before)} is not a real YYYY-MM-DDTHH:MM:SSZ instant`);
+  }
+  return {
+    kind: String(doc.kind),
+    role: String(doc.role),
+    key_id: String(doc.key_id),
+    public_key: String(doc.public_key),
+    not_before: doc.not_before,
+    file,
+  };
+}
+
+/** The kind keys the document at `outPath` carries, by key id. */
+function previousKindKeys(outPath) {
+  try {
+    const doc = JSON.parse(fs.readFileSync(outPath, "utf8"));
+    const out = new Map();
+    for (const k of doc?.signed?.kind_keys ?? []) if (k && typeof k.key_id === "string") out.set(k.key_id, k);
+    return out;
+  } catch {
+    return new Map();
+  }
+}
+
+/**
+ * The `kind_keys` member to write. A key the document at --out carries must be
+ * RESTATED (its --kind-key-file passed again) or named by --drop-kind-key: this
+ * tool rebuilds `signed` from flags, so without the rule a re-sign that forgot
+ * the flags would silently take a whole content kind off every client — the
+ * same failure `--not-after` guards for an index key's end of life.
+ */
+function kindKeysToWrite(outPath, now) {
+  const given = args("--kind-key-file").map(kindKeyFromFile);
+  const drops = args("--drop-kind-key");
+  const carried = previousKindKeys(outPath);
+  const out = path.relative(REPO, outPath);
+  const givenIds = new Set(given.map((k) => k.key_id));
+  for (const id of drops) {
+    if (!carried.has(id)) die(`--drop-kind-key ${id}: ${out} authorises no kind key ${id}`);
+    if (givenIds.has(id)) die(`--drop-kind-key ${id} and a --kind-key-file restating it; pick one`);
+  }
+  for (const [id, k] of carried) {
+    if (!givenIds.has(id) && !drops.includes(id)) {
+      die(
+        `${out} authorises the ${k.kind} ${k.role} key ${id}, and no --kind-key-file restates it, so this document ` +
+          `would drop it — a kind taken off every client by omission. Pass its file again (--kind-key-file) to keep ` +
+          `it, or --drop-kind-key ${id} to remove it on purpose (a compromise).`,
+      );
+    }
+  }
+  const nowS = iso(now);
+  const nextS = iso(new Date(now.getTime() + NEXT_AFTER_SECONDS * 1000));
+  const keys = given.map((k) => {
+    const was = carried.get(k.key_id);
+    let notBefore = k.not_before;
+    if (was) {
+      if (was.kind !== k.kind || was.public_key !== k.public_key) {
+        die(`${k.file}: ${k.key_id} is authorised in ${out} as a different ${was.kind !== k.kind ? "kind" : "public key"}; a key id names one key for good`);
+      }
+      if (was.role !== k.role && !(was.role === "next" && k.role === "current")) {
+        die(`${k.file}: ${k.key_id} is ${was.role} in ${out}; a key only ever moves from next to current`);
+      }
+      if (notBefore !== undefined && notBefore !== was.not_before) {
+        die(`${k.file}: ${k.key_id} has been valid from ${was.not_before}; a re-sign never moves a key's not_before`);
+      }
+      notBefore = was.not_before;
+    }
+    if (notBefore === undefined) notBefore = k.role === "next" ? nextS : nowS;
+    return { alg: "ed25519", key_id: k.key_id, kind: k.kind, not_before: notBefore, public_key: k.public_key, role: k.role };
+  });
+  keys.sort((a, b) => (a.kind === b.kind ? (a.role < b.role ? -1 : a.role > b.role ? 1 : 0) : a.kind < b.kind ? -1 : 1));
+  return { keys, dropped: drops.map((id) => carried.get(id)) };
+}
+
 /** The serial already published, so the default is "one more than that". */
 function previousSerial(outPath) {
   try {
@@ -287,6 +490,13 @@ function verify(file) {
   }
 
   const signed = doc.signed ?? {};
+  const kindProblems = kindKeyProblems(signed);
+  if (kindProblems.length) {
+    die(`${file} verifies, but its kind_keys break the content catalogue's rules:\n  - ${kindProblems.join("\n  - ")}`);
+  }
+  const kindRows = (signed.kind_keys ?? []).map(
+    (k) => `    ${k.kind.padEnd(10)} ${k.role.padEnd(7)} ${k.key_id}  ${k.public_key}  (from ${k.not_before})`,
+  );
   const keyRows = (signed.index_keys ?? []).map(
     (k) => `    ${k.key_id}  ${k.public_key}${k.not_after ? `  (until ${k.not_after})` : ""}`,
   );
@@ -299,6 +509,8 @@ function verify(file) {
       `    expires ${signed.expires_at ?? "never"}`,
       `  index keys it delegates to:`,
       ...(keyRows.length ? keyRows : ["    (none — nothing can sign a catalogue)"]),
+      `  kind keys it authorises:`,
+      ...(kindRows.length ? kindRows : ["    (none — nothing can sign a content catalogue)"]),
       `  reusable-workflow SHAs it allows:`,
       ...((signed.reusable_workflow_shas ?? []).map((s) => `    ${s}`) || []),
     ].join("\n"),
@@ -324,6 +536,8 @@ function main() {
         "                 --index-key-file <index.pub.json>   (repeatable)",
         "                 --workflow-sha <40-hex>              (repeatable)",
         "                 [--not-after <key_id>=<YYYY-MM-DDTHH:MM:SSZ>]  (repeatable)",
+        "                 [--kind-key-file <kind-key.json>]   (repeatable)",
+        "                 [--drop-kind-key <key_id>]          (repeatable)",
         "                 [--serial N] [--expires-days N] [--out <file>]",
         "  sign-trust.mjs --verify <file>",
       ].join("\n"),
@@ -405,6 +619,8 @@ function main() {
     }
   }
 
+  const kind = kindKeysToWrite(outPath, now);
+
   const signed = {
     schema: TRUST_SCHEMA,
     serial,
@@ -425,7 +641,12 @@ function main() {
       ...(notAfter.has(k.key_id) ? { not_after: notAfter.get(k.key_id) } : {}),
     })),
     reusable_workflow_shas: workflowShas,
+    // Only when there is one: a document without kind keys keeps the bytes it
+    // had before the member existed.
+    ...(kind.keys.length ? { kind_keys: kind.keys } : {}),
   };
+  const kindProblems = kindKeyProblems(signed);
+  if (kindProblems.length) die(`refusing to write kind_keys that break the content catalogue's rules:\n  - ${kindProblems.join("\n  - ")}`);
 
   const doc = {
     $comment:
@@ -457,9 +678,14 @@ function main() {
       `  expires     ${signed.expires_at}  — re-sign before this or the catalogue stops verifying`,
       `  delegates   ${indexKeys.map((k) => `${k.key_id}${notAfter.has(k.key_id) ? ` (until ${notAfter.get(k.key_id)})` : ""}`).join(", ")}`,
       `  allows      ${workflowShas.length} reusable-workflow commit(s)`,
+      `  kind keys   ${kind.keys.length ? kind.keys.map((k) => `${k.key_id} (${k.kind} ${k.role}, from ${k.not_before})`).join(", ") : "none"}`,
+      ...(kind.dropped.length ? [`  DROPPED     ${kind.dropped.map((k) => `${k.key_id} (${k.kind} ${k.role})`).join(", ")}`] : []),
       "",
       "  Commit it, then make sure ASTRA_INDEX_SIGNING_KEY in the `publish`",
       "  environment holds the private half of the key named above.",
+      ...(kind.keys.length
+        ? ["  Each kind key's private half is its own environment's secret: ops", "  runbooks/sign-trust-json.md \"Kind keys\"."]
+        : []),
     ].join("\n"),
   );
 }
