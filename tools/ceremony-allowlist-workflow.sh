@@ -93,6 +93,22 @@ mapfile -t NOT_AFTER < <(node -e '
   for (const k of t.index_keys ?? []) if (k.not_after !== undefined) console.log(`${k.key_id}=${k.not_after}`);
 ' "$TRUST")
 for na in "${NOT_AFTER[@]}"; do ARGS+=(--not-after "$na"); done
+# The content-catalogue kind keys, carried forward the same way and for the same
+# reason, each with its own not_before: widening the allowlist authorises no
+# kind and removes none. sign-trust.mjs refuses a re-sign that would drop one.
+mkdir -p "$WORK/kind"
+node -e '
+  const fs = require("fs");
+  const t = JSON.parse(fs.readFileSync(process.argv[1], "utf8")).signed;
+  for (const k of t.kind_keys ?? []) {
+    fs.writeFileSync(`${process.argv[2]}/${k.key_id}.kind-key.json`, JSON.stringify({
+      $comment: "PUBLIC half of a kind key, reconstructed from the trust.json being replaced.",
+      kind: k.kind, role: k.role, key_id: k.key_id, alg: k.alg, public_key: k.public_key, not_before: k.not_before,
+    }, null, 2) + "\n");
+  }
+  if ((t.kind_keys ?? []).length) console.log(`  carrying forward ${t.kind_keys.length} kind key(s): ${t.kind_keys.map((k) => k.key_id).join(", ")}`);
+' "$TRUST" "$WORK/kind"
+for f in "$WORK"/kind/*.kind-key.json; do if [ -e "$f" ]; then ARGS+=(--kind-key-file "$f"); fi; done
 
 printf '\n  keeping %d existing commit(s), adding 1, new serial %s\n\n' "${#OLD[@]}" "$SERIAL"
 
