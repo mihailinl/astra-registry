@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "wkI1w8C5AXlD/ZaQPlkoe6o5+B3RZA75mCl7pGq4m62wOLPC4yK3q+oIFagOt4RtBkC7v82uhIqaID2LxuZRDA=="
+      "sig": "sa52jyv8z23aThIEgGEal+qhe9jj7bJkfM3f5FwMp2eSDZ1J6ogg7nnr8YQtXmyZs/npfUtKLxjV2P9K5G9zDw=="
     }
   ],
   "signed": {
-    "expires_at": "2026-12-02T18:29:09Z",
-    "issued_at": "2026-11-02T18:29:09Z",
+    "expires_at": "2026-12-03T06:07:25Z",
+    "issued_at": "2026-11-03T06:07:25Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
@@ -3332,11 +3332,11 @@
           "ui_contributions"
         ],
         "description": "A resizable photo frame on the Astra desktop: shows a photo folder as an animated slideshow with frame styles, captions and timed slides.",
-        "download_url": "https://github.com/Voltur792/photo-frame/releases/download/v0.1.0/photo-frame-0.1.0-noarch.astraplugin",
+        "download_url": "https://github.com/Voltur792/photo-frame/releases/download/v0.3.0/photo-frame-0.3.0-noarch.astraplugin",
         "downloads": 0,
         "i18n": {
           "ru": {
-            "description": "Фоторамка на рабочем столе Astra: показываю папку с фото как анимированное слайдшоу со сменой кадров, стилями рамки и подписями — размер плитки меняется на сетке.",
+            "description": "Фоторамка на рабочем столе Astra: показывает папки с фото и видео как анимированное слайдшоу со сменой кадров, стилями рамки и подписями — размер плитки меняется на сетке.",
             "name": "Фоторамка"
           }
         },
@@ -3345,12 +3345,37 @@
         "license": "MIT",
         "name": "Photo Frame",
         "platform_downloads": {
-          "linux-x64": "https://github.com/Voltur792/photo-frame/releases/download/v0.1.0/photo-frame-0.1.0-noarch.astraplugin",
-          "noarch": "https://github.com/Voltur792/photo-frame/releases/download/v0.1.0/photo-frame-0.1.0-noarch.astraplugin",
-          "windows-x64": "https://github.com/Voltur792/photo-frame/releases/download/v0.1.0/photo-frame-0.1.0-noarch.astraplugin"
+          "linux-x64": "https://github.com/Voltur792/photo-frame/releases/download/v0.3.0/photo-frame-0.3.0-noarch.astraplugin",
+          "noarch": "https://github.com/Voltur792/photo-frame/releases/download/v0.3.0/photo-frame-0.3.0-noarch.astraplugin",
+          "windows-x64": "https://github.com/Voltur792/photo-frame/releases/download/v0.3.0/photo-frame-0.3.0-noarch.astraplugin"
         },
-        "readme": "Плагин к Astra от Voltur: живая фоторамка на рабочем столе, работающая без сети. Показывает папки с фото и видео как слайд-шоу на домашнем экране. Поддерживает форматы: фото — jpg, png, webp, gif, bmp; видео — mp4, webm, mov. Работает на Astra 0.2.7 и новее, требуется 64-разрядный Python 3.10 или новее.\n\nНастройка\n\n1. Установка рамки: на домашнем экране Astra → «Панель виджетов» → «Фоторамка». Размер меняется перетаскиванием.\n2. Выбор папок: «Настройки рамки» → «📁 Выбор папки…». Можно добавить до 12 папок.\n3. Настройка показа: интервал смены, порядок, переходы, фон, подписи, поведение видео.\n\n* Папки и подпапки настраиваются отдельно.\n* Кадры предзагружаются заранее, тяжёлые — кэшируются.\n* Настройки сохраняются внутри плитки Astra.\n\nВне сети\n\nПлагин работает локально через поток 127.0.0.1. При блокировке — через мост Astra.\n\nЛицензия и поддержка\n\nMIT © Voltur. \n[Поддержать разработку на Boosty](https://boosty.to/voltur/donate).\n",
+        "readme": "Плагин к Astra от Voltur: живая фоторамка на рабочем столе, работающая без сети. Показывает папки с фото и видео как слайд-шоу на домашнем экране. Поддерживает форматы: фото — jpg, png, webp, gif, bmp, apng; видео — mp4, webm, mov, m4v. Работает на Astra 0.2.7 и новее, требуется Python 3.10 или новее.\n\nНастройка\n\n1. Установка рамки: на домашнем экране Astra → «Панель виджетов» → «Фоторамка». Размер меняется перетаскиванием.\n2. Выбор папок: «Настройки рамки» → «📁 Выбрать папку…». Можно добавить до 12 папок.\n3. Настройка показа: интервал смены, порядок, переходы, фон, подписи, поведение видео.\n\n* Поддерживается поиск файлов в подпапках (рекурсивно).\n* Кадры предзагружаются заранее, обработанные изображения кэшируются.\n* Настройки сохраняются внутри плитки Astra.\n\nВне сети\n\nПлагин работает локально через поток 127.0.0.1. При блокировке — через мост Astra.\n\nЛицензия и поддержка\n\nMIT © Voltur. \n[Поддержать разработку на Boosty](https://boosty.to/voltur/donate).\n",
         "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "photo-frame-0.3.0-noarch.astraplugin",
+                "sha256": "b4c4724534cf0ee26584884fe190f575e31dfdd0d11abf2cf29fbeb915d99db6",
+                "size": 29698,
+                "url": "https://github.com/Voltur792/photo-frame/releases/download/v0.3.0/photo-frame-0.3.0-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "ui_contributions"
+            ],
+            "min_astra_version": "0.2.7",
+            "permissions": {},
+            "protocol": 1,
+            "published_at": "2026-11-03T06:01:55Z",
+            "release": {
+              "commit": "a4b91b99cf91ab720891b9c09167b311bfbcae16",
+              "kind": "github_release",
+              "repo": "Voltur792/photo-frame",
+              "tag": "v0.3.0"
+            },
+            "review": "unreviewed",
+            "version": "0.3.0"
+          },
           {
             "artifacts": {
               "noarch": {
@@ -3383,8 +3408,8 @@
           "repo": "Voltur792/photo-frame"
         },
         "stars": 0,
-        "updated_at": "2026-10-29T23:21:05Z",
-        "version": "0.1.0"
+        "updated_at": "2026-11-03T06:01:55Z",
+        "version": "0.3.0"
       },
       {
         "added_at": "2026-10-25",
@@ -5140,6 +5165,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 130
+    "serial": 131
   }
 }
