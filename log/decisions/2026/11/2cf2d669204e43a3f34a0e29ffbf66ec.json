@@ -1,0 +1,24 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:b4c4724534cf0ee26584884fe190f575e31dfdd0d11abf2cf29fbeb915d99db6"
+  ],
+  "commit": "a4b91b99cf91ab720891b9c09167b311bfbcae16",
+  "decided_at": "2026-11-03T06:03:57Z",
+  "decision_id": "2cf2d669204e43a3f34a0e29ffbf66ec",
+  "fingerprint": "1349dd695d789fb4",
+  "plugin_id": "photo-frame",
+  "reasons": [
+    "P_PUBLISHED"
+  ],
+  "repo": "Voltur792/photo-frame",
+  "repository_id": "1439045931",
+  "repository_owner_id": "232130437",
+  "run": "41587350609/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "9415fd9a-de61-4b9a-8e59-20c65fa3608b",
+  "tag": "v0.3.0",
+  "trigger": "ci",
+  "version": "0.3.0"
+}

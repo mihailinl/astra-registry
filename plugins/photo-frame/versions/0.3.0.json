@@ -1,0 +1,28 @@
+{
+  "$comment": "Derived from Voltur792/photo-frame@v0.3.0. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "photo-frame",
+  "version": "0.3.0",
+  "published_at": "2026-11-03T06:01:55Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "Voltur792/photo-frame",
+    "tag": "v0.3.0",
+    "commit": "a4b91b99cf91ab720891b9c09167b311bfbcae16"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/Voltur792/photo-frame/releases/download/v0.3.0/photo-frame-0.3.0-noarch.astraplugin",
+      "filename": "photo-frame-0.3.0-noarch.astraplugin",
+      "sha256": "b4c4724534cf0ee26584884fe190f575e31dfdd0d11abf2cf29fbeb915d99db6",
+      "size": 29698
+    }
+  },
+  "protocol": 1,
+  "min_astra_version": "0.2.7",
+  "capabilities": [
+    "ui_contributions"
+  ],
+  "permissions": {}
+}
