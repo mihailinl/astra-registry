@@ -15,5 +15,6 @@
     "name": "astra-test-author"
   },
   "icon": "icon.svg",
-  "readme": "README.md"
+  "readme": "README.md",
+  "unlisted": true
 }

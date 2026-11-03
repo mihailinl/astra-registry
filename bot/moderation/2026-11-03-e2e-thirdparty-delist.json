@@ -1,0 +1,9 @@
+{
+  "date": "2026-11-03",
+  "action": "delist",
+  "plugin": "e2e-thirdparty",
+  "reason": "that was test plugin",
+  "category": "broken",
+  "service_decision_id": "b5643909-33d3-4232-974a-d0661d6e11aa",
+  "declared_interest": false
+}
