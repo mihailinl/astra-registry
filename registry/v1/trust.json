@@ -3,7 +3,7 @@
   "signatures": [
     {
       "key_id": "astra-root-2026a",
-      "sig": "IjePknMTCWk2SsqCIplXOuB9ZtGJM8fY7u2FCF6xPdp8ydlD281WKuuXn5w/aHkQoLNQ6mYFBIcr0KcNOdMcAw=="
+      "sig": "fGXTj3KTQQsMhEPTsCxi8h1hwHAEYo61xB0SxDzMFlbQGEvuPM2PF5TzXZzNXkLUvDTuRCk/5+fVLjhLWUNRBA=="
     }
   ],
   "signed": {
@@ -16,7 +16,105 @@
         "public_key": "qrNK87ZsLPQQK9IUJYk+Q3nFUjBCDVTxD/DgPipcvK8="
       }
     ],
-    "issued_at": "2026-10-18T19:36:40Z",
+    "issued_at": "2026-11-05T14:03:56Z",
+    "kind_keys": [
+      {
+        "alg": "ed25519",
+        "key_id": "astra-animsets-2026a",
+        "kind": "animsets",
+        "not_before": "2026-11-05T14:03:56Z",
+        "public_key": "fyL/CipAic2kHKeiqhXnbhWN0Ihvhk5sEmFPZUKc8A8=",
+        "role": "current"
+      },
+      {
+        "alg": "ed25519",
+        "key_id": "astra-animsets-2026b",
+        "kind": "animsets",
+        "not_before": "2026-11-05T14:04:56Z",
+        "public_key": "N2E4wYcYrB3z6CnaHmX5y+KEN7ILnMPXG0PUo8awzbc=",
+        "role": "next"
+      },
+      {
+        "alg": "ed25519",
+        "key_id": "astra-characters-2026a",
+        "kind": "characters",
+        "not_before": "2026-11-05T14:03:56Z",
+        "public_key": "KCV9B6LcS/r8H/ZzvP5T4GbtKjalOOzjLxwXqneZT1E=",
+        "role": "current"
+      },
+      {
+        "alg": "ed25519",
+        "key_id": "astra-characters-2026b",
+        "kind": "characters",
+        "not_before": "2026-11-05T14:04:56Z",
+        "public_key": "3miyxL/8pCaTHRqM9JRlkGtT9oJOrUNVmOhensvGEPk=",
+        "role": "next"
+      },
+      {
+        "alg": "ed25519",
+        "key_id": "astra-commands-2026a",
+        "kind": "commands",
+        "not_before": "2026-11-05T14:03:56Z",
+        "public_key": "THdz2B4k9jGcccGoQ+fnNXbK2MngSdQQMrud4wqvxFI=",
+        "role": "current"
+      },
+      {
+        "alg": "ed25519",
+        "key_id": "astra-commands-2026b",
+        "kind": "commands",
+        "not_before": "2026-11-05T14:04:56Z",
+        "public_key": "NMa9WLpvGV/hn1PvyvxZNqpLKnB77a9pgZZy8yVIp/Y=",
+        "role": "next"
+      },
+      {
+        "alg": "ed25519",
+        "key_id": "astra-games-2026a",
+        "kind": "games",
+        "not_before": "2026-11-05T14:03:56Z",
+        "public_key": "UUAKfo+dXjw1bjAsC1v7vzCCXLwxJovJKDG4UC9+OiQ=",
+        "role": "current"
+      },
+      {
+        "alg": "ed25519",
+        "key_id": "astra-games-2026b",
+        "kind": "games",
+        "not_before": "2026-11-05T14:04:56Z",
+        "public_key": "Mruv4sqEXo2Iqg3WufrrnyAkvvzQR740byCrF/BwH9Y=",
+        "role": "next"
+      },
+      {
+        "alg": "ed25519",
+        "key_id": "astra-models-2026a",
+        "kind": "models",
+        "not_before": "2026-11-05T14:03:56Z",
+        "public_key": "j7WbKnlXthu8K9kEF0pXvZfQcpzYmwykI8IF/XyyG+c=",
+        "role": "current"
+      },
+      {
+        "alg": "ed25519",
+        "key_id": "astra-models-2026b",
+        "kind": "models",
+        "not_before": "2026-11-05T14:04:56Z",
+        "public_key": "I17ntaWqwJOQOvvfQpSDZcbNZ6LFcj2Gu7uafwmChuw=",
+        "role": "next"
+      },
+      {
+        "alg": "ed25519",
+        "key_id": "astra-packs-2026a",
+        "kind": "packs",
+        "not_before": "2026-11-05T14:03:56Z",
+        "public_key": "MDynH5rqlGx06NbFlsJhu/tTN19F7v/lEts2/NXN4U4=",
+        "role": "current"
+      },
+      {
+        "alg": "ed25519",
+        "key_id": "astra-packs-2026b",
+        "kind": "packs",
+        "not_before": "2026-11-05T14:04:56Z",
+        "public_key": "7NWAtmDt+ntUxO7P5PMZnFkgHFl9wRaozSt34eZofBY=",
+        "role": "next"
+      }
+    ],
     "reusable_workflow_shas": [
       "e3329df252a46d747676cb540ae4b986af68a3ad",
       "c3f342469d186ef48458992930bf1b7c583c78d4",
@@ -24,7 +122,7 @@
       "b6e9140d53060585c70280e979b58202f34966ba"
     ],
     "schema": "astra.registry.trust/1",
-    "serial": 4
+    "serial": 5
   }
 }
 
