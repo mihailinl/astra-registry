@@ -1,16 +1,16 @@
 {
-  "$comment": "Derived from Voltur792/voice-text-input@v1.2.0 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "$comment": "Derived from Voltur792/voice-text-input@v1.5.0 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
   "schema": "astra.registry.plugin/1",
   "id": "voice-text-input",
   "name": "Voice Text Input",
-  "summary": "Voice typing into any focused window: a start word begins dictation, text is typed as you speak, a send word presses Enter. Configurable command words, fully local.",
+  "summary": "Voice typing in Russian and English with optional offline phrase translation and configurable voice commands.",
   "license": "MIT",
   "source": {
     "kind": "github",
     "repo": "Voltur792/voice-text-input"
   },
   "added_at": "2026-09-12",
-  "description": "Voice typing into any focused window: a start word begins dictation, text is typed as you speak, a send word presses Enter. Configurable command words, fully local.",
+  "description": "Voice typing in Russian and English with optional offline phrase translation and configurable voice commands.",
   "author": {
     "name": "Voltur"
   },
@@ -19,7 +19,7 @@
   "i18n": {
     "ru": {
       "name": "Голосовой наборщик текста",
-      "summary": "Голосовой набор текста в активное окно: скажите командное слово — начнётся диктовка, текст печатается по мере говорения; второе командное слово отправляет сообщение (Enter). Командные слова…"
+      "summary": "Голосовой набор на русском и английском в активное окно. Локальный перевод целых фраз, настраиваемые голосовые команды и отмена последней фразы без выхода из перевода."
     }
   }
 }

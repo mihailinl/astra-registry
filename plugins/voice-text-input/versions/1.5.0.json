@@ -1,0 +1,28 @@
+{
+  "$comment": "Derived from Voltur792/voice-text-input@v1.5.0. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "voice-text-input",
+  "version": "1.5.0",
+  "published_at": "2026-11-05T13:23:57Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "Voltur792/voice-text-input",
+    "tag": "v1.5.0",
+    "commit": "008fc1db44f2ca57d8eebb6aa7f61cf55174546e"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/Voltur792/voice-text-input/releases/download/v1.5.0/voice-text-input-1.5.0-noarch.astraplugin",
+      "filename": "voice-text-input-1.5.0-noarch.astraplugin",
+      "sha256": "dd706e7ca816f5e7fcfcfeeb5e199716d36c6c9fc80bccd5fdbc325098def050",
+      "size": 65700
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "stt",
+    "tools"
+  ],
+  "permissions": {}
+}
