@@ -1,6 +1,6 @@
 {
-  "contract_version": "6.12.1",
-  "source_commit": "aca577284a418c48d71dc6669056da9769987ed8",
+  "contract_version": "6.13.0",
+  "source_commit": "331b423cd99c210a4b60ba0b80ebbd6873ca936e",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -373,6 +373,24 @@
       "id": "token:too_late",
       "kind": "refusal_token",
       "name": "too_late",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "token:handle_required",
+      "kind": "refusal_token",
+      "name": "handle_required",
       "emitter": [
         "service"
       ],
