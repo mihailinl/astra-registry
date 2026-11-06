@@ -1,0 +1,29 @@
+{
+  "$comment": "Derived from Voltur792/browser-control@v1.2.0. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "browser-control",
+  "version": "1.2.0",
+  "published_at": "2026-11-06T08:20:09Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "Voltur792/browser-control",
+    "tag": "v1.2.0",
+    "commit": "83a6b924bc11ac67ddede81f6a0ae5f0352dd8d0"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/Voltur792/browser-control/releases/download/v1.2.0/browser-control-1.2.0-noarch.astraplugin",
+      "filename": "browser-control-1.2.0-noarch.astraplugin",
+      "sha256": "05f67c07735dd23febdd9b2907c4b341266fbc1eab53e20e70da2bde016babfc",
+      "size": 31899831
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "actions",
+    "tools",
+    "ui_contributions"
+  ],
+  "permissions": {}
+}

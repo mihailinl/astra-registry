@@ -1,0 +1,24 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:05f67c07735dd23febdd9b2907c4b341266fbc1eab53e20e70da2bde016babfc"
+  ],
+  "commit": "83a6b924bc11ac67ddede81f6a0ae5f0352dd8d0",
+  "decided_at": "2026-11-06T11:10:51Z",
+  "decision_id": "268e72bf306197e0fff639878eb1b160",
+  "fingerprint": "f8dda9924b0a6f45",
+  "plugin_id": "browser-control",
+  "reasons": [
+    "P_PUBLISHED"
+  ],
+  "repo": "Voltur792/browser-control",
+  "repository_id": "1390309413",
+  "repository_owner_id": "232130437",
+  "run": "42207980253/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "44298513-7ebd-4ba1-ac89-5b7bd3dc293d",
+  "tag": "v1.2.0",
+  "trigger": "ci",
+  "version": "1.2.0"
+}
