@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:979e2d57671fa4abad6ea1c534471aa24375ad01e58961512d45c43106ad23a0"
+  ],
+  "commit": "f3e9ac33162ea8317a5e1a1e915e9cd85080ed24",
+  "decided_at": "2026-11-07T15:39:41Z",
+  "decision_id": "8a072d6dbfe14da873690e803e571f52",
+  "fingerprint": "3163626f1959f3f9",
+  "plugin_id": "wallpaper-engine",
+  "reasons": [
+    "P_PUBLISHED",
+    "P_REVIEW_PRIORITY"
+  ],
+  "repo": "Dtierofficial/astra-wallpaper-engine",
+  "repository_id": "1449217577",
+  "repository_owner_id": "258460601",
+  "run": "42387322672/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "c36aa1ad-f9b6-418e-8e45-82672196e786",
+  "tag": "v1.1.1",
+  "trigger": "ci",
+  "version": "1.1.1"
+}

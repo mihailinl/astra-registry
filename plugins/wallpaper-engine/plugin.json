@@ -1,0 +1,25 @@
+{
+  "$comment": "Derived from Dtierofficial/astra-wallpaper-engine@v1.1.1 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "schema": "astra.registry.plugin/1",
+  "id": "wallpaper-engine",
+  "name": "Wallpaper Engine for Astra",
+  "summary": "Browse installed Wallpaper Engine wallpapers in English or Russian. Play video, images and experimental Web wallpapers inside Astra.",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "Dtierofficial/astra-wallpaper-engine"
+  },
+  "added_at": "2026-11-07",
+  "description": "Browse installed Wallpaper Engine wallpapers in English or Russian. Play video, images and experimental Web wallpapers inside Astra.",
+  "author": {
+    "name": "DtieR"
+  },
+  "icon": "icon.png",
+  "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "Wallpaper Engine для Astra",
+      "summary": "Галерея WE на русском и английском. Видео, картинки и экспериментальные локальные Web-обои. Рендер останавливается, когда Astra скрыта или свёрнута."
+    }
+  }
+}

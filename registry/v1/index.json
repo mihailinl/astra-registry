@@ -5112,6 +5112,71 @@
         "version": "1.5.0"
       },
       {
+        "added_at": "2026-11-07",
+        "author": "DtieR",
+        "capabilities": [
+          "ui_contributions"
+        ],
+        "description": "Browse installed Wallpaper Engine wallpapers in English or Russian. Play video, images and experimental Web wallpapers inside Astra.",
+        "download_url": "https://github.com/Dtierofficial/astra-wallpaper-engine/releases/download/v1.1.1/wallpaper-engine-1.1.1-noarch.astraplugin",
+        "downloads": 0,
+        "i18n": {
+          "ru": {
+            "description": "Галерея WE на русском и английском. Видео, картинки и экспериментальные локальные Web-обои. Рендер останавливается, когда Astra скрыта или свёрнута.",
+            "name": "Wallpaper Engine для Astra"
+          }
+        },
+        "icon_url": "data:image/png;base64,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",
+        "id": "wallpaper-engine",
+        "license": "MIT",
+        "name": "Wallpaper Engine for Astra",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/Dtierofficial/astra-wallpaper-engine/releases/download/v1.1.1/wallpaper-engine-1.1.1-noarch.astraplugin",
+          "noarch": "https://github.com/Dtierofficial/astra-wallpaper-engine/releases/download/v1.1.1/wallpaper-engine-1.1.1-noarch.astraplugin",
+          "windows-x64": "https://github.com/Dtierofficial/astra-wallpaper-engine/releases/download/v1.1.1/wallpaper-engine-1.1.1-noarch.astraplugin"
+        },
+        "readme": "# Wallpaper Engine for Astra\n\n![Cover illustration: Wallpaper Engine for Astra — browse your local Steam Wallpaper Engine library and apply video, image and experimental Web backgrounds inside Astra.](https://raw.githubusercontent.com/Dtierofficial/astra-wallpaper-engine/f3e9ac33162ea8317a5e1a1e915e9cd85080ed24/docs/assets/cover-en.png)\n\n**Browse your downloaded Steam Wallpaper Engine library and apply supported backgrounds directly inside Astra.**\n\n- **Author:** DtieR\n- **License:** MIT (third-party notices in `ui/legal/NOTICE.md`)\n- **Languages:** English & Russian in a single package (automatically follows Astra's language, with a manual switcher in the header)\n- **Platform:** Windows 10/11 x64 (the bundle target is `noarch` because it contains a small Windows window-visibility helper)\n\n---\n\n## Features\n\n![Gallery preview (English): grid of downloaded wallpapers with type badges, search/filter toolbar, and the right-hand inspector panel showing playback and Wallpaper Engine settings.](https://raw.githubusercontent.com/Dtierofficial/astra-wallpaper-engine/f3e9ac33162ea8317a5e1a1e915e9cd85080ed24/docs/assets/gallery-en.png)\n\n- **Automatic Steam Library Discovery:** Finds your installed Steam libraries (`libraryfolders.vdf`), Workshop content (`431960`) and local projects (`myprojects`) without manual folder copying.\n- **Desktop-Style Browser & Inspector:** Search by title or tags, filter by format (`Video`, `Images / GIF`, `Web`, `Scenes`), sort by name or modification date, mark favorites (`★`), and adjust card size.\n- **Format Support Matrix:**\n  - **Video (`MP4`, `WebM`, `OGV`):** Native playback behind Astra's UI with volume, playback speed (`0.25x–4x`), scaling mode (`Fill / crop`, `Fit`, `Stretch`) and UI dimming (`0–90%`).\n  - **Images & GIF (`PNG`, `JPG`, `WebP`, `GIF`, `BMP`):** Direct background display with scaling and dimming controls.\n  - **Web Wallpapers (`HTML / CSS / JS`):** Experimental isolated sandbox playback with `wallpaperPropertyListener` (`applyUserProperties`, `applyGeneralProperties`, `setPaused`), interactive property editors in the inspector, and approximate audio-spectrum forwarding.\n  - **Scene / PKG (`scene.pkg`):** Shown in the catalog with properties and previews, **not rendered as live scenes**. Preview images are never misrepresented as running scenes.\n- **Read-Only Wallpaper Engine Settings Import:** Reads saved per-monitor values (`Monitor0`, `Monitor1`, etc.) and author defaults from `project.json` and `config.json` without modifying Wallpaper Engine's files.\n- **Resource-Friendly Lifecycle:** Releases the active `<video>`, `<img>` or Web `<iframe>` when the document is hidden (`visibilitychange` / `pagehide`). On Windows, a lightweight read-only helper (`window-monitor.exe`) checks whether `astraui.exe` is minimized or hidden and pauses rendering via `push_to_ui`.\n\n---\n\n## Русское описание (Russian)\n\n![Обложка: Wallpaper Engine для Astra — твоя локальная библиотека обоев внутри интерфейса Astra.](https://raw.githubusercontent.com/Dtierofficial/astra-wallpaper-engine/f3e9ac33162ea8317a5e1a1e915e9cd85080ed24/docs/assets/cover-ru.png)\n\n**Локальная галерея скачанных обоев Wallpaper Engine и фоновый плеер прямо внутри интерфейса Astra.**\n\n![Скриншот галереи (Русский): сетка установленных обоев с фильтрами, поиском, избранным и правой панелью свойств.](https://raw.githubusercontent.com/Dtierofficial/astra-wallpaper-engine/f3e9ac33162ea8317a5e1a1e915e9cd85080ed24/docs/assets/gallery-ru.png)\n\n### Что умеет плагин\n- **Один пакет — два языка (RU / EN):** при запуске плагин автоматически включает язык самой Astra (до получения ответа показывается только нейтральный экран загрузки без мигания чужого языка). В шапке галереи также есть ручной переключатель языка.\n- **Автопоиск библиотеки Steam:** автоматически находит папки `steamapps/workshop/content/431960` и локальные проекты `myprojects`. Никакие файлы оригинального Wallpaper Engine не изменяются.\n- **Поддерживаемые форматы:**\n  - **Видео (`MP4`, `WebM`, `OGV`):** воспроизводятся прямо под интерфейсом Astra; настраиваются громкость, скорость, заполнение и затемнение фона.\n  - **Картинки и GIF (`PNG`, `JPG`, `WebP`, `GIF`, `BMP`):** отображаются в фоне с выбором масштабирования и затемнения.\n  - **Web-обои (`HTML / CSS / JS`):** экспериментальный запуск в изолированном sandbox-фрейме с передачей пользовательских свойств, FPS и аудиоспектра (требует подтверждения доверия перед первым запуском).\n  - **Сцены (`scene.pkg`):** отображаются в каталоге для просмотра свойств, но **не воспроизводятся** (превью-картинка не выдаётся за живую 3D/2D-сцену).\n- **Остановка при сворачивании и закрытии окна:** когда окно Astra свёрнуто или закрыто в трей, видеоплеер и фрейм выгружаются из памяти, а при открытии окна — создаются заново.\n\n---\n\n## Permissions & Privacy\n\n- **`push_to_ui`:** Used only to notify the plugin's background renderer when the native Astra window is minimized, hidden or restored so playback stops while hidden.\n- **Local-First Operation:** The plugin serves media only over `127.0.0.1` with a per-session random token, strict path-containment checks, and Content Security Policy isolation for Web wallpapers. It makes no external network requests and sends no telemetry.\n\n---\n\n## Development & Verification\n\nSee [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions, reproducible cross-compilation of the Windows visibility helper (`dotnet build`), unit tests (`npm test`), and end-to-end sandbox UI tests (`npm run test:ui`).\n\n*This project is an independent community integration by DtieR and is not affiliated with or endorsed by Wallpaper Engine, Valve/Steam, or Minice/Astra.*\n",
+        "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "wallpaper-engine-1.1.1-noarch.astraplugin",
+                "sha256": "979e2d57671fa4abad6ea1c534471aa24375ad01e58961512d45c43106ad23a0",
+                "size": 304214,
+                "url": "https://github.com/Dtierofficial/astra-wallpaper-engine/releases/download/v1.1.1/wallpaper-engine-1.1.1-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "ui_contributions"
+            ],
+            "min_astra_version": "0.2.7",
+            "permissions": {
+              "push_to_ui": {
+                "reason": "Stops the wallpaper when the native Astra window is minimized or hidden, and resumes it when the window returns."
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-11-07T10:08:54Z",
+            "release": {
+              "commit": "f3e9ac33162ea8317a5e1a1e915e9cd85080ed24",
+              "kind": "github_release",
+              "repo": "Dtierofficial/astra-wallpaper-engine",
+              "tag": "v1.1.1"
+            },
+            "review": "unreviewed",
+            "version": "1.1.1"
+          }
+        ],
+        "repository_url": "https://github.com/Dtierofficial/astra-wallpaper-engine",
+        "source": {
+          "kind": "github",
+          "repo": "Dtierofficial/astra-wallpaper-engine"
+        },
+        "stars": 0,
+        "updated_at": "2026-11-07T10:08:54Z",
+        "version": "1.1.1"
+      },
+      {
         "added_at": "2026-09-05",
         "author": "Lil KALINOV",
         "capabilities": [
@@ -5377,6 +5442,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 142
+    "serial": 143
   }
 }
