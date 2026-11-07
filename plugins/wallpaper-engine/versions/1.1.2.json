@@ -1,0 +1,32 @@
+{
+  "$comment": "Derived from Dtierofficial/astra-wallpaper-engine@v1.1.2. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "wallpaper-engine",
+  "version": "1.1.2",
+  "published_at": "2026-11-07T20:39:02Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "Dtierofficial/astra-wallpaper-engine",
+    "tag": "v1.1.2",
+    "commit": "2e829047b5499f2e5918a26c4574f00896ea1a38"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/Dtierofficial/astra-wallpaper-engine/releases/download/v1.1.2/wallpaper-engine-1.1.2-noarch.astraplugin",
+      "filename": "wallpaper-engine-1.1.2-noarch.astraplugin",
+      "sha256": "cd181cc0ec52f7d96adce0b0e276c3339a841981053c44c6fa0b474995e4c316",
+      "size": 35571380
+    }
+  },
+  "protocol": 1,
+  "min_astra_version": "0.2.7",
+  "capabilities": [
+    "ui_contributions"
+  ],
+  "permissions": {
+    "push_to_ui": {
+      "reason": "Stops the wallpaper when the native Astra window is minimized or hidden, and resumes it when the window returns."
+    }
+  }
+}

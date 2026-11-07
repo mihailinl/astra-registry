@@ -1,19 +1,24 @@
 # Wallpaper Engine for Astra
 
-![Cover illustration: Wallpaper Engine for Astra — browse your local Steam Wallpaper Engine library and apply video, image and experimental Web backgrounds inside Astra.](https://raw.githubusercontent.com/Dtierofficial/astra-wallpaper-engine/f3e9ac33162ea8317a5e1a1e915e9cd85080ed24/docs/assets/cover-en.png)
+![Cover illustration: Wallpaper Engine for Astra — browse your local Steam Wallpaper Engine library and apply video, image and experimental Web backgrounds inside Astra.](https://raw.githubusercontent.com/Dtierofficial/astra-wallpaper-engine/2e829047b5499f2e5918a26c4574f00896ea1a38/docs/assets/cover-en.png)
 
 **Browse your downloaded Steam Wallpaper Engine library and apply supported backgrounds directly inside Astra.**
 
 - **Author:** DtieR
 - **License:** MIT (third-party notices in `ui/legal/NOTICE.md`)
 - **Languages:** English & Russian in a single package (automatically follows Astra's language, with a manual switcher in the header)
-- **Platform:** Windows 10/11 x64 (the bundle target is `noarch` because it contains a small Windows window-visibility helper)
+- **Platform:** Windows 10/11 x64. The official JavaScript release workflow uses the `noarch` archive name; this plugin is Windows-only, not a Linux or ARM build.
+- **No separate Node.js installation:** Node.js 24.22.2 LTS is included in the package. No npm setup, PATH changes, or runtime download at startup.
 
 ---
 
 ## Features
 
-![Gallery preview (English): grid of downloaded wallpapers with type badges, search/filter toolbar, and the right-hand inspector panel showing playback and Wallpaper Engine settings.](https://raw.githubusercontent.com/Dtierofficial/astra-wallpaper-engine/f3e9ac33162ea8317a5e1a1e915e9cd85080ed24/docs/assets/gallery-en.png)
+### Requirements
+
+Astra 0.2.7+ on Windows 10/11 x64, Steam and downloaded Wallpaper Engine projects. The small native visibility helper uses .NET Framework 4.8 (included in Windows 11 and current Windows 10 installations). Node.js and JavaScript dependencies are already bundled; users do not need development tools or administrator access to install Node.
+
+![Gallery preview (English): grid of downloaded wallpapers with type badges, search/filter toolbar, and the right-hand inspector panel showing playback and Wallpaper Engine settings.](https://raw.githubusercontent.com/Dtierofficial/astra-wallpaper-engine/2e829047b5499f2e5918a26c4574f00896ea1a38/docs/assets/gallery-en.png)
 
 - **Automatic Steam Library Discovery:** Finds your installed Steam libraries (`libraryfolders.vdf`), Workshop content (`431960`) and local projects (`myprojects`) without manual folder copying.
 - **Desktop-Style Browser & Inspector:** Search by title or tags, filter by format (`Video`, `Images / GIF`, `Web`, `Scenes`), sort by name or modification date, mark favorites (`★`), and adjust card size.
@@ -29,13 +34,14 @@
 
 ## Русское описание (Russian)
 
-![Обложка: Wallpaper Engine для Astra — твоя локальная библиотека обоев внутри интерфейса Astra.](https://raw.githubusercontent.com/Dtierofficial/astra-wallpaper-engine/f3e9ac33162ea8317a5e1a1e915e9cd85080ed24/docs/assets/cover-ru.png)
+![Обложка: Wallpaper Engine для Astra — твоя локальная библиотека обоев внутри интерфейса Astra.](https://raw.githubusercontent.com/Dtierofficial/astra-wallpaper-engine/2e829047b5499f2e5918a26c4574f00896ea1a38/docs/assets/cover-ru.png)
 
 **Локальная галерея скачанных обоев Wallpaper Engine и фоновый плеер прямо внутри интерфейса Astra.**
 
-![Скриншот галереи (Русский): сетка установленных обоев с фильтрами, поиском, избранным и правой панелью свойств.](https://raw.githubusercontent.com/Dtierofficial/astra-wallpaper-engine/f3e9ac33162ea8317a5e1a1e915e9cd85080ed24/docs/assets/gallery-ru.png)
+![Скриншот галереи (Русский): сетка установленных обоев с фильтрами, поиском, избранным и правой панелью свойств.](https://raw.githubusercontent.com/Dtierofficial/astra-wallpaper-engine/2e829047b5499f2e5918a26c4574f00896ea1a38/docs/assets/gallery-ru.png)
 
 ### Что умеет плагин
+- **Node.js уже внутри:** отдельная установка Node/npm и настройка PATH не нужны. Требования: Windows 10/11 x64, Astra 0.2.7+, скачанные обои и .NET Framework 4.8 для остановки при сворачивании.
 - **Один пакет — два языка (RU / EN):** при запуске плагин автоматически включает язык самой Astra (до получения ответа показывается только нейтральный экран загрузки без мигания чужого языка). В шапке галереи также есть ручной переключатель языка.
 - **Автопоиск библиотеки Steam:** автоматически находит папки `steamapps/workshop/content/431960` и локальные проекты `myprojects`. Никакие файлы оригинального Wallpaper Engine не изменяются.
 - **Поддерживаемые форматы:**
