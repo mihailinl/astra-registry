@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "qvsHBAT/11LxPVusNnqwcBA0COlp4NsRARmuNgW02M7im7J0LPd6BtSd/xxxL2eLQDoHahGh31Av9V5twzwGAQ=="
+      "sig": "lMOPoiXooifmoNrOwdpT9EMPFLOs9gJUhhbhcno86tcdZ2cCNMdWh3V7AvKvL3sZk+Mkg7ZagdCPBdTWFXWqDg=="
     }
   ],
   "signed": {
-    "expires_at": "2026-12-07T15:43:09Z",
-    "issued_at": "2026-11-07T15:43:09Z",
+    "expires_at": "2026-12-07T23:03:22Z",
+    "issued_at": "2026-11-07T23:03:22Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
@@ -5125,7 +5125,7 @@
           "ui_contributions"
         ],
         "description": "Browse installed Wallpaper Engine wallpapers in English or Russian. Play video, images and experimental Web wallpapers inside Astra.",
-        "download_url": "https://github.com/Dtierofficial/astra-wallpaper-engine/releases/download/v1.1.1/wallpaper-engine-1.1.1-noarch.astraplugin",
+        "download_url": "https://github.com/Dtierofficial/astra-wallpaper-engine/releases/download/v1.1.2/wallpaper-engine-1.1.2-noarch.astraplugin",
         "downloads": 0,
         "i18n": {
           "ru": {
@@ -5138,12 +5138,41 @@
         "license": "MIT",
         "name": "Wallpaper Engine for Astra",
         "platform_downloads": {
-          "linux-x64": "https://github.com/Dtierofficial/astra-wallpaper-engine/releases/download/v1.1.1/wallpaper-engine-1.1.1-noarch.astraplugin",
-          "noarch": "https://github.com/Dtierofficial/astra-wallpaper-engine/releases/download/v1.1.1/wallpaper-engine-1.1.1-noarch.astraplugin",
-          "windows-x64": "https://github.com/Dtierofficial/astra-wallpaper-engine/releases/download/v1.1.1/wallpaper-engine-1.1.1-noarch.astraplugin"
+          "linux-x64": "https://github.com/Dtierofficial/astra-wallpaper-engine/releases/download/v1.1.2/wallpaper-engine-1.1.2-noarch.astraplugin",
+          "noarch": "https://github.com/Dtierofficial/astra-wallpaper-engine/releases/download/v1.1.2/wallpaper-engine-1.1.2-noarch.astraplugin",
+          "windows-x64": "https://github.com/Dtierofficial/astra-wallpaper-engine/releases/download/v1.1.2/wallpaper-engine-1.1.2-noarch.astraplugin"
         },
-        "readme": "# Wallpaper Engine for Astra\n\n![Cover illustration: Wallpaper Engine for Astra — browse your local Steam Wallpaper Engine library and apply video, image and experimental Web backgrounds inside Astra.](https://raw.githubusercontent.com/Dtierofficial/astra-wallpaper-engine/f3e9ac33162ea8317a5e1a1e915e9cd85080ed24/docs/assets/cover-en.png)\n\n**Browse your downloaded Steam Wallpaper Engine library and apply supported backgrounds directly inside Astra.**\n\n- **Author:** DtieR\n- **License:** MIT (third-party notices in `ui/legal/NOTICE.md`)\n- **Languages:** English & Russian in a single package (automatically follows Astra's language, with a manual switcher in the header)\n- **Platform:** Windows 10/11 x64 (the bundle target is `noarch` because it contains a small Windows window-visibility helper)\n\n---\n\n## Features\n\n![Gallery preview (English): grid of downloaded wallpapers with type badges, search/filter toolbar, and the right-hand inspector panel showing playback and Wallpaper Engine settings.](https://raw.githubusercontent.com/Dtierofficial/astra-wallpaper-engine/f3e9ac33162ea8317a5e1a1e915e9cd85080ed24/docs/assets/gallery-en.png)\n\n- **Automatic Steam Library Discovery:** Finds your installed Steam libraries (`libraryfolders.vdf`), Workshop content (`431960`) and local projects (`myprojects`) without manual folder copying.\n- **Desktop-Style Browser & Inspector:** Search by title or tags, filter by format (`Video`, `Images / GIF`, `Web`, `Scenes`), sort by name or modification date, mark favorites (`★`), and adjust card size.\n- **Format Support Matrix:**\n  - **Video (`MP4`, `WebM`, `OGV`):** Native playback behind Astra's UI with volume, playback speed (`0.25x–4x`), scaling mode (`Fill / crop`, `Fit`, `Stretch`) and UI dimming (`0–90%`).\n  - **Images & GIF (`PNG`, `JPG`, `WebP`, `GIF`, `BMP`):** Direct background display with scaling and dimming controls.\n  - **Web Wallpapers (`HTML / CSS / JS`):** Experimental isolated sandbox playback with `wallpaperPropertyListener` (`applyUserProperties`, `applyGeneralProperties`, `setPaused`), interactive property editors in the inspector, and approximate audio-spectrum forwarding.\n  - **Scene / PKG (`scene.pkg`):** Shown in the catalog with properties and previews, **not rendered as live scenes**. Preview images are never misrepresented as running scenes.\n- **Read-Only Wallpaper Engine Settings Import:** Reads saved per-monitor values (`Monitor0`, `Monitor1`, etc.) and author defaults from `project.json` and `config.json` without modifying Wallpaper Engine's files.\n- **Resource-Friendly Lifecycle:** Releases the active `<video>`, `<img>` or Web `<iframe>` when the document is hidden (`visibilitychange` / `pagehide`). On Windows, a lightweight read-only helper (`window-monitor.exe`) checks whether `astraui.exe` is minimized or hidden and pauses rendering via `push_to_ui`.\n\n---\n\n## Русское описание (Russian)\n\n![Обложка: Wallpaper Engine для Astra — твоя локальная библиотека обоев внутри интерфейса Astra.](https://raw.githubusercontent.com/Dtierofficial/astra-wallpaper-engine/f3e9ac33162ea8317a5e1a1e915e9cd85080ed24/docs/assets/cover-ru.png)\n\n**Локальная галерея скачанных обоев Wallpaper Engine и фоновый плеер прямо внутри интерфейса Astra.**\n\n![Скриншот галереи (Русский): сетка установленных обоев с фильтрами, поиском, избранным и правой панелью свойств.](https://raw.githubusercontent.com/Dtierofficial/astra-wallpaper-engine/f3e9ac33162ea8317a5e1a1e915e9cd85080ed24/docs/assets/gallery-ru.png)\n\n### Что умеет плагин\n- **Один пакет — два языка (RU / EN):** при запуске плагин автоматически включает язык самой Astra (до получения ответа показывается только нейтральный экран загрузки без мигания чужого языка). В шапке галереи также есть ручной переключатель языка.\n- **Автопоиск библиотеки Steam:** автоматически находит папки `steamapps/workshop/content/431960` и локальные проекты `myprojects`. Никакие файлы оригинального Wallpaper Engine не изменяются.\n- **Поддерживаемые форматы:**\n  - **Видео (`MP4`, `WebM`, `OGV`):** воспроизводятся прямо под интерфейсом Astra; настраиваются громкость, скорость, заполнение и затемнение фона.\n  - **Картинки и GIF (`PNG`, `JPG`, `WebP`, `GIF`, `BMP`):** отображаются в фоне с выбором масштабирования и затемнения.\n  - **Web-обои (`HTML / CSS / JS`):** экспериментальный запуск в изолированном sandbox-фрейме с передачей пользовательских свойств, FPS и аудиоспектра (требует подтверждения доверия перед первым запуском).\n  - **Сцены (`scene.pkg`):** отображаются в каталоге для просмотра свойств, но **не воспроизводятся** (превью-картинка не выдаётся за живую 3D/2D-сцену).\n- **Остановка при сворачивании и закрытии окна:** когда окно Astra свёрнуто или закрыто в трей, видеоплеер и фрейм выгружаются из памяти, а при открытии окна — создаются заново.\n\n---\n\n## Permissions & Privacy\n\n- **`push_to_ui`:** Used only to notify the plugin's background renderer when the native Astra window is minimized, hidden or restored so playback stops while hidden.\n- **Local-First Operation:** The plugin serves media only over `127.0.0.1` with a per-session random token, strict path-containment checks, and Content Security Policy isolation for Web wallpapers. It makes no external network requests and sends no telemetry.\n\n---\n\n## Development & Verification\n\nSee [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions, reproducible cross-compilation of the Windows visibility helper (`dotnet build`), unit tests (`npm test`), and end-to-end sandbox UI tests (`npm run test:ui`).\n\n*This project is an independent community integration by DtieR and is not affiliated with or endorsed by Wallpaper Engine, Valve/Steam, or Minice/Astra.*\n",
+        "readme": "# Wallpaper Engine for Astra\n\n![Cover illustration: Wallpaper Engine for Astra — browse your local Steam Wallpaper Engine library and apply video, image and experimental Web backgrounds inside Astra.](https://raw.githubusercontent.com/Dtierofficial/astra-wallpaper-engine/2e829047b5499f2e5918a26c4574f00896ea1a38/docs/assets/cover-en.png)\n\n**Browse your downloaded Steam Wallpaper Engine library and apply supported backgrounds directly inside Astra.**\n\n- **Author:** DtieR\n- **License:** MIT (third-party notices in `ui/legal/NOTICE.md`)\n- **Languages:** English & Russian in a single package (automatically follows Astra's language, with a manual switcher in the header)\n- **Platform:** Windows 10/11 x64. The official JavaScript release workflow uses the `noarch` archive name; this plugin is Windows-only, not a Linux or ARM build.\n- **No separate Node.js installation:** Node.js 24.22.2 LTS is included in the package. No npm setup, PATH changes, or runtime download at startup.\n\n---\n\n## Features\n\n### Requirements\n\nAstra 0.2.7+ on Windows 10/11 x64, Steam and downloaded Wallpaper Engine projects. The small native visibility helper uses .NET Framework 4.8 (included in Windows 11 and current Windows 10 installations). Node.js and JavaScript dependencies are already bundled; users do not need development tools or administrator access to install Node.\n\n![Gallery preview (English): grid of downloaded wallpapers with type badges, search/filter toolbar, and the right-hand inspector panel showing playback and Wallpaper Engine settings.](https://raw.githubusercontent.com/Dtierofficial/astra-wallpaper-engine/2e829047b5499f2e5918a26c4574f00896ea1a38/docs/assets/gallery-en.png)\n\n- **Automatic Steam Library Discovery:** Finds your installed Steam libraries (`libraryfolders.vdf`), Workshop content (`431960`) and local projects (`myprojects`) without manual folder copying.\n- **Desktop-Style Browser & Inspector:** Search by title or tags, filter by format (`Video`, `Images / GIF`, `Web`, `Scenes`), sort by name or modification date, mark favorites (`★`), and adjust card size.\n- **Format Support Matrix:**\n  - **Video (`MP4`, `WebM`, `OGV`):** Native playback behind Astra's UI with volume, playback speed (`0.25x–4x`), scaling mode (`Fill / crop`, `Fit`, `Stretch`) and UI dimming (`0–90%`).\n  - **Images & GIF (`PNG`, `JPG`, `WebP`, `GIF`, `BMP`):** Direct background display with scaling and dimming controls.\n  - **Web Wallpapers (`HTML / CSS / JS`):** Experimental isolated sandbox playback with `wallpaperPropertyListener` (`applyUserProperties`, `applyGeneralProperties`, `setPaused`), interactive property editors in the inspector, and approximate audio-spectrum forwarding.\n  - **Scene / PKG (`scene.pkg`):** Shown in the catalog with properties and previews, **not rendered as live scenes**. Preview images are never misrepresented as running scenes.\n- **Read-Only Wallpaper Engine Settings Import:** Reads saved per-monitor values (`Monitor0`, `Monitor1`, etc.) and author defaults from `project.json` and `config.json` without modifying Wallpaper Engine's files.\n- **Resource-Friendly Lifecycle:** Releases the active `<video>`, `<img>` or Web `<iframe>` when the document is hidden (`visibilitychange` / `pagehide`). On Windows, a lightweight read-only helper (`window-monitor.exe`) checks whether `astraui.exe` is minimized or hidden and pauses rendering via `push_to_ui`.\n\n---\n\n## Русское описание (Russian)\n\n![Обложка: Wallpaper Engine для Astra — твоя локальная библиотека обоев внутри интерфейса Astra.](https://raw.githubusercontent.com/Dtierofficial/astra-wallpaper-engine/2e829047b5499f2e5918a26c4574f00896ea1a38/docs/assets/cover-ru.png)\n\n**Локальная галерея скачанных обоев Wallpaper Engine и фоновый плеер прямо внутри интерфейса Astra.**\n\n![Скриншот галереи (Русский): сетка установленных обоев с фильтрами, поиском, избранным и правой панелью свойств.](https://raw.githubusercontent.com/Dtierofficial/astra-wallpaper-engine/2e829047b5499f2e5918a26c4574f00896ea1a38/docs/assets/gallery-ru.png)\n\n### Что умеет плагин\n- **Node.js уже внутри:** отдельная установка Node/npm и настройка PATH не нужны. Требования: Windows 10/11 x64, Astra 0.2.7+, скачанные обои и .NET Framework 4.8 для остановки при сворачивании.\n- **Один пакет — два языка (RU / EN):** при запуске плагин автоматически включает язык самой Astra (до получения ответа показывается только нейтральный экран загрузки без мигания чужого языка). В шапке галереи также есть ручной переключатель языка.\n- **Автопоиск библиотеки Steam:** автоматически находит папки `steamapps/workshop/content/431960` и локальные проекты `myprojects`. Никакие файлы оригинального Wallpaper Engine не изменяются.\n- **Поддерживаемые форматы:**\n  - **Видео (`MP4`, `WebM`, `OGV`):** воспроизводятся прямо под интерфейсом Astra; настраиваются громкость, скорость, заполнение и затемнение фона.\n  - **Картинки и GIF (`PNG`, `JPG`, `WebP`, `GIF`, `BMP`):** отображаются в фоне с выбором масштабирования и затемнения.\n  - **Web-обои (`HTML / CSS / JS`):** экспериментальный запуск в изолированном sandbox-фрейме с передачей пользовательских свойств, FPS и аудиоспектра (требует подтверждения доверия перед первым запуском).\n  - **Сцены (`scene.pkg`):** отображаются в каталоге для просмотра свойств, но **не воспроизводятся** (превью-картинка не выдаётся за живую 3D/2D-сцену).\n- **Остановка при сворачивании и закрытии окна:** когда окно Astra свёрнуто или закрыто в трей, видеоплеер и фрейм выгружаются из памяти, а при открытии окна — создаются заново.\n\n---\n\n## Permissions & Privacy\n\n- **`push_to_ui`:** Used only to notify the plugin's background renderer when the native Astra window is minimized, hidden or restored so playback stops while hidden.\n- **Local-First Operation:** The plugin serves media only over `127.0.0.1` with a per-session random token, strict path-containment checks, and Content Security Policy isolation for Web wallpapers. It makes no external network requests and sends no telemetry.\n\n---\n\n## Development & Verification\n\nSee [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions, reproducible cross-compilation of the Windows visibility helper (`dotnet build`), unit tests (`npm test`), and end-to-end sandbox UI tests (`npm run test:ui`).\n\n*This project is an independent community integration by DtieR and is not affiliated with or endorsed by Wallpaper Engine, Valve/Steam, or Minice/Astra.*\n",
         "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "wallpaper-engine-1.1.2-noarch.astraplugin",
+                "sha256": "cd181cc0ec52f7d96adce0b0e276c3339a841981053c44c6fa0b474995e4c316",
+                "size": 35571380,
+                "url": "https://github.com/Dtierofficial/astra-wallpaper-engine/releases/download/v1.1.2/wallpaper-engine-1.1.2-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "ui_contributions"
+            ],
+            "min_astra_version": "0.2.7",
+            "permissions": {
+              "push_to_ui": {
+                "reason": "Stops the wallpaper when the native Astra window is minimized or hidden, and resumes it when the window returns."
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-11-07T20:39:02Z",
+            "release": {
+              "commit": "2e829047b5499f2e5918a26c4574f00896ea1a38",
+              "kind": "github_release",
+              "repo": "Dtierofficial/astra-wallpaper-engine",
+              "tag": "v1.1.2"
+            },
+            "review": "unreviewed",
+            "version": "1.1.2"
+          },
           {
             "artifacts": {
               "noarch": {
@@ -5180,8 +5209,8 @@
           "repo": "Dtierofficial/astra-wallpaper-engine"
         },
         "stars": 0,
-        "updated_at": "2026-11-07T10:08:54Z",
-        "version": "1.1.1"
+        "updated_at": "2026-11-07T20:39:02Z",
+        "version": "1.1.2"
       },
       {
         "added_at": "2026-09-05",
@@ -5449,6 +5478,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 143
+    "serial": 144
   }
 }
