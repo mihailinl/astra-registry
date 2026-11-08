@@ -1,6 +1,6 @@
 {
-  "contract_version": "6.13.0",
-  "source_commit": "331b423cd99c210a4b60ba0b80ebbd6873ca936e",
+  "contract_version": "6.14.0",
+  "source_commit": "b9f3670a7cf025b01436f7e1703dea0fe0d2f6e5",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -8,6 +8,7 @@
     "People read the contract, tests read this file: the plugins service, the registry (SCOPE-9) and a new client (SCOPE-10) each fail their tests on a value this file does not list for them, and on one it lists for them that they do not handle and that is neither `reserved` nor `retired` (SCOPE-8).",
     "`emitter` and `acceptor` are arrays of party strings from `parties`; §0.8's Callers letters map onto them as C client, P panel, B bot, G guest. `registry` covers the bot and the signer where an entry is not the bot's alone.",
     "`games-bot` is the games catalogue's `work` and `report` jobs (§4.6; BOT-94), a party apart from `bot`, which is the registry's. A games operation carries its `workflow` file and `job`, which BOT-94 pins the token to, and `token`; a body the catalogue sends or reads with no `schema` member carries its members on the operation as `request_members` or `success_members`, and an answer with no body its status as `success_status`.",
+    "The games author wake (§4.6; BOT-102) is an `author-ci` operation beside `author.wake`: a game integration's CI calls it with ID-32's author token. §4.6's six games panel doors are the panel's server calls, so this file lists them only under that `service-only` category (SCOPE-8).",
     "A `service-only` entry is outside SCOPE-8's two-way test, and neither the registry's scan nor the client's expects or forbids one, except for the `members` it lists: an entry lists members, with its body's `schema`, only where the contract publishes them from a `service-only` path, and those members alone are inside the test, for the parties the entry names. The rest of that path's body stays outside. Every other `service-only` entry is listed with no members and for no party.",
     "A `service-only` entry says this path is **routed by the plugins service and outside SCOPE-8's two-way test**. It does not say a handler answers it. Unless the entry lists `members`: then the service MUST emit each listed member, and that member alone is inside SCOPE-8's two-way test, for the parties the entry names (since 3.1.0, `health`'s `accepts.reports`, the first `service-only` entry that obliges a body; minice-e4, 2026-09-27).",
     "A member's requiredness is `true`, `false` or `conditional`. `true` is carried by every entry of its kind; `false` is permitted, and **says only that this contract publishes no condition on it, never that none exists**; `conditional` is carried exactly under the condition the member's `when` states, and **a member that is `conditional` and states no `when`, or states a `when` a reader cannot evaluate, makes the file malformed: a reader MUST refuse it, or refuse every entry of that schema, and MUST NOT read the member as unconditioned** — reading it as unconditioned is the looser direction, and the looser direction is the one this field exists to close.",
@@ -391,6 +392,24 @@
       "id": "token:handle_required",
       "kind": "refusal_token",
       "name": "handle_required",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "token:rights_incomplete",
+      "kind": "refusal_token",
+      "name": "rights_incomplete",
       "emitter": [
         "service"
       ],
@@ -2476,6 +2495,31 @@
         "SCOPE-7",
         "SCOPE-8",
         "DEC-4"
+      ]
+    },
+    {
+      "id": "schema:astra.games.author-wake/1",
+      "kind": "schema",
+      "name": "astra.games.author-wake/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "schema",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "author-ci"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "source": "§4.6, stated as literal bytes",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
       ]
     },
     {
@@ -6266,6 +6310,32 @@
       "requirements": [
         "BOT-94",
         "SCOPE-7"
+      ]
+    },
+    {
+      "id": "operation:author-ci:games-author-wake",
+      "kind": "operation",
+      "name": "games author wake",
+      "method": "POST",
+      "path": "games/author-wake",
+      "path_base": "the service API base (§4.6)",
+      "token": "author (ID-32)",
+      "request_schema": "astra.games.author-wake/1",
+      "success_schema": null,
+      "success_status": 202,
+      "emitter": [
+        "author-ci"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§4.6",
+      "requirements": [
+        "ID-32",
+        "SCOPE-7",
+        "SCOPE-8",
+        "BOT-102"
       ]
     },
     {
