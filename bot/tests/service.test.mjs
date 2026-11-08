@@ -898,11 +898,21 @@ test("the file's membered entries are four buckets, none of which may empty", ()
   // `games-bot`, the games catalogue's `work` and `report` jobs in
   // mihailinl/astra-games-catalogue, and nothing in this repository composes
   // or reads one, so they belong in this bucket.
+  //
+  // Moved at contract 6.14.0, from 129 over 37, by exactly the games author
+  // CI's wake body (§4.6, BOT-102): 1 top-level member over one entry,
+  // `astra.games.author-wake/1` (`schema`, `true`). Read on arrival: an
+  // author's CI (`author-ci`) sends it to the plugins service's
+  // `games/author-wake`, the twin of `astra.plugins.author-wake/1`, and nothing
+  // in this repository composes or reads it, so it belongs in this bucket.
   assert.deepEqual(
     { entries: unreadEntries.length, members: countMembers(unreadEntries) },
-    { entries: 37, members: 129 },
+    { entries: 38, members: 130 },
     `${countMembers(unreadEntries)} published members over ${unreadEntries.length} entries are outside every ` +
-    "comparison in this suite; there were 129 over 37 at contract 6.11.0, whose four games catalogue bodies " +
+    "comparison in this suite; there were 130 over 38 at contract 6.14.0, whose games author wake body " +
+    "`astra.games.author-wake/1` (§4.6, BOT-102; `schema` only; an author's CI sends it to the plugins service, " +
+    "and nothing here composes or reads it) added 1 over 1; " +
+    "129 over 37 at contract 6.11.0, whose four games catalogue bodies " +
     "`astra.games.{leases,ingest-result,work,sign-result}/1` (§4.6; 2, 2, 2 and 6 members; they travel between the " +
     "plugins service and `games-bot`, and nothing here composes or reads them) added 12 over 4; " +
     "117 over 33 at contract 6.0.0, whose catalogue host's witness " +
