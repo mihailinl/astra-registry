@@ -30,11 +30,17 @@ permissions:
 
 concurrency:
   group: publisher-recheck
+  # Queues: `recheck` has contents: write and commits a renewed window or a
+  # withdrawal, and a writer is never cancelled mid-commit. `run-watchdog.yml`
+  # reports a run still unfinished after 30 minutes.
   cancel-in-progress: false
 
 jobs:
   recheck:
     runs-on: ubuntu-24.04
+    # Measured p95 x3, minimum 10 (2026-11-10, last 200 runs: p95 0.5 min). Without it a hung
+    # step held a runner for GitHub's default six hours.
+    timeout-minutes: 10
     permissions:
       contents: write   # commit a renewed window, or a withdrawal
     outputs:

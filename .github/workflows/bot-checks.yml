@@ -115,6 +115,9 @@ jobs:
 
   check:
     runs-on: ubuntu-24.04
+    # Measured p95 x3, minimum 10 (2026-11-10, last 200 runs: p95 0.8 min). Without it a hung
+    # step held a runner for GitHub's default six hours.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:

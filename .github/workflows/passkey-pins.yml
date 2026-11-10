@@ -41,6 +41,9 @@ permissions: {}
 
 concurrency:
   group: passkey-pins-${{ github.event.pull_request.number }}
+  # Queues. Per pull request, and the alert job posts per run; cancelling would
+  # drop the finding of a run already read. A run with no runner is reported by
+  # `run-watchdog.yml` after 30 minutes.
   cancel-in-progress: false
 
 jobs:

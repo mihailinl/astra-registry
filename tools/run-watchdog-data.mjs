@@ -1,0 +1,55 @@
+// Data for tools/run-watchdog.mjs, checked by bot/tests/run-watchdog.test.mjs.
+// Outside TRUST-31's set: a change here is not a change the owner
+// acknowledges.
+// (A .json file here would have to be a record or test data to selftest's string rule; this is neither.)
+
+export default {
+  // Unfinished for longer than this many minutes is stale.
+  stale_minutes: 30,
+
+  // Runs GitHub will neither cancel, force-cancel nor delete (queued or
+  // in_progress for ever; support was asked to purge them on 2026-11-10). They
+  // are reported once, as known ghosts, and are never stale. Remove an id when
+  // GitHub purges it; a ghost that no longer exists is simply not listed.
+  ghosts: [
+    { id: 37655506182, workflow: "Detectors", created_at: "2026-10-07T16:53:27Z" },
+    { id: 39698520903, workflow: "Detectors", created_at: "2026-10-22T00:14:46Z" },
+    { id: 39698355160, workflow: "Registry index", created_at: "2026-10-22T00:13:09Z" },
+    { id: 42066476714, workflow: "Registry index", created_at: "2026-11-05T16:38:15Z" },
+    { id: 42066736817, workflow: "Plugins ingest", created_at: "2026-11-05T16:39:48Z" },
+    { id: 42066989559, workflow: "Plugins moderation", created_at: "2026-11-05T16:41:14Z" },
+  ],
+
+  // No successful run for max_minutes means the workflow is silent. `crons` is
+  // what the workflow file schedules; the test fails when a file's cron and this
+  // list disagree, and when a bound is under 1.5 x the longest gap the cron
+  // leaves, so a cron cannot change without this file being looked at. GitHub
+  // delivers this repository's crons only every few hours (measured 2026-11-10
+  // on the last 200 runs: longest gap between successes 10.5 h for ingest and
+  // moderation, 6.8 h for detectors, 5.5 h for signer and the index, 32 h for
+  // served-set), and the workflow_run wakers fire only when something happened,
+  // so the bounds are 1.5 x that, rounded: 16 h ingest and moderation, 12 h
+  // coverage, signer, detectors and the index, 36 h served-set and the daily
+  // ones. The first bounds proposed (60 and 90 min, 3 h) were red in ordinary
+  // quiet stretches. A HUNG run is caught in 30 minutes by the stale rule, not
+  // by these.
+  silence: [
+    { workflow: "Plugins ingest", file: "plugins-ingest.yml", max_minutes: 960, crons: ["3-59/10 * * * *"] },
+    { workflow: "Plugins moderation", file: "plugins-moderation.yml", max_minutes: 960, crons: ["8-59/10 * * * *"] },
+    { workflow: "Moderation coverage", file: "moderation-coverage.yml", max_minutes: 720, crons: ["*/15 * * * *"] },
+    { workflow: "Signer", file: "sign.yml", max_minutes: 720, crons: ["23 * * * *"] },
+    { workflow: "Detectors", file: "detectors.yml", max_minutes: 720, crons: ["41 * * * *"] },
+    { workflow: "Served set", file: "served-set.yml", max_minutes: 2160, crons: ["7,22,37,52 * * * *"] },
+    { workflow: "Registry index (unsigned check)", file: "build-index.yml", max_minutes: 720, crons: ["23 * * * *"] },
+    { workflow: "Asset check", file: "asset-check.yml", max_minutes: 2160, crons: ["23 3 * * *"] },
+    { workflow: "publisher re-check", file: "publisher-recheck.yml", max_minutes: 2160, crons: ["41 4 * * *"] },
+    { workflow: "Migration baseline", file: "baseline.yml", max_minutes: 2160, crons: ["17 4 * * *"] },
+    { workflow: "Deadline watch", file: "deadline-watch.yml", max_minutes: 2160, crons: ["17 5 * * *"] },
+  ],
+
+  // Scheduled, and deliberately not bounded.
+  unwatched: [
+    { file: "alarm-drill.yml", why: "weekly, and red by design until the alarm channel exists; its own subject is the channel" },
+    { file: "keepalive.yml", why: "first week of the month only; GitHub's 60-day idle rule is its subject, not a silence bound of hours" },
+  ],
+};

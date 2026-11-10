@@ -1,4 +1,4 @@
-name: Registry index
+name: Registry index (unsigned check)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Regenerates and validates registry/v1/index.json on every push and every PR.
@@ -148,7 +148,8 @@ on:
 # for that head. A PR could be merged with its selftest never having run on it
 # (measured 2026-09-22: run 35768780051, cancelled 7 s after it was queued).
 # Per PR, a newer push still replaces an older pending run of the same PR,
-# which is the run nobody needs.
+# which is the run nobody needs. On `main` it queues, and a run that never gets
+# a runner is `run-watchdog.yml`'s to report after 30 minutes.
 concurrency:
   group: ${{ github.event_name == 'pull_request' && format('registry-index-pr-{0}', github.event.pull_request.number) || 'registry-index' }}
   cancel-in-progress: false
@@ -165,6 +166,9 @@ jobs:
   # than a matter of remembering the `if:` on one step (registry plan RC-R0-1).
   check:
     runs-on: ubuntu-24.04
+    # Measured p95 x3, minimum 10 (2026-11-10, last 200 runs: p95 4.3 min). Without it a hung
+    # step held a runner for GitHub's default six hours.
+    timeout-minutes: 15
     # A failed ingest published nothing, so there is nothing new to check. Every
     # other event carries no `workflow_run` object and the condition is vacuously
     # true for them — the push, the schedule, the dispatch and the pull request

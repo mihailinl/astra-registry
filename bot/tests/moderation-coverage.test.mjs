@@ -2000,13 +2000,14 @@ test("the canary is scheduled, because a GITHUB_TOKEN push starts no run", () =>
   assert.match(check.source, /moderation-coverage\.yml/);
 });
 
-test("the canary does not cancel itself in progress", () => {
+test("the canary replaces an older unfinished run, because every run recomputes from the whole history", () => {
   const src = workflowSrc();
   const group = /concurrency:\n\s+group: moderation-coverage\n(?:\s+#.*\n)*\s+cancel-in-progress: (\w+)/.exec(src);
   assert.ok(group, "the concurrency block is not where this test reads it; it has been reshaped");
-  assert.equal(group[1], "false",
-    "cancel-in-progress would throw away the run that was about to report an uncovered commit, and a lost " +
-    "finding looks exactly like a delayed one");
+  assert.equal(group[1], "true",
+    "queued, one run whose alert job never gets a runner holds the group and every newer run is cancelled " +
+    "(2026-11-05 to 11-10, 69 runs); cancelling is safe only because each run walks all of history");
+  assert.match(src, /fetch-depth: 0/, "cancelling loses nothing only while every run walks the whole history");
 });
 
 test("the check job fetches all of history, and every rule step is `if: always()`", () => {

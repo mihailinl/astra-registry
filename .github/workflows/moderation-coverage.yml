@@ -4,7 +4,9 @@
 # ── WHY THIS IS ITS OWN WORKFLOW ────────────────────────────────────────────
 #
 # Three reasons, and each one on its own rules out the obvious alternative of
-# a step in `bot-tests.yml`:
+# a step in `bot-tests.yml` (the second is about how this workflow queues,
+# which `bot-tests.yml`'s per-ref group would get wrong in the other
+# direction: it would cancel on a ref that a bot commit never moves):
 #
 #   1. **A GITHUB_TOKEN push starts no run.** Almost every moderation effect
 #      here arrives as a bot commit — `publish-apply` writing a delist, the
@@ -13,13 +15,24 @@
 #      stop recursion. A canary that only ran on `push` would therefore never
 #      see the commits it exists to judge. Hence the `schedule`, and hence
 #      `workflow_run` on the workflows that make those commits.
-#   2. **`bot-tests.yml` cancels in progress per ref.** `cancel-in-progress:
-#      true` is right for a test suite — the newest commit's answer is the one
-#      you want. It is wrong for a canary: the run that would have found the
-#      uncovered commit is cancelled by the commit that covers the next one,
-#      and the finding is lost rather than delayed. This workflow's concurrency
-#      is `cancel-in-progress: false` and `bot/tests/moderation-coverage.test.mjs`
-#      asserts it.
+#   2. **A newer run replaces an older one that has not finished** (since
+#      2026-11-10; `cancel-in-progress: true`, asserted by
+#      `bot/tests/moderation-coverage.test.mjs`). It used to queue, and that
+#      is how this canary went dark for five days: run 42066476764's `check`
+#      succeeded, its `alert` job (environment `alerts`) never got a runner,
+#      `timeout-minutes` does not count until a job is on a runner, and the
+#      group's one running and one pending slot meant every newer run waited
+#      and was cancelled by the next one. 69 runs, none succeeded, from
+#      2026-11-05 16:37 to 2026-11-10 11:00. Replacing is safe HERE because
+#      every run walks the WHOLE history (`fetch-depth: 0`) and recomputes
+#      every verdict from it: a cancelled run delays a finding to the next
+#      run, it does not lose one. A cancelled run neither pages nor posts a
+#      heartbeat (`always() && !cancelled()`), so this is only right while
+#      runs finish more often than they arrive; measured on the busiest
+#      stretch (2026-11-05 11:14 to 16:37, 120 runs, p95 2.3 min), 110 of 120
+#      would have survived and the longest gap between survivors was 10
+#      minutes. `run-watchdog.yml` reports a run that is still unfinished
+#      after 30 minutes, and a workflow with no successful run for 90.
 #   3. **A job with no environment cannot alert.** The alarm channel's secrets
 #      live in environment `alerts` (RC-R1-0), a job reads an environment secret
 #      only where it names it, and `bot-tests.yml` has no environment and must
@@ -109,11 +122,11 @@ permissions: {}
 
 concurrency:
   group: moderation-coverage
-  # NOT cancel-in-progress. A test suite wants the newest answer; a canary
-  # wants every answer. Cancelling the run that was about to report an
-  # uncovered commit, because a later commit arrived, loses the finding rather
-  # than delaying it — and the two look identical from the run list.
-  cancel-in-progress: false
+  # Cancels, and why that is safe is reason 2 in the header: each run recomputes
+  # every verdict from the whole history, so a replaced run delays a finding
+  # and loses nothing. Queueing is what let ONE run with no runner hold this
+  # group for five days. Never copy this to a workflow whose run writes.
+  cancel-in-progress: true
 
 jobs:
   check:

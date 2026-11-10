@@ -54,6 +54,9 @@ permissions: {}
 
 concurrency:
   group: release-canary-${{ github.ref }}
+  # Queues: a canary wants every answer, and a cancelled run neither alarms nor
+  # posts a heartbeat. `run-watchdog.yml` reports a run still unfinished after
+  # 30 minutes.
   cancel-in-progress: false
 
 jobs:
