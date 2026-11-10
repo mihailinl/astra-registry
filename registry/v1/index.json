@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "cziY43NqdvjiWsr0zgRTuiHAHl70b85naoJNVtsxgO3uSp3hCwAMyu8wNpGvDLKSkZC3gV4jDZkC3PvBKv0DCA=="
+      "sig": "15ZyJwmXK6rwLbD4yBJo9ZGaxLGgFm1azOAZiJwAT30w0+HEdwgv75UNolt49WUWQKx49mTRH5CuKeSf6fyaBQ=="
     }
   ],
   "signed": {
-    "expires_at": "2026-12-10T15:11:24Z",
-    "issued_at": "2026-11-10T15:11:24Z",
+    "expires_at": "2026-12-10T15:24:31Z",
+    "issued_at": "2026-11-10T15:24:31Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
@@ -1907,7 +1907,7 @@
               "repo": "SpherePrime/PrimeAi",
               "tag": "v0.2.16"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.2.16"
           },
           {
@@ -1933,7 +1933,7 @@
               "repo": "SpherePrime/PrimeAi",
               "tag": "v0.2.15"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.2.15"
           },
           {
@@ -1959,7 +1959,7 @@
               "repo": "SpherePrime/PrimeAi",
               "tag": "v0.2.14"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.2.14"
           },
           {
@@ -1985,7 +1985,7 @@
               "repo": "SpherePrime/PrimeAi",
               "tag": "v0.2.12"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.2.12"
           },
           {
@@ -2011,7 +2011,7 @@
               "repo": "SpherePrime/PrimeAi",
               "tag": "v0.2.11"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.2.11"
           },
           {
@@ -2037,7 +2037,7 @@
               "repo": "SpherePrime/PrimeAi",
               "tag": "v0.2.10"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.2.10"
           },
           {
@@ -2063,7 +2063,7 @@
               "repo": "SpherePrime/PrimeAi",
               "tag": "v0.2.9"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.2.9"
           },
           {
@@ -2089,7 +2089,7 @@
               "repo": "SpherePrime/PrimeAi",
               "tag": "v0.2.8"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.2.8"
           },
           {
@@ -2115,7 +2115,7 @@
               "repo": "SpherePrime/PrimeAi",
               "tag": "v0.2.7"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.2.7"
           },
           {
@@ -5618,6 +5618,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 146
+    "serial": 147
   }
 }
