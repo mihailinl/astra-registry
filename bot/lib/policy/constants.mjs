@@ -227,6 +227,16 @@ export const POLICY_CODES = {
       "The four that block are `client`, `dom_access`, `send_chat_message` and " +
       "`set_theme_contribution`; each reaches outside the plugin's own surface.",
   },
+  // A temporary hold, on both paths and on every release that asks for it,
+  // new or already held (`DOM_ACCESS_HOLD` in `decision.mjs`, which is the
+  // one edit that lifts it). Remove with that constant when a fixed Astra ships.
+  R_DOM_ACCESS_HOLD: {
+    level: "review", stage: "policy", fix: "moderator",
+    title: "This release asks for dom_access, which is held for review for now",
+    remedy:
+      "Nothing for the author to change: a moderator reviews it. dom_access holds for review until a " +
+      "fixed Astra ships.",
+  },
   P_APPROVED: {
     level: "pass", stage: "policy", fix: "none",
     title: "A maintainer cleared the hold",

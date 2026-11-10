@@ -231,6 +231,9 @@ async function run({
   // default, because in a healthy release they are the same commit; a test that
   // moves one and not the other is asking about `E_RELEASE_COMMIT_MISMATCH`.
   commit = FIXTURE_COMMIT, attestedCommit = commit,
+  // The certificate's `.15` and `.17`. The fixture's default is
+  // `mihailinl/AstraPlugins`'s pair, whatever `repo` says.
+  certIds = null,
 } = {}) {
   const github = fakeGitHub({ repo, tag, assets, commit });
   return decideRelease(
@@ -255,6 +258,7 @@ async function run({
         // told which tag it is attesting rather than omitting the field.
         tag,
         subjectDigest: crypto.createHash("sha256").update(fs.readFileSync(args[2])).digest("hex"),
+        ...(certIds ? { repositoryId: certIds.repository_id, repositoryOwnerId: certIds.repository_owner_id } : {}),
       })(args),
     },
   );
@@ -299,6 +303,23 @@ await test("a normal patch release goes live with no human", async () => {
     "the listing the publish job commits is on disk");
   assertEqual(fs.readFileSync(path.join(out, "remove.txt"), "utf8"), "", "nothing to delete");
   assert(r.comment.includes("**Published.**"), "and the author is told, in the comment, in those words");
+});
+
+// R_DOM_ACCESS_HOLD through the whole legacy pipeline: the certificate's ids
+// reach `decide()` from `bot/decide.mjs`, and only the SDK repository's pair
+// is exempt. Watched failing: with `sourceIds` dropped from `decideRelease`'s
+// call, the first-party run is held too.
+await test("R_DOM_ACCESS_HOLD — a release that already held dom_access is held on the issue path, unless the certificate names the SDK repository", async () => {
+  const root = registryTree([{ versions: [{ version: "0.1.0", capabilities: ["tools", "dom_access"] }] }]);
+  const assets = [conforming({ capabilities: ["tools", "dom_access"] })];
+  const stranger = await run({ root, assets, certIds: { repository_id: "1343092393", repository_owner_id: "280318216" } });
+  assertEqual(stranger.decision.outcome, "review", JSON.stringify(codes(stranger)));
+  assert(codes(stranger).includes("R_DOM_ACCESS_HOLD"), JSON.stringify(codes(stranger)));
+  assert(stranger.comment.includes("R_DOM_ACCESS_HOLD"), "the comment does not name the hold");
+  assert(stranger.comment.includes(POLICY_CODES.R_DOM_ACCESS_HOLD.remedy.slice(0, 40)), "…or say what the author does about it");
+  const firstParty = await run({ root, assets });
+  assert(!codes(firstParty).includes("R_DOM_ACCESS_HOLD"), `the SDK repository's certificate was held: ${JSON.stringify(codes(firstParty))}`);
+  assertEqual(firstParty.decision.outcome, "delay", `the SDK repository's release no longer waits out the high-risk delay: ${JSON.stringify(codes(firstParty))}`);
 });
 
 await test("a dom_access request does not", async () => {
@@ -838,16 +859,17 @@ await test("capabilities and permissions are one question", () => {
 await test("a backported patch is measured against the newest listing, not the last file", () => {
   const existing = {
     versions: [
-      { doc: { version: "0.9.0", capabilities: ["tools", "dom_access"] } },
-      { doc: { version: "0.10.0", capabilities: ["tools", "dom_access"] } },
+      { doc: { version: "0.9.0", capabilities: ["tools", "client"] } },
+      { doc: { version: "0.10.0", capabilities: ["tools", "client"] } },
     ],
   };
+  // `client`, not `dom_access`, which holds every release for now (R_DOM_ACCESS_HOLD).
   const d = decide({
     findings: [],
-    derived: { plugin: { id: "x" }, version: { version: "0.10.1", capabilities: ["tools", "dom_access"] } },
+    derived: { plugin: { id: "x" }, version: { version: "0.10.1", capabilities: ["tools", "client"] } },
     existing, repo: REPO, now: NOW,
   });
-  assertEqual(d.outcome, "delay", "held dom_access all along; delayed, not reviewed");
+  assertEqual(d.outcome, "delay", "held client all along; delayed, not reviewed");
   assert(!d.reasons.some((r) => r.code === "R_NEW_HIGH_RISK"), JSON.stringify(d.reasons));
 });
 
@@ -2270,10 +2292,12 @@ const DEC19_CASES = [
     { legacy: "review", legacyCode: "R_FIRST_LISTING", hint: /a first listing/ }],
   ["a check's flag for a person", () => ({ ...cleanRelease(), findings: [{ level: "review", code: "R_TYPOSQUAT_NEAR", where: "names", message: "one edit from a listed id" }] }),
     { legacy: "review", legacyCode: "R_CHECK_HELD", hint: /a check's flag for a person \(R_TYPOSQUAT_NEAR\)/ }],
-  ["a newly requested high-risk permission", () => withCaps(cleanRelease(), ["tools", "dom_access"]),
-    { legacy: "review", legacyCode: "R_NEW_HIGH_RISK", hint: /a high-risk permission held \(dom_access\).*a widened permission set \(dom_access/ }],
-  ["a high-risk permission held", () => withCaps(cleanRelease(), ["tools", "dom_access"], ["tools", "dom_access"]),
-    { legacy: "delay", legacyCode: "P_DELAY_HIGH_RISK", hint: /a high-risk permission held \(dom_access\)/ }],
+  // `client`, not `dom_access`: dom_access holds on both paths for now
+  // (R_DOM_ACCESS_HOLD, below), and these rows are about what does not.
+  ["a newly requested high-risk permission", () => withCaps(cleanRelease(), ["tools", "client"]),
+    { legacy: "review", legacyCode: "R_NEW_HIGH_RISK", hint: /a high-risk permission held \(client\).*a widened permission set \(client/ }],
+  ["a high-risk permission held", () => withCaps(cleanRelease(), ["tools", "client"], ["tools", "client"]),
+    { legacy: "delay", legacyCode: "P_DELAY_HIGH_RISK", hint: /a high-risk permission held \(client\)/ }],
   ["a widened permission set", () => withCaps(cleanRelease(), ["tools", "tts"]),
     { legacy: "delay", legacyCode: "P_DELAY_WIDENED", hint: /a widened permission set \(tts, which 0\.1\.17 did not ask for\)/ }],
 ];
@@ -2325,6 +2349,139 @@ await test("DEC-19 — a change of hands still holds on the service path, and it
     const stale = decide({ ...base, approval: { by: "mod-7", at: "2026-08-10T11:00:00Z", for: "0".repeat(16) } });
     assertEqual(stale.outcome, "review", `${code}: an approval naming other bytes cleared the hold`);
     assert(stale.reasons.some((r) => r.code === "P_APPROVAL_STALE"), `${code}: no P_APPROVAL_STALE`);
+  }
+});
+
+// R_DOM_ACCESS_HOLD: dom_access holds for review until a fixed Astra ships.
+// Every release that asks for it — a first listing or a new version, newly
+// requested or already held, under `[capabilities]` or `[permissions]` — is
+// held on BOTH paths, except a release built in the first-party SDK
+// repository, named by its immutable ids (`DOM_ACCESS_HOLD` in
+// bot/lib/policy/decision.mjs).
+//
+// Watched failing, one mutation at a time: the hold raised on the legacy path
+// only (the service rows publish); the exemption compared by a case-folded
+// repository name (the renamed-stranger row publishes); the exemption widened
+// to the first-party owner (the canary-repository row publishes); only a NEWLY
+// requested dom_access held (the already-held rows delay or publish).
+const AP_IDS = Object.freeze({ repository_id: "1203676452", repository_owner_id: "193032699" });
+const STRANGER_IDS = Object.freeze({ repository_id: "1343092393", repository_owner_id: "280318216" });
+/** `base` asking for dom_access under `section`, with the listed version asking for `previous`. */
+const withDom = (base, section, previous) => ({
+  ...base,
+  derived: {
+    ...base.derived,
+    version: section === "permissions"
+      ? { ...base.derived.version, capabilities: ["tools"], permissions: { dom_access: { reason: "Draws over the window" } } }
+      : { ...base.derived.version, capabilities: ["tools", "dom_access"] },
+  },
+  ...(previous === null ? {} : { existing: { versions: [{ doc: { version: "0.1.17", ...previous } }] } }),
+});
+const DOM_CASES = [];
+for (const section of ["capabilities", "permissions"]) {
+  DOM_CASES.push(
+    [`a first listing (${section})`, () => withDom(publishable({ findings: [{ level: "review", code: "R_FIRST_LISTING", where: "version", message: "never listed" }] }), section, null)],
+    [`a new version of a listing that already held it (${section})`, () => withDom(cleanRelease(), section,
+      section === "permissions" ? { capabilities: ["tools"], permissions: { dom_access: {} } } : { capabilities: ["tools", "dom_access"] })],
+    [`a new version that newly asks for it (${section})`, () => withDom(cleanRelease(), section, { capabilities: ["tools"] })],
+  );
+}
+const domHeld = (d) => d.reasons.some((r) => r.code === "R_DOM_ACCESS_HOLD" && r.level === "review");
+
+await test("R_DOM_ACCESS_HOLD — every release asking for dom_access is held for a person, on the service path and on the legacy path", () => {
+  assertEqual(policyCodeDef("R_DOM_ACCESS_HOLD").level, "review", "the code is not declared a hold");
+  assertEqual(policyCodeDef("R_DOM_ACCESS_HOLD", { path: "service" }).level, "review", "the code is not a hold on the service path");
+  for (const [what, input] of DOM_CASES) {
+    for (const path of ["service", "legacy"]) {
+      for (const sourceIds of [STRANGER_IDS, null]) {
+        const d = decide({ ...input(), path, sourceIds });
+        const label = `${what}, ${path} path, ${sourceIds ? "a stranger's repository" : "no ids"}`;
+        assertEqual(d.outcome, "review", `${label}: ${JSON.stringify(d.reasons.map((r) => r.code))}`);
+        assert(domHeld(d), `${label}: held, but not by R_DOM_ACCESS_HOLD: ${JSON.stringify(d.reasons.map((r) => r.code))}`);
+        assert(d.reasons.find((r) => r.code === "R_DOM_ACCESS_HOLD").message.includes("until a fixed Astra ships"), label);
+        assertEqual(d.publish_after ?? null, null, `${label}: a held release was given a publication time`);
+      }
+    }
+  }
+});
+
+await test("R_DOM_ACCESS_HOLD — the first-party SDK repository is exempt by its ids, and nothing else is", () => {
+  for (const [what, input] of DOM_CASES) {
+    // The exempt repository: no R_DOM_ACCESS_HOLD on either path, and each
+    // path then answers what it answered before this hold existed.
+    const service = decide({ ...input(), path: "service", sourceIds: AP_IDS });
+    assert(!domHeld(service), `${what}: mihailinl/AstraPlugins was held on the service path`);
+    assertEqual(service.outcome, "publish", `${what}, service, first-party: ${JSON.stringify(service.reasons.map((r) => r.code))}`);
+    const legacy = decide({ ...input(), sourceIds: AP_IDS });
+    assert(!domHeld(legacy), `${what}: mihailinl/AstraPlugins was held on the legacy path`);
+  }
+  const already = DOM_CASES[1][1];
+  assertEqual(decide({ ...already(), sourceIds: AP_IDS }).outcome, "delay", "first-party on the legacy path no longer waits out the high-risk delay");
+
+  // Not exempt: the same name with a stranger's ids (the name is not the
+  // identity, and its case is not either), a repository of the same owner
+  // that is not the SDK repository, the SDK repository's id under another
+  // owner (a transfer keeps the id), and ids that are not strings.
+  const notExempt = [
+    ["the name mihailinl/AstraPlugins with a stranger's ids", { repo: "mihailinl/AstraPlugins", sourceIds: STRANGER_IDS }],
+    ["the name in another case with a stranger's ids", { repo: "MIHAILINL/astraplugins", sourceIds: STRANGER_IDS }],
+    ["another repository of the same owner (the canary)", { repo: "mihailinl/astra-registry-canary", sourceIds: { repository_id: "1331417619", repository_owner_id: "193032699" } }],
+    ["a first-party organisation's repository", { repo: "MINICE-AI/astra-chess", sourceIds: { repository_id: "1343092393", repository_owner_id: "280318216" } }],
+    ["the SDK repository's id under another owner", { repo: "someone/AstraPlugins", sourceIds: { repository_id: "1203676452", repository_owner_id: "280318216" } }],
+    ["the ids as numbers", { repo: "mihailinl/AstraPlugins", sourceIds: { repository_id: 1203676452, repository_owner_id: 193032699 } }],
+    ["no ids at all", { repo: "mihailinl/AstraPlugins", sourceIds: null }],
+  ];
+  for (const [what, over] of notExempt) {
+    for (const path of ["service", "legacy"]) {
+      const d = decide({ ...DOM_CASES[1][1](), ...over, path });
+      assertEqual(d.outcome, "review", `${what}, ${path}: exempted: ${JSON.stringify(d.reasons.map((r) => r.code))}`);
+      assert(domHeld(d), `${what}, ${path}: not held by R_DOM_ACCESS_HOLD`);
+    }
+  }
+});
+
+await test("R_DOM_ACCESS_HOLD — a release without dom_access is untouched, on both paths", () => {
+  for (const path of ["service", "legacy"]) {
+    for (const input of [cleanRelease, () => withCaps(cleanRelease(), ["tools", "client"], ["tools", "client"]), () => withCaps(cleanRelease(), ["tools", "tts"])]) {
+      const before = decide({ ...input(), path });
+      const after = decide({ ...input(), path, sourceIds: STRANGER_IDS });
+      assert(!domHeld(after), `${path}: a release without dom_access was held for it`);
+      assertEqual(JSON.stringify(after.reasons.map((r) => r.code)), JSON.stringify(before.reasons.map((r) => r.code)),
+        `${path}: the source ids changed a decision about a release without dom_access`);
+      assertEqual(after.outcome, before.outcome, path);
+    }
+  }
+  assertEqual(decide({ ...cleanRelease(), path: "service", sourceIds: STRANGER_IDS }).outcome, "publish", "a routine update no longer publishes");
+});
+
+await test("R_DOM_ACCESS_HOLD — an approval clears it, and the delay rules still apply after", () => {
+  for (const [what, input] of DOM_CASES) {
+    for (const path of ["service", "legacy"]) {
+      const base = { ...input(), path, sourceIds: STRANGER_IDS };
+      const held = decide(base);
+      assertEqual(held.outcome, "review", `${what}, ${path}`);
+      const approved = decide({ ...base, approval: { by: "mod-7", at: "2026-08-10T11:00:00Z", for: held.fingerprint } });
+      const codesOf = approved.reasons.map((r) => r.code);
+      assert(codesOf.includes("P_APPROVED"), `${what}, ${path}: the approval was not honoured: ${JSON.stringify(codesOf)}`);
+      const firstListing = what.startsWith("a first listing");
+      if (path === "service") {
+        // DEC-19: no delay on the service path; the approval publishes it.
+        assertEqual(approved.outcome, "publish", `${what}, service, approved: ${JSON.stringify(codesOf)}`);
+        assert(!codesOf.some((c) => /^P_DELAY_/.test(c)), `${what}: a delay reached the service path`);
+      } else if (firstListing) {
+        // The legacy path's approved first listing, as for any other hold.
+        assertEqual(approved.outcome, "publish", `${what}, legacy, approved: ${JSON.stringify(codesOf)}`);
+        assert(codesOf.includes("P_FIRST_LISTING_APPROVED"), `${what}: ${JSON.stringify(codesOf)}`);
+      } else {
+        // The legacy path's update: the approval clears the hold and never the delay.
+        assertEqual(approved.outcome, "delay", `${what}, legacy, approved: ${JSON.stringify(codesOf)}`);
+        assert(codesOf.includes("P_DELAY_HIGH_RISK"), `${what}: the high-risk delay did not apply after the approval`);
+      }
+      // An approval naming other bytes does not clear it (DEC-6).
+      const stale = decide({ ...base, approval: { by: "mod-7", at: "2026-08-10T11:00:00Z", for: "0".repeat(16) } });
+      assertEqual(stale.outcome, "review", `${what}, ${path}: a stale approval cleared it`);
+      assert(domHeld(stale) && stale.reasons.some((r) => r.code === "P_APPROVAL_STALE"), `${what}, ${path}`);
+    }
   }
 });
 
