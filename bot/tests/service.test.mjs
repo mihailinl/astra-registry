@@ -607,6 +607,14 @@ const NOT_MEMBER_READERS = [
       "and to write R4b's marker into a fixture tree the deadline watch then reads. It opens no entry of the token " +
       "file and evaluates no condition",
   },
+  {
+    file: "tools/trust31-pr-check.mjs",
+    reads: [],
+    why:
+      "the pull-request check for TRUST-31. It takes one top-level member, `trust31_tracked_set_sha256`, out of " +
+      "the token file as a commit carries it, to hold the registry's copy of the set to the digest the contract " +
+      "publishes. It opens no entry of the token file and evaluates no condition",
+  },
 ];
 
 /**

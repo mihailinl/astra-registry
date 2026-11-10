@@ -1,0 +1,124 @@
+# Does this pull request change the tree the owner acknowledged for the bot?
+#
+# The plugins service runs the bot live only while the bot-code tree at the
+# run's commit is the one the owner acknowledged (contract TRUST-31). A merge
+# that changes any path of that tree puts every bot call in shadow, and no
+# author's release publishes, until the owner acknowledges the new tree on the
+# site. On 2026-11-09 pull request #498 changed one line of
+# `policy/spdx-allowlist.json` and was merged with a note "no acknowledgement
+# needed", written from memory; the file is in the set, and three releases sat
+# unpublished for a day. Since contract 6.8.0 the owner can acknowledge a
+# branch's tree BEFORE its merge, and then the merge shadows nothing. This
+# workflow is what tells a maintainer that a pull request needs that, and
+# prints the three values the owner compares. `tools/trust31-pr-check.mjs`
+# says how they are computed and where the set is read from.
+#
+# RED means: do not merge yet. Either the owner acknowledges this branch at
+# this head first (the summary says how), or the merge is made knowing the bot
+# goes to shadow until he acknowledges `main`. docs/RUNBOOK.md §7.12.
+#
+# **A red check blocks no merge.** ROLL-5 allows no required checks on `main`,
+# so this is a check a person reads, like the door in bot-checks.yml.
+#
+# **It judges with the base's copy of the check** when the base has one, as
+# the door does: a worktree of the base commit supplies the tool, and the pull
+# request reaches it as git objects only. A pull request that edits the tool
+# is judged by the one it is trying to change, and the summary says the pull
+# request touches the check. (A pull request can still edit THIS file, since
+# GitHub runs a `pull_request` workflow from the merge ref; that is a diff to
+# .github/workflows/ a reviewer reads. One that passes the tool an argument
+# the base's copy does not know is red with the usage text.) The pull request
+# that adds the tool has no base copy to be judged by, and says so.
+#
+# **A pre-acknowledged pull request goes green only through the service.**
+# `TRUST31_PROPOSED_READ_URL` is a repository variable holding the plugins
+# service's address. It is unset until the service deploys the read
+# (`GET {service}/plugins/v1/trust31/proposed?head=<commit>`), and while it is
+# unset a pull request that changes the tree stays red after the owner's
+# acknowledgement too: the merge waits for his word, not for this colour.
+#
+# It needs no secret and no token beyond `contents: read`, so it runs on a
+# fork's pull request as well, and tells it that a fork's branch can never be
+# pre-acknowledged. It is not a bot workflow and it is outside TRUST-31's set,
+# as is the tool: changing this check is not a change the owner acknowledges.
+
+name: TRUST-31 set
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: trust31-set-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  set:
+    name: TRUST-31 set
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      # The merge commit GitHub made for this pull request, with the whole
+      # history: its two parents are the base and the head, and the commit the
+      # owner's vector names is on `main` behind them.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+
+      - name: The base's copy of the check, when the base has one
+        id: copy
+        run: |
+          set -euo pipefail
+          base=$(git rev-parse --verify 'HEAD^1^{commit}')
+          if git cat-file -e "$base:tools/trust31-pr-check.mjs" 2>/dev/null; then
+            git worktree add --quiet --detach "$RUNNER_TEMP/trust31-base" "$base"
+            echo "tool=$RUNNER_TEMP/trust31-base/tools/trust31-pr-check.mjs" >> "$GITHUB_OUTPUT"
+            echo "judged=the base's copy of the check, at $base" >> "$GITHUB_OUTPUT"
+          else
+            echo "tool=$GITHUB_WORKSPACE/tools/trust31-pr-check.mjs" >> "$GITHUB_OUTPUT"
+            echo "judged=the pull request's own copy of the check, because the base has none" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The live half of bot/tests/trust31-pr-check.test.mjs's first test,
+      # which runs from a fixture because Bot tests clones one commit. The two
+      # digests are the ones the owner read off the site's operator page on
+      # 2026-11-10 for registry `main` at this commit. If the recipe here
+      # drifts from the service's, this is red before any verdict is printed.
+      - name: The recipe still gives the two digests the owner read off the site
+        env:
+          TOOL: ${{ steps.copy.outputs.tool }}
+        run: |
+          set -euo pipefail
+          node "$TOOL" --dir "$GITHUB_WORKSPACE" \
+            --at 6a961d64c486033397e215d13bbde9b868e321e0 \
+            --expect-set 3fdab6458ab377dfa53bdc2f562d13fd8597a9c944eccfcfc5c0cee621830e3e \
+            --expect-tree d0e5d1b8229fba7d7e5f6a7abd0bbe2736833adf74a7679be3e3e7b2de94f20f
+
+      # Everything the pull request chose reaches the shell through `env:`,
+      # never interpolated into the script, and the tool prints it as inert
+      # text.
+      - name: The set and the tree, at the base and at what main would carry
+        env:
+          TOOL: ${{ steps.copy.outputs.tool }}
+          JUDGED_BY: ${{ steps.copy.outputs.judged }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BRANCH: ${{ github.head_ref }}
+          REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          TRUST31_PROPOSED_READ_URL: ${{ vars.TRUST31_PROPOSED_READ_URL }}
+        run: |
+          set -euo pipefail
+          node "$TOOL" --dir "$GITHUB_WORKSPACE" \
+            --base "$BASE_SHA" --head "$HEAD_SHA" --merge "$(git rev-parse HEAD)" \
+            --branch "$BRANCH" --repo "$REPO" --head-repo "$HEAD_REPO" \
+            --judged-by "$JUDGED_BY"

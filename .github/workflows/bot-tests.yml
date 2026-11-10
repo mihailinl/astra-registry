@@ -540,3 +540,19 @@ jobs:
       - name: The owner's passkey acts, verified by the bot and nothing else
         if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/operator-act.test.mjs
+
+      # tools/trust31-pr-check.mjs, the check `trust31-set.yml` runs on every
+      # pull request: does it change the tree the owner acknowledged for the
+      # bot (TRUST-31)? The suite holds the two digests to the SERVICE's
+      # recipe, against values the owner read off the site for `main` at
+      # 6a961d6 — from a fixture of `git ls-tree` lines, since this job's
+      # clone is one commit deep; `trust31-set.yml` asserts the same two live.
+      # Then each way a pull request can move them (a file under a directory
+      # entry, a single file, a removal, a mode alone, the list itself), the
+      # neighbour that must not count (`bot/ingest.mjs.bak`), what `main`
+      # would carry against what the branch holds, and every answer the
+      # service's read of a pre-acknowledgement could give, against a fake
+      # fetch. Real git repositories for the merges. No probe, no network.
+      - name: The TRUST-31 check on a pull request, against the digests the owner read off the site
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
+        run: node --test bot/tests/trust31-pr-check.test.mjs

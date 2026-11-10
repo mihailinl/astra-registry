@@ -908,6 +908,39 @@ outright, and it will not accept a deleted advisory unless a log entry names it
 as reversed or the deleting commit carries the trailer — which is why §7.2 puts
 the trailer on the deletion.
 
+### 7.12 A red `TRUST-31 set` check on a pull request
+
+The plugins service runs the bot live only while the bot's code on `main` is
+the tree the owner acknowledged. `TRUST-31 set` runs on every pull request to
+`main` and says whether merging it would change that tree. It is red when it
+would, and its summary names the entries that differ and the files under them.
+
+Red means **do not merge yet**. Merged as it is, the pull request puts every
+bot call in shadow, and no author's release publishes until the owner
+acknowledges `main` again. Instead:
+
+1. The owner acknowledges the branch on the site's operator page (Workshop →
+   operator → "pre-acknowledge"), comparing the head and the two digests the
+   summary prints with what the page shows.
+2. Merge within 72 hours, and **do not push to the branch again**: a new head
+   is a new tree, and needs a new acknowledgement.
+
+If the summary says to update the branch first, `main` has moved inside the
+set since the branch left it; do that before step 1. A fork's branch cannot be
+acknowledged at all: push the same commits to a branch of this repository and
+open the pull request from there.
+
+The check stays red after the owner's acknowledgement until the service
+publishes the read it would ask (`TRUST31_PROPOSED_READ_URL`, unset today), so
+for now the merge waits for the owner's word and not for a green check. It
+**gates nothing**: `main` has no required checks, and merging past a red one is
+choosing the shadow. Green means the pull request touches nothing in the set,
+and needs no acknowledgement.
+
+`node tools/trust31-pr-check.mjs --base origin/main --head <branch>` gives the
+same answer on a desk, and `--at <commit>` prints the three values for any
+commit.
+
 ---
 
 ## 8. Testing the chain without any real key
