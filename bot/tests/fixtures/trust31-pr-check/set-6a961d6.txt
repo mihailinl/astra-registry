@@ -1,0 +1,210 @@
+const WORKFLOWS = [
+  ".github/workflows/plugins-ingest.yml",
+  ".github/workflows/plugins-moderation.yml",
+];
+
+export const ENTRIES = [
+  ...WORKFLOWS,
+  ".github/actions/",
+  "bot/alert.mjs",
+  "bot/asset-check.mjs",
+  "bot/baseline.mjs",
+  "bot/check-roots.mjs",
+  "bot/decide.mjs",
+  "bot/detectors.mjs",
+  "bot/export-issues.mjs",
+  "bot/gen-checks-doc.mjs",
+  "bot/heartbeat.mjs",
+  "bot/ingest.mjs",
+  // Contract 0.23.0's, and the first entry to arrive through the cost the two
+  // tests below state rather than before it: `bot/moderation-run.mjs` is the
+  // nineteenth top-level entry point, and the moderation workflow's `list`,
+  // `alert`, `commit`, `report` and `settled` jobs all run it.
+  "bot/moderation-run.mjs",
+  "bot/moderation.mjs",
+  "bot/publish-apply.mjs",
+  "bot/read-submission.mjs",
+  "bot/recheck-publishers.mjs",
+  "bot/run-checks.mjs",
+  "bot/sign-index.mjs",
+  // `bot/triage.mjs` and `bot/watch.mjs` stood here until cutover commits D
+  // and E deleted them (registry plan B-T5.2). Contract 2.5.0 took both out of
+  // TRUST-31's published set before either file went, so that neither deletion
+  // is found as a shadow transition; the registry's copy lost each in the
+  // commit that deleted the file.
+  "bot/lib/",
+  "bot/policy/",
+  "bot/manifest-probe/",
+  "tools/lib/",
+  "tools/validate.mjs",
+  "tools/build-index.mjs",
+  "tools/build-revocations.mjs",
+  // `tools/selftest.mjs` and its cases. The plan's first draft of this set put
+  // them under "tests and fixtures", outside — and `bot/publish-apply.mjs:480`
+  // runs `execFileSync(process.execPath, ["tools/selftest.mjs"])` with
+  // `stdio: "inherit"` as the last of five registry checks a publication must
+  // pass. The cases are covered by the DIRECTORY and not through the import
+  // walk, because `tools/selftest.mjs:107` loads them with
+  // `import(\`./selftest/${name}\`)` — a dynamic specifier no static closure
+  // can follow.
+  "tools/selftest.mjs",
+  "tools/selftest/",
+  "policy/limits.json",
+  // Contract 0.21.0. The same finding as `tools/selftest.mjs`, one gate
+  // EARLIER: `tools/validate.mjs` — the first of the five checks
+  // `bot/publish-apply.mjs` runs before it commits — imports
+  // `bot/lib/decisions.mjs`, which takes `DOCUMENT_MEMBERS`, `roleAddresses`,
+  // `scanDocument` and `shapeFindings` from `tools/priv-scan.mjs`. PRIV-2's
+  // member table and shape rules, which decide what a decision record may
+  // contain, were outside the set while the bot wrote records by them.
+  // `tools/priv-scan.mjs` imports `tools/coverage/rules.mjs`, and
+  // `tools/coverage/git.mjs` comes with it.
+  //
+  // **That import is gone** (dev/couplings.md entry 104). The decision writer
+  // takes the rules from `tools/lib/priv-rules.mjs`, under the `tools/lib/`
+  // entry, because `tools/priv-scan.mjs` also held `roleAddresses`, which reads
+  // `bot/security-contact.json` — outside this set — and exempted whatever
+  // address that file held from the bot's own PRIV-2 refusal. So leg (b)'s
+  // closure no longer reaches `tools/priv-scan.mjs` or `tools/coverage/rules.mjs`
+  // (52 modules to 51).
+  //
+  // **Contract 0.34.0 takes `tools/priv-scan.mjs` out, and only that one.** It
+  // is reached by no bot run through the closure below AND by none through the
+  // selftest's cases, whose own static imports this walk cannot follow (the
+  // runner loads them by a dynamic `import()`). `tools/coverage/rules.mjs` IS
+  // reached that second way: `tools/selftest/couplings.mjs` imports
+  // `tools/coverage/docs-advisory-url.mjs`, which imports it, and the publish
+  // path runs the selftest as its fifth gate — so taking it out would be the
+  // direction that opens a hole, and it stayed until that path was decided (ops
+  // pending item 19). Contract 0.38.0 decided it by bringing
+  // `docs-advisory-url.mjs` in beside it, below. `tools/coverage/git.mjs` is reached through
+  // `bot/lib/compile-decision.mjs`, which `bot/moderation-run.mjs` and
+  // `tools/validate.mjs` import.
+  //
+  // `tools/coverage/` is ENUMERATED and not taken whole: `drain-age`,
+  // `examples-staging-id`, `keepalive-age` and `reserved-id-mirror` are rule
+  // reporters the moderation-coverage workflow runs, and
+  // `priv-scan-exempt.json` is read only by the canary's own history walk. A
+  // directory entry is right when everything beneath it belongs; here five of
+  // eight do not. (`docs-advisory-url` is the sixth reporter, and 0.38.0 put it
+  // in, below, because a selftest case imports it.) What makes enumerating safe
+  // is leg (b): a file under `tools/coverage/` that a bot run starts reaching
+  // fails there, by name, the day it does.
+  "tools/coverage/rules.mjs",
+  "tools/coverage/git.mjs",
+  // ── contract 0.38.0: what the fifth gate LOADS, not only what the bot imports ──
+  //
+  // Ops pending item 19 and couplings entry 116, decided (a) for the owner on
+  // 2026-09-23. `bot/publish-apply.mjs` runs `tools/selftest.mjs` as the last of
+  // its five checks and the moderation commit job runs it too, and the runner
+  // loads its cases by a dynamic `import()` that leg (b) cannot follow. The
+  // cases reach — by import, by a node child, by a temp copy run as a child —
+  // the 31 modules below, measured at runtime by `node tools/selftest.mjs
+  // --loads` (tools/selftest/loads.mjs), whose declared residual they were.
+  // An edit to any of them changes what a bot commit is held to, so it is a
+  // shadow transition and an acknowledgement from R3 (registry plan ROLL-64):
+  // about three a week more, measured on the week before the decision, and 11
+  // in the week to 2026-09-23 — 8 of them edits to `bot/tests/workflows.test.mjs`
+  // alone, which is here only because a case runs a copy of it (below).
+  //
+  // A directory entry where every file beneath it is code the gate reaches —
+  // `tools/served-set/` (all seven), `site/lib/` (one) and `site/templates/`
+  // (all three) — and every other path enumerated, because the directory also
+  // holds what the gate does not load: `tools/signer/verdict.mjs`; `site/`'s
+  // assets, redirects and its own selftest; `tools/testkeys/`' keys, README and
+  // fixtures; `tests/`' vectors; `bot/fixtures/`' catalogues; `bot/tests/`' other
+  // suites. Enumerating is safe for the reason leg (b) makes it safe for
+  // `tools/coverage/`: a new module the gate starts loading is red, by name, in
+  // `loads.mjs`'s check, whose residual is now empty.
+  //
+  // `bot/tests/workflows.test.mjs` is the one test file in the set: the case
+  // `tools/selftest/contract-tokens.mjs` copies it into a temp tree and runs
+  // the copy, so its assertions are part of what the fifth gate decides.
+  "bot/fixtures/index/regenerate.mjs",
+  "bot/tests/workflows.test.mjs",
+  "site/build.mjs",
+  "site/lib/",
+  "site/templates/",
+  "tests/shared-vectors.mjs",
+  "tools/coverage-verdict.mjs",
+  "tools/coverage/docs-advisory-url.mjs",
+  "tools/make-fixtures.mjs",
+  "tools/moderation-coverage.mjs",
+  "tools/regenerate-signed.mjs",
+  "tools/served-set/",
+  "tools/sign-revocations.mjs",
+  "tools/sign-trust.mjs",
+  "tools/signer/git.mjs",
+  "tools/signer/key-window.mjs",
+  "tools/signer/pages.mjs",
+  "tools/signer/plan.mjs",
+  "tools/signer/run.mjs",
+  "tools/testkeys/make-rehearsal-r2.mjs",
+  // Ops couplings entry 126: `bot/sign-index.mjs`, a set entry, imports it —
+  // the one import from inside the set to outside it that leg (d) below found
+  // on the tree 0.34.0 left, besides the ones the gate's own cases make.
+  "tools/testkeys/regenerate.mjs",
+  "tools/testkeys/sign-trust.mjs",
+  // Ops couplings entry 132: since contract 0.36.0 the fifth gate holds the
+  // token file's `flow13_table` to this file, rows, order and source
+  // (tools/selftest/contract-tokens.mjs). The registry's own table, written by
+  // a desk tool from `bot/lib/codes.mjs` (in the set) and by no workflow, so
+  // hashing it costs no acknowledgement a change to the codes does not already.
+  "tools/codes-table.json",
+  "policy/reserved-ids.json",
+  "policy/spdx-allowlist.json",
+  "policy/listing-language-exemptions.json",
+  // Contract 2.4.0's: B.4's alert record, which tools/validate.mjs judges
+  // against it by literal path (the fourteenth schema).
+  "schema/alert-v1.json",
+  "schema/cutover-v1.json",
+  "schema/deadline-v1.json",
+  // B-T2.1's three, added by contract 0.21.0. `tools/lib/sources.mjs`'s
+  // `loadSchemas` loads them by literal path and `tools/validate.mjs` judges
+  // records against them — from THIS repository, never from the tree under
+  // test, so that `--registry-dir` cannot supply the rules it is judged by.
+  // That is what makes them gate inputs rather than documents. This comment
+  // used to say `loadSchemas` loads "all eleven", the sentence contract 0.21.0
+  // carried and later struck: it loads eight of the set's thirteen, and
+  // `bot/lib/holds.mjs`, `bot/lib/listing-state.mjs` and
+  // `bot/moderation-run.mjs` read the other five. Which loader opens each one
+  // is asked now rather than written: tools/selftest/primitives.mjs runs every
+  // loader, records what it opens, and holds this list to it.
+  "schema/decision-v1.json",
+  "schema/hold-record-v1.json",
+  "schema/hold-v1.json",
+  "schema/identity-v1.json",
+  "schema/index-v1.json",
+  // Contract 0.31.0's, published before the file landed, as
+  // `schema/moderation-work-v1.json` was at 0.23.0. B.4 typed MIG-13's marker in that
+  // version and this file asserts the types; `loadSchemas` takes it by literal
+  // path and `tools/validate.mjs` — the first of the five checks the publish
+  // path runs — judges every `log/migration-notice-<n>.json` against it. A
+  // writer who could edit it from outside the set could make that check pass a
+  // marker whose `round` the token file's condition cannot compare, without
+  // the bot returning to shadow.
+  "schema/migration-notice-v1.json",
+  // Contract 0.23.0's, and the one entry under `schema/` that is not a record
+  // schema: it is the registry's check of the SERVICE's own
+  // `astra.plugins.bot-moderation-work/1` answer, read by
+  // `bot/moderation-run.mjs` by literal path. A writer who could edit it from
+  // outside the set could widen what a moderation run accepts from the service
+  // — and compile an advisory out of an entry nobody validated — without the
+  // bot returning to shadow.
+  "schema/moderation-work-v1.json",
+  // Contract 6.8.0's, published before either file lands, for the registry
+  // pull request that is the first bot-code tree ever acknowledged before
+  // its merge (astra-plugins-ops `dev/operator-acts-on-site-design.md` §6
+  // step 6; TRUST-31 "A tree acknowledged before its merge"). The first is
+  // the registry's check of the service's `astra.plugins.bot-moderation-
+  // work/2` answer, named as `schema/moderation-work-v1.json` names `/1`'s;
+  // the second types the record `state/acts/<jti>.json` the bot writes for
+  // every operator act it applies. Both are below, in `UNRESOLVED_BY`.
+  "schema/moderation-work-v2.json",
+  "schema/operator-act-v1.json",
+  "schema/plugin-v1.json",
+  "schema/publisher-v1.json",
+  "schema/queue-v1.json",
+  "schema/version-v1.json",
+];
+
