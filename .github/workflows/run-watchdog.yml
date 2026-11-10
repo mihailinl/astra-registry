@@ -10,7 +10,7 @@
 #
 # This workflow asks the API, every ten minutes and after each of the frequent
 # workflows, two questions (tools/run-watchdog.mjs says how, and
-# tools/run-watchdog.json holds the bounds):
+# tools/run-watchdog-data.mjs holds the bounds):
 #
 #   * is any run unfinished and older than 30 minutes? (AGE, never status)
 #   * has a scheduled or waker-driven workflow had no successful run inside its
@@ -80,7 +80,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             tools/run-watchdog.mjs
-            tools/run-watchdog.json
+            tools/run-watchdog-data.mjs
           sparse-checkout-cone-mode: false
       - uses: actions/setup-node@v4
         with:

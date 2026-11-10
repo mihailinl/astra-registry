@@ -17,7 +17,7 @@
 //     status: a healthy running run can report `queued`, and a young queued run
 //     is not a problem.
 //   * SILENT: a scheduled or waker-driven workflow with no successful run for
-//     its bound in tools/run-watchdog.json.
+//     its bound in tools/run-watchdog-data.mjs.
 // The known ghosts in the data file are runs GitHub will neither cancel nor
 // delete; they are said once and are never stale.
 //
@@ -25,14 +25,13 @@
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import path from "node:path";
+
+import DATA from "./run-watchdog-data.mjs";
 
 export const UNFINISHED = ["queued", "in_progress", "pending", "waiting", "requested"];
 const MS_MINUTE = 60_000;
 
-const here = import.meta.dirname;
-export const DATA_FILE = path.join(here, "run-watchdog.json");
-export const loadData = (file = DATA_FILE) => JSON.parse(fs.readFileSync(file, "utf8"));
+export const loadData = () => DATA;
 
 /** Minutes since this run (its latest attempt, once started) began waiting or working. */
 export function runAgeMinutes(run, now) {

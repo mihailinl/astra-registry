@@ -960,7 +960,7 @@ a healthy running run can report `queued`, and a young one is fine.
 minutes and after each of the frequent workflows (GitHub delivers this
 repository's crons only every few hours, so the wakers matter). Its summary
 page lists each stale run with its age, each workflow with no successful run
-inside its bound (`tools/run-watchdog.json`: 16 h ingest and moderation, 12 h
+inside its bound (`tools/run-watchdog-data.mjs`: 16 h ingest and moderation, 12 h
 coverage, signer, detectors and the index, 36 h served-set and the daily ones),
 and the known ghosts. It is red, in the Actions tab and in GitHub's failure
 e-mail, when anything is stale or silent; the verdict job needs no runner from
@@ -974,7 +974,7 @@ stays stale, cancel it (`gh run cancel <id>`), which frees the group. The next
 run of a workflow that cancels in progress (`Moderation coverage`) also ends
 it. If GitHub refuses to cancel (the run stays `queued` or `in_progress` after
 a force-cancel), it is a ghost: do not retry; add its id to `ghosts` in
-`tools/run-watchdog.json` so it is reported once and not as stale, and ask
+`tools/run-watchdog-data.mjs` so it is reported once and not as stale, and ask
 support to purge it. For the six known ghosts (37655506182, 39698520903,
 39698355160, 42066476714, 42066736817, 42066989559) nothing is to be done.
 

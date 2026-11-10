@@ -151,7 +151,7 @@ test("cron arithmetic: the longest gap a schedule leaves", () => {
 test("every watched workflow's crons are the ones its bound was set against, and the bound leaves room", () => {
   for (const w of data.silence) {
     const crons = cronsOf(workflowFile(w.file));
-    assert.deepEqual(crons, w.crons, `${w.file} schedules ${JSON.stringify(crons)} and tools/run-watchdog.json bounds it against ${JSON.stringify(w.crons)}: change the bound with the cron`);
+    assert.deepEqual(crons, w.crons, `${w.file} schedules ${JSON.stringify(crons)} and tools/run-watchdog-data.mjs bounds it against ${JSON.stringify(w.crons)}: change the bound with the cron`);
     const gap = Math.max(...crons.map(cronMaxGapMinutes));
     assert.ok(w.max_minutes >= 1.5 * gap, `${w.workflow}: ${w.max_minutes} min is under 1.5 x its cron's longest gap of ${gap} min`);
     assert.match(workflowFile(w.file), new RegExp(`^name: ${w.workflow.replace(/[()]/g, "\\$&")}\\s*$`, "m"), `${w.file} is not named ${w.workflow}`);
@@ -162,7 +162,7 @@ test("no scheduled workflow escapes the watchdog without a reason", () => {
   const listed = new Set([...data.silence.map((w) => w.file), ...data.unwatched.map((w) => w.file), "run-watchdog.yml"]);
   for (const f of fs.readdirSync(path.join(ROOT, ".github", "workflows")).filter((n) => n.endsWith(".yml"))) {
     if (cronsOf(workflowFile(f)).length === 0) continue;
-    assert.ok(listed.has(f), `${f} has a cron and no bound in tools/run-watchdog.json (silence) or reason (unwatched)`);
+    assert.ok(listed.has(f), `${f} has a cron and no bound in tools/run-watchdog-data.mjs (silence) or reason (unwatched)`);
   }
   for (const u of data.unwatched) assert.ok(u.why.length > 20);
 });
