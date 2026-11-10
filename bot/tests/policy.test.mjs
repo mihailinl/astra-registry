@@ -71,7 +71,8 @@ import { commitTrailers, composePublication } from "../lib/service-publish.mjs";
 import { submissionFingerprint } from "../lib/policy/release.mjs";
 import { terminalSubmissionRecord } from "../moderation-run.mjs";
 import { operatorAct } from "../../tools/operator.mjs";
-import { makeBundle, fakeGitHub, fakeGh, fakeOwnership, FIXTURE_COMMIT } from "../fixtures/ingest/make.mjs";
+import { makeBundle, fakeGitHub, fakeGh, fakeOwnership, FIXTURE_COMMIT, FIRST_PARTY_OWNER_ID, FIRST_PARTY_REPOSITORY_ID } from "../fixtures/ingest/make.mjs";
+const FIRST_PARTY_IDS = Object.freeze({ repository_id: FIRST_PARTY_REPOSITORY_ID, repository_owner_id: FIRST_PARTY_OWNER_ID });
 import { loadSources } from "../../tools/lib/sources.mjs";
 
 const REPO_ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
@@ -231,8 +232,8 @@ async function run({
   // default, because in a healthy release they are the same commit; a test that
   // moves one and not the other is asking about `E_RELEASE_COMMIT_MISMATCH`.
   commit = FIXTURE_COMMIT, attestedCommit = commit,
-  // The certificate's `.15` and `.17`. The fixture's default is
-  // `mihailinl/AstraPlugins`'s pair, whatever `repo` says.
+  // The certificate's `.15` and `.17`. The fixture's default is a stranger's
+  // pair, whatever `repo` says; `FIRST_PARTY_IDS` for the SDK repository.
   certIds = null,
 } = {}) {
   const github = fakeGitHub({ repo, tag, assets, commit });
@@ -307,17 +308,18 @@ await test("a normal patch release goes live with no human", async () => {
 
 // R_DOM_ACCESS_HOLD through the whole legacy pipeline: the certificate's ids
 // reach `decide()` from `bot/decide.mjs`, and only the SDK repository's pair
-// is exempt. Watched failing: with `sourceIds` dropped from `decideRelease`'s
-// call, the first-party run is held too.
+// is exempt. The fixture certificate is a stranger's by default, so the first
+// run asks the hold with nothing passed. Watched failing: with `sourceIds`
+// dropped from `decideRelease`'s call, the first-party run is held too.
 await test("R_DOM_ACCESS_HOLD — a release that already held dom_access is held on the issue path, unless the certificate names the SDK repository", async () => {
   const root = registryTree([{ versions: [{ version: "0.1.0", capabilities: ["tools", "dom_access"] }] }]);
   const assets = [conforming({ capabilities: ["tools", "dom_access"] })];
-  const stranger = await run({ root, assets, certIds: { repository_id: "1343092393", repository_owner_id: "280318216" } });
+  const stranger = await run({ root, assets });
   assertEqual(stranger.decision.outcome, "review", JSON.stringify(codes(stranger)));
   assert(codes(stranger).includes("R_DOM_ACCESS_HOLD"), JSON.stringify(codes(stranger)));
   assert(stranger.comment.includes("R_DOM_ACCESS_HOLD"), "the comment does not name the hold");
   assert(stranger.comment.includes(POLICY_CODES.R_DOM_ACCESS_HOLD.remedy.slice(0, 40)), "…or say what the author does about it");
-  const firstParty = await run({ root, assets });
+  const firstParty = await run({ root, assets, certIds: FIRST_PARTY_IDS });
   assert(!codes(firstParty).includes("R_DOM_ACCESS_HOLD"), `the SDK repository's certificate was held: ${JSON.stringify(codes(firstParty))}`);
   assertEqual(firstParty.decision.outcome, "delay", `the SDK repository's release no longer waits out the high-risk delay: ${JSON.stringify(codes(firstParty))}`);
 });
@@ -473,9 +475,11 @@ await test("the tree the publish job commits carries the icon and the README", a
     "plugin.json names a README the committed tree does not contain");
 });
 
-await test("a plugin already holding dom_access waits, even with nothing changed", async () => {
-  const root = registryTree([{ versions: [{ version: "0.1.0", capabilities: ["dom_access", "tools"] }] }]);
-  const r = await run({ root, assets: [conforming({ capabilities: ["tools", "dom_access"] })] });
+// `client`, not `dom_access`: dom_access holds for a person for now
+// (R_DOM_ACCESS_HOLD), which the test above asks.
+await test("a plugin already holding a high-risk permission waits, even with nothing changed", async () => {
+  const root = registryTree([{ versions: [{ version: "0.1.0", capabilities: ["client", "tools"] }] }]);
+  const r = await run({ root, assets: [conforming({ capabilities: ["tools", "client"] })] });
   assertEqual(r.decision.outcome, "delay", JSON.stringify(r.decision.reasons));
   assert(codes(r).includes("P_DELAY_HIGH_RISK"), JSON.stringify(codes(r)));
   assertEqual(hours(r.decision.publish_after, NOW), DELAY_HOURS, "24 h from now");
@@ -3122,8 +3126,10 @@ function walkRecord(root, doc) {
   return full;
 }
 
+// The walk's releases are built in the SDK repository, so their certificate
+// carries its ids; `R_DOM_ACCESS_HOLD` exempts exactly that pair.
 const telegram = (version) => ({
-  repo: WALK_REPO, tag: walkTag("telegram-client", version), via: "service", now: WALK_NOW,
+  repo: WALK_REPO, tag: walkTag("telegram-client", version), via: "service", now: WALK_NOW, certIds: FIRST_PARTY_IDS,
   assets: [conforming({ id: "telegram-client", name: "Telegram Client", version, capabilities: ["tools", "dom_access"] })],
 });
 const jsonTools = (version) => ({

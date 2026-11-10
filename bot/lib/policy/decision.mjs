@@ -46,7 +46,7 @@ const CHANGE_OF_HANDS = new Set(["R_IDENTITY_CHANGED", "R_BINDING_CHANGED", "R_F
 /**
  * `R_DOM_ACCESS_HOLD`: dom_access holds for review until a fixed Astra ships.
  *
- * Every release whose manifest asks for `authority` — under `[capabilities]`
+ * Every release whose manifest asks for `dom_access` — under `[capabilities]`
  * or `[permissions]`, a first listing or a new version, newly requested or
  * already held — waits for a person, on the service path as well as the
  * legacy one. An approval clears it exactly as it clears a change of hands.
