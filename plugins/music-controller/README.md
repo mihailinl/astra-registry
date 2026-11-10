@@ -99,3 +99,9 @@ Astra представляет песню и может добавить кор�
 MIT © Voltur
 
 [Поддержать разработку на Boosty](https://boosty.to/voltur/donate)
+
+### Интернет-радио и подборки (2.4.0)
+
+---
+
+*This README was truncated. [Read the rest on GitHub](https://github.com/Voltur792/astra-music).*

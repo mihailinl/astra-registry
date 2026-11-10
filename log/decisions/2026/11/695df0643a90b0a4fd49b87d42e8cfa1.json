@@ -1,0 +1,24 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:16dabe016b4cb87588a29743337b8a4bfd0fb366eca03bd66efca9e31babba92"
+  ],
+  "commit": "4fc5b95401443a9314f234f8aacfa75d8b661eb0",
+  "decided_at": "2026-11-10T11:54:01Z",
+  "decision_id": "695df0643a90b0a4fd49b87d42e8cfa1",
+  "fingerprint": "2c79576ed28eee86",
+  "plugin_id": "dwertyfa-prime-ai",
+  "reasons": [
+    "P_PUBLISHED"
+  ],
+  "repo": "SpherePrime/PrimeAi",
+  "repository_id": "1368572489",
+  "repository_owner_id": "332264680",
+  "run": "42810880953/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "ce843380-6f81-4f71-bb10-8be8372a57e6",
+  "tag": "v0.2.16",
+  "trigger": "panel",
+  "version": "0.2.16"
+}
