@@ -54,6 +54,9 @@ on:
 
 concurrency:
   group: asset-check
+  # Queues. One run a night, so a newer run only ever means a manual dispatch,
+  # and killing a nightly re-hash half way gains nothing. A run that never gets
+  # a runner is reported by `run-watchdog.yml` after 30 minutes.
   cancel-in-progress: false
 
 permissions:
@@ -62,6 +65,9 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-24.04
+    # Measured p95 x3, minimum 10 (2026-11-10, last 200 runs: p95 0.7 min). Without it a hung
+    # step held a runner for GitHub's default six hours.
+    timeout-minutes: 10
     permissions:
       contents: read
     outputs:

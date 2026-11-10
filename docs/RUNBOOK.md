@@ -943,6 +943,48 @@ commit.
 
 ---
 
+### 7.13 A run that hangs: the `Run watchdog`
+
+A run whose job never gets a runner holds its workflow's concurrency group for
+ever. `timeout-minutes` counts only once a job is on a runner; the group has
+one running and one pending slot, so every newer run waits and is cancelled by
+the next. That is how `Moderation coverage` did not run from 2026-11-05 16:37
+to 2026-11-10 11:00 UTC (its `alert` job, environment `alerts`, never got a
+runner; 69 runs cancelled).
+
+**What is stale.** A run in status `queued`, `in_progress`, `pending`,
+`waiting` or `requested` for more than 30 minutes. Age decides, never status:
+a healthy running run can report `queued`, and a young one is fine.
+
+**What the watchdog says.** `.github/workflows/run-watchdog.yml` runs every ten
+minutes and after each of the frequent workflows (GitHub delivers this
+repository's crons only every few hours, so the wakers matter). Its summary
+page lists each stale run with its age, each workflow with no successful run
+inside its bound (`tools/run-watchdog.json`: 16 h ingest and moderation, 12 h
+coverage, signer, detectors and the index, 36 h served-set and the daily ones),
+and the known ghosts. It is red, in the Actions tab and in GitHub's failure
+e-mail, when anything is stale or silent; the verdict job needs no runner from
+environment `alerts`, so it turns red even when the alarm job hangs. The
+alarm to Telegram is sent once per state through the same action as every
+other check. It posts no heartbeat: registering a check for it needs a change
+inside TRUST-31's set.
+
+**What to do.** Open the stale run. Re-run it (`gh run rerun <id>`); if it
+stays stale, cancel it (`gh run cancel <id>`), which frees the group. The next
+run of a workflow that cancels in progress (`Moderation coverage`) also ends
+it. If GitHub refuses to cancel (the run stays `queued` or `in_progress` after
+a force-cancel), it is a ghost: do not retry; add its id to `ghosts` in
+`tools/run-watchdog.json` so it is reported once and not as stale, and ask
+support to purge it. For the six known ghosts (37655506182, 39698520903,
+39698355160, 42066476714, 42066736817, 42066989559) nothing is to be done.
+
+**Ingest, moderation and the signer queue by design.** `Plugins ingest`,
+`Plugins moderation` and `Signer` have `cancel-in-progress: false`: a run
+that has started has claimed submissions, held a key or may have pushed, and a
+kill leaves them leased to nobody. A hung one therefore blocks its group until
+somebody cancels it; the watchdog is how somebody finds out in 30 minutes
+instead of five days.
+
 ## 8. Testing the chain without any real key
 
 Never rehearse with the production root. `tools/testkeys/` exists so you do not

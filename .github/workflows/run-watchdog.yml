@@ -1,0 +1,226 @@
+# Does a run hang, or has a workflow gone quiet?
+#
+# On 2026-11-05 16:37 UTC a `Moderation coverage` run's `alert` job (environment
+# `alerts`) never got a runner. `timeout-minutes` counts only once a job is ON a
+# runner, so nothing ended it; the concurrency group has one running and one
+# pending slot, so every newer run became the pending one and was cancelled by
+# the next; and no heartbeat watches run age (they have a 24-hour bound). The
+# canary was dark for five days, 69 runs cancelled, none succeeded. `Plugins
+# ingest` lost 13 hours the same way on 10-30 and `Signer` 67 runs on 10-22.
+#
+# This workflow asks the API, every ten minutes and after each of the frequent
+# workflows, two questions (tools/run-watchdog.mjs says how, and
+# tools/run-watchdog.json holds the bounds):
+#
+#   * is any run unfinished and older than 30 minutes? (AGE, never status)
+#   * has a scheduled or waker-driven workflow had no successful run inside its
+#     bound?
+#
+# RED means a person looks: docs/RUNBOOK.md, "A run that hangs". The verdict is
+# on the run's summary page.
+#
+# ── WHY THE VERDICT JOB IS NOT THE ALARM ────────────────────────────────────
+#
+# The job that decides is `watchdog`: no environment, no secret, five minutes.
+# It exits non-zero when anything is stale or silent, so the run is red in the
+# Actions tab and in GitHub's failure e-mail BY ITSELF. The alarm to Telegram is
+# a SEPARATE job (`alert`, environment `alerts`), through the same action every
+# other check uses, and it can fail to start: the failure this workflow exists
+# for is a job in environment `alerts` that never gets a runner. If the verdict
+# lived in that job, the watchdog would hang the way the thing it watches did.
+# A cancelled run (the next watchdog run replaces an unfinished one) sends
+# nothing; the replacement says it.
+#
+# **No heartbeat here.** `bot/lib/alert-checks.mjs` (inside TRUST-31's set) has
+# no check for this workflow, so the alert job gives `no-heartbeat-because`
+# and posts the alarm only. Registering a `run-watchdog` check is on the list
+# for the next change that may touch the set.
+
+name: Run watchdog
+
+on:
+  # GitHub delivers this repository's crons only every few hours, so the
+  # schedule alone would be a watchdog that wakes when it feels like it. The
+  # wakers are the workflows that finish often; their completion is a free
+  # wake-up. The names are display names (`name:` in each file), and this
+  # workflow is deliberately not in the list: it would wake itself.
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_run:
+    workflows: ['Plugins ingest', 'Plugins moderation', 'Operator', 'Signer', 'Moderation coverage', 'Registry index (unsigned check)']
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+# Replaces: a verdict from ten minutes ago is worth nothing next to a new one,
+# and the watchdog writes nothing and holds no key. This is the one workflow
+# where cancelling is the point: an `alerts` job that never gets a runner is
+# cancelled by the next run, which asks the question again.
+concurrency:
+  group: run-watchdog
+  cancel-in-progress: true
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      status: ${{ steps.verdict.outputs.status }}
+      codes: ${{ steps.verdict.outputs.codes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            tools/run-watchdog.mjs
+            tools/run-watchdog.json
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # The tool's exit code IS the job's: 1 when anything is stale or silent,
+      # 2 when it could not ask. Both are red here, and both go to the alarm.
+      - name: The verdict
+        id: verdict
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tools/run-watchdog.mjs
+
+  alert-state:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: none
+    outputs:
+      state: ${{ steps.state.outputs.state }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert-state
+            bot/alert.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: ./.github/actions/alert-state
+        id: state
+        with:
+          mode: restore
+          key: run-watchdog-alert
+
+  # The alarm, once per state (bot/alert.mjs: a new red state at once, the same
+  # one again at most once a day, "resolved" once on green). Only for a red
+  # verdict or a green one that follows a page; a green run with no state sends
+  # nothing.
+  alert:
+    needs: [watchdog, alert-state]
+    if: always() && !cancelled()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: alerts
+    permissions:
+      contents: read
+    outputs:
+      next_state: ${{ steps.alarm.outputs.next-state }}
+      state_changed: ${{ steps.alarm.outputs.state-changed }}
+    env:
+      ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+      ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+      ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      ASTRA_ALERT_STATE_HMAC_KEY: ${{ secrets.ASTRA_ALERT_STATE_HMAC_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert
+            bot/alert.mjs
+            bot/heartbeat.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # From the verdict job's OUTPUTS, never an artifact. When the verdict job
+      # could not ask at all (no outputs), that is red with its own code.
+      - name: The verdict this run reached
+        env:
+          STATUS: ${{ needs.watchdog.outputs.status || 'red' }}
+          CODES: ${{ needs.watchdog.outputs.codes }}
+        run: |
+          set -euo pipefail
+          codes=""
+          if [ "$STATUS" = red ]; then
+            [ -n "$CODES" ] || CODES="A_WATCHDOG_BLIND"
+            for c in ${CODES//,/ }; do codes="${codes:+$codes,}\"$c\""; done
+          fi
+          cat > verdict.json <<JSON
+          {
+            "schema": "astra.registry.alert-verdict/1",
+            "check": "run-watchdog",
+            "status": "$STATUS",
+            "codes": [$codes],
+            "run": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          JSON
+          if [ -z "$codes" ]; then
+            grep -v '"codes": \[\]' verdict.json > verdict.tmp && mv verdict.tmp verdict.json
+          fi
+          cat verdict.json
+      - uses: ./.github/actions/alert
+        id: alarm
+        with:
+          state: ${{ needs.alert-state.outputs.state }}
+          verdict: verdict.json
+          no-heartbeat-because: >-
+            This workflow's check is not registered in bot/lib/alert-checks.mjs
+            (inside TRUST-31's set, so not edited by the change that added the
+            watchdog), so there is no receiver check to post to. Its own red X
+            and GitHub's failure e-mail are the other two paths, and the
+            verdict job needs no runner from environment `alerts` to turn red.
+
+  alert-save:
+    needs: alert
+    if: always() && needs.alert.outputs.state_changed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: none
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert-state
+            bot/alert.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: ./.github/actions/alert-state
+        with:
+          mode: save
+          key: run-watchdog-alert
+          state: ${{ needs.alert.outputs.next_state }}

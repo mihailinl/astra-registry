@@ -108,6 +108,11 @@ permissions: {}
 
 concurrency:
   group: detectors-${{ github.ref }}
+  # Queues, on purpose. A cancelled run posts no heartbeat and sends no alarm,
+  # and the ROLL-23 drill (`workflow_dispatch` with a seeded tree) shares this
+  # group with push- and workflow_run-driven runs: a newer run would silently
+  # kill the drill it exists to answer. A run that never gets a runner is
+  # reported by `run-watchdog.yml` after 30 minutes.
   cancel-in-progress: false
 
 jobs:

@@ -39,6 +39,9 @@ concurrency:
 jobs:
   suites:
     runs-on: ubuntu-24.04
+    # Measured p95 x3, minimum 10 (2026-11-10, last 200 runs: p95 8.1 min). Without it a hung
+    # step held a runner for GitHub's default six hours.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -556,3 +559,12 @@ jobs:
       - name: The TRUST-31 check on a pull request, against the digests the owner read off the site
         if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/trust31-pr-check.test.mjs
+
+      # tools/run-watchdog.mjs, `run-watchdog.yml`'s verdict: is a run
+      # unfinished for more than 30 minutes (age decides, never status), has a
+      # scheduled workflow gone silent past its bound, and the canary that
+      # fails when a workflow's cron changes without its bound. Pure functions
+      # and a fake `gh`; no probe, no network.
+      - name: The run watchdog, stale by age and silent by bound
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
+        run: node --test bot/tests/run-watchdog.test.mjs

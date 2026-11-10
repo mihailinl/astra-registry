@@ -79,6 +79,9 @@ permissions: {}
 
 concurrency:
   group: service-conformance-${{ github.ref }}
+  # Queues: a probe wants every answer, and a cancelled run neither alarms nor
+  # posts a heartbeat. `run-watchdog.yml` reports a run still unfinished after
+  # 30 minutes.
   cancel-in-progress: false
 
 jobs:

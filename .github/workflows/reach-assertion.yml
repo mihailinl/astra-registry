@@ -26,6 +26,8 @@ permissions: {}
 
 concurrency:
   group: reach-assertion
+  # Queues: a cancelled run posts no heartbeat and sends no alarm. `run-
+  # watchdog.yml` reports a run still unfinished after 30 minutes.
   cancel-in-progress: false
 
 jobs:

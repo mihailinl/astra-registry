@@ -45,6 +45,9 @@ permissions: {}
 
 concurrency:
   group: alarm-drill
+  # A drill exists to be seen to finish; a newer run must not kill one that is
+  # exercising the channel. Queues; a run that never gets a runner is `run-
+  # watchdog.yml`'s to report.
   cancel-in-progress: false
 
 jobs:
