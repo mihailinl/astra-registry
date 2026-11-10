@@ -1,0 +1,26 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "linux-x64:fcbd754f54c2867156df525c982999c4f051abd71eff37416995ea499c0e93a4",
+    "windows-x64:294db2b7165ce4697576a79dcd66014f6403b925d41044d18f34751edca2193c"
+  ],
+  "commit": "730c6d748d191584d5fb26921b8aa3a943b00f75",
+  "decided_at": "2026-11-10T23:49:16Z",
+  "decision_id": "cb9ba6f62d042ac82f9c445478760891",
+  "fingerprint": "f235939ac82f0006",
+  "plugin_id": "game-buddy",
+  "reasons": [
+    "P_PUBLISHED",
+    "P_REVIEW_PRIORITY"
+  ],
+  "repo": "YaniChap/game-buddy",
+  "repository_id": "1453242887",
+  "repository_owner_id": "97849444",
+  "run": "42926198501/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "f6281ff3-48a8-4515-b88b-a1ce7e52e0b4",
+  "tag": "v0.1.2",
+  "trigger": "ci",
+  "version": "0.1.2"
+}
