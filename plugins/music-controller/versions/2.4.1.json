@@ -1,0 +1,47 @@
+{
+  "$comment": "Derived from Voltur792/astra-music@v2.4.1. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "music-controller",
+  "version": "2.4.1",
+  "published_at": "2026-11-09T07:21:53Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "Voltur792/astra-music",
+    "tag": "v2.4.1",
+    "commit": "25bb1e27508bd6f39761b2308902e1a9ebd8a71f"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/Voltur792/astra-music/releases/download/v2.4.1/music-controller-2.4.1-noarch.astraplugin",
+      "filename": "music-controller-2.4.1-noarch.astraplugin",
+      "sha256": "7cf558f80ca0b2adf6bb1803a06c296da119f2932766d302cd44b2496f4ba833",
+      "size": 477869
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "actions",
+    "dom_access",
+    "event_handlers",
+    "tools",
+    "ui_contributions"
+  ],
+  "permissions": {
+    "dom_access": {
+      "reason": "Shows the music queue directly below Astra's music widget, above neighboring cards, without changing widget size"
+    },
+    "send_chat_message": {
+      "reason": "Optional radio presenter: announces songs using Astra's configured personality, model and voice only when enabled by the user"
+    },
+    "subscribe_events": {
+      "reason": "Temporarily lower the music player's volume while Astra listens or speaks, including optional radio announcements, then restore it",
+      "types": [
+        "state_changed",
+        "tts_started",
+        "tts_completed",
+        "tts_interrupted"
+      ]
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "$comment": "Derived from SpherePrime/PrimeAi@v0.2.17. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "dwertyfa-prime-ai",
+  "version": "0.2.17",
+  "published_at": "2026-11-10T12:13:54Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "SpherePrime/PrimeAi",
+    "tag": "v0.2.17",
+    "commit": "ff17034c61aa7dd33829093c93889b19400f59f4"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.17/dwertyfa-prime-ai-0.2.17-noarch.astraplugin",
+      "filename": "dwertyfa-prime-ai-0.2.17-noarch.astraplugin",
+      "sha256": "4c9a57fc1a44cd67996484dcf53c58bc36725ab7617a7d4767d61be0f10e24cd",
+      "size": 252975
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "ai_provider",
+    "tools",
+    "ui_contributions"
+  ],
+  "permissions": {}
+}
