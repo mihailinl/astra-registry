@@ -1900,7 +1900,7 @@
               "repo": "SpherePrime/PrimeAi",
               "tag": "v0.2.16"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.2.16"
           },
           {
@@ -1926,7 +1926,7 @@
               "repo": "SpherePrime/PrimeAi",
               "tag": "v0.2.15"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.2.15"
           },
           {
@@ -1952,7 +1952,7 @@
               "repo": "SpherePrime/PrimeAi",
               "tag": "v0.2.14"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.2.14"
           },
           {
@@ -1978,7 +1978,7 @@
               "repo": "SpherePrime/PrimeAi",
               "tag": "v0.2.12"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.2.12"
           },
           {
@@ -2004,7 +2004,7 @@
               "repo": "SpherePrime/PrimeAi",
               "tag": "v0.2.11"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.2.11"
           },
           {
@@ -2030,7 +2030,7 @@
               "repo": "SpherePrime/PrimeAi",
               "tag": "v0.2.10"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.2.10"
           },
           {
@@ -2056,7 +2056,7 @@
               "repo": "SpherePrime/PrimeAi",
               "tag": "v0.2.9"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.2.9"
           },
           {
@@ -2082,7 +2082,7 @@
               "repo": "SpherePrime/PrimeAi",
               "tag": "v0.2.8"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.2.8"
           },
           {
@@ -2108,7 +2108,7 @@
               "repo": "SpherePrime/PrimeAi",
               "tag": "v0.2.7"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.2.7"
           },
           {
@@ -5611,6 +5611,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 146
+    "serial": 147
   }
 }

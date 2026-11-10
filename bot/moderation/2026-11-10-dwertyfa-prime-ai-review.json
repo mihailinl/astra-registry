@@ -1,0 +1,20 @@
+{
+  "date": "2026-11-10",
+  "action": "review",
+  "plugin": "dwertyfa-prime-ai",
+  "versions": [
+    "0.2.16",
+    "0.2.15",
+    "0.2.14",
+    "0.2.12",
+    "0.2.11",
+    "0.2.10",
+    "0.2.9",
+    "0.2.8",
+    "0.2.7"
+  ],
+  "reason": "Версия прочитана, замечаний нет.",
+  "category": "review_passed",
+  "service_decision_id": "581cbbad-86b4-4c45-8b3b-8f09ce2cb1a3",
+  "declared_interest": false
+}
