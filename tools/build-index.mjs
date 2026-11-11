@@ -64,7 +64,7 @@ import { compareSemver } from "./lib/semver.mjs";
 import { loadIdentities, loadPublishers, loadSources, REPO_ROOT } from "./lib/sources.mjs";
 import { INDEX_SCHEMA } from "../bot/lib/sign.mjs";
 import { MAX_README_BYTES, iconDataUri } from "../bot/lib/assets.mjs";
-import { SUPPORTED_KEYS } from "./lib/platform.mjs";
+import { FLAT_PROJECTION_KEYS } from "./lib/platform.mjs";
 
 const BANNER =
   "GENERATED FILE — DO NOT EDIT. Source of truth: plugins/<id>/plugin.json and " +
@@ -74,44 +74,14 @@ const BANNER =
   "Only the `signed` member is covered by the signatures below; nothing outside it is " +
   "authenticated and nothing may be read out of it.";
 
-// Every supported key but `noarch` itself: `flatDownloads` writes a `noarch`
-// artifact under each of them "so no client has to learn the word", and
-// `schema/index-v1.json` describes `platform_downloads` the same way. Derived
-// rather than typed, so a key `tools/lib/platform.mjs` starts supporting is a
-// key a noarch plugin is downloadable under; `tools/selftest/validation.mjs`
-// asks the built index which keys it wrote.
-const PLATFORM_KEYS_FOR_NOARCH = SUPPORTED_KEYS.filter((k) => k !== "noarch");
-
-/**
- * A supported key a noarch artifact is written under only FROM a serial on.
- *
- * Taught first, rendered later — the review mark's rule (B.4, `releaseRecord`
- * below), for a key instead of a member. DEC-9 counts only commits under
- * `plugins/`, so a generator that started writing a new key the moment
- * `tools/lib/platform.mjs` supported it would change `signed.plugins` at an
- * unchanged serial: TRUST-28 would carry the served catalogue in the signer
- * until some listing commit, and `tools/selftest/catalogue.mjs`'s equal-serial
- * check would be red on `main` — and so in every bot job that runs the selftest
- * over a tree with no `plugins/` change (a moderation hold, an operator act).
- * Gated, the commit that adds the key renders the same catalogue, and the
- * first commit under `plugins/` after it raises the serial and brings the key
- * with it.
- *
- * The value is `main`'s serial when the key lands, plus one. If a listing
- * commit lands first, the equal-serial check goes red on the pull request
- * again, and the number moves up: it is never lowered below a serial already
- * served. Deterministic: the serial is an input (`resolveSerial`, or the
- * carrier's count from history in `tools/regenerate-signed.mjs`), never a clock.
- */
-export const NOARCH_KEY_FROM_SERIAL = Object.freeze({
-  // 2026-11-10: main's catalogue is serial 150.
-  "macos-arm64": 151,
-});
-
-/** The keys a noarch artifact is written under in the catalogue at `serial`. */
-export function noarchKeysAt(serial) {
-  return PLATFORM_KEYS_FOR_NOARCH.filter((k) => !(k in NOARCH_KEY_FROM_SERIAL) || serial >= NOARCH_KEY_FROM_SERIAL[k]);
-}
+// The keys `flatDownloads` writes a `noarch` artifact under "so no client has
+// to learn the word": FLAT_PROJECTION_KEYS (tools/lib/platform.mjs), the hosts
+// a flat-field daemon runs on. Not every supported key: a host added since
+// (`macos-arm64`) has only daemons that read `releases[]` and fall back to
+// `noarch` themselves, so writing it here would only move the catalogue at an
+// unchanged serial (TRUST-28). `tools/selftest/validation.mjs` asks the built
+// index which keys it wrote.
+const PLATFORM_KEYS_FOR_NOARCH = FLAT_PROJECTION_KEYS;
 
 /**
  * The pathspec the catalogue's serial is counted over — `git rev-list --count
@@ -258,7 +228,7 @@ function releaseRecord(doc) {
  * fields has no way to verify what it downloads, so the only safe thing to hand
  * it is nothing at all.
  */
-function flatDownloads(latest, serial) {
+function flatDownloads(latest) {
   const installable =
     latest.staging !== true &&
     Object.values(latest.artifacts).every((a) => typeof a.sha256 === "string" && typeof a.size === "number");
@@ -272,7 +242,7 @@ function flatDownloads(latest, serial) {
       // so no client has to learn the word "noarch".
       download_url = art.url;
       platform_downloads.noarch = art.url;
-      for (const k of noarchKeysAt(serial)) platform_downloads[k] = art.url;
+      for (const k of PLATFORM_KEYS_FOR_NOARCH) platform_downloads[k] = art.url;
     } else {
       platform_downloads[key] = art.url;
     }
@@ -467,9 +437,6 @@ export function publisherKeyProblems(doc, publishers) {
 }
 
 export function buildIndex({ root = REPO_ROOT, serial } = {}) {
-  // Resolved once, here: the noarch projection (`noarchKeysAt`) and the
-  // document's own `serial` must be one number.
-  const theSerial = resolveSerial({ explicit: serial, root });
   const { errors, plugins } = loadSources(root);
   const { errors: pubErrors, publishers } = loadPublishers(root);
   errors.push(...pubErrors);
@@ -519,7 +486,7 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
     }
     const records = releases.map(releaseRecord);
     const latest = records[0];
-    const { download_url, platform_downloads } = flatDownloads(latest, theSerial);
+    const { download_url, platform_downloads } = flatDownloads(latest);
     const p = plugin.doc;
 
     const pres = presentation(root, plugin);
@@ -604,7 +571,7 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
     signatures: [],
     signed: {
       schema: INDEX_SCHEMA,
-      serial: theSerial,
+      serial: resolveSerial({ explicit: serial, root }),
       plugins: entries,
       // One record per publisher, and only for publishers something in this
       // catalogue actually points at — a record for an owner with no listing

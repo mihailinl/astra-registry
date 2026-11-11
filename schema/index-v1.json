@@ -262,7 +262,7 @@
         },
         "platform_downloads": {
           "type": "object",
-          "description": "Compatibility projection: platform key -> URL for the latest listed release. A `noarch` artifact is written under every supported platform key (PRODUCTION_PLAN §5.2), so no client needs to learn the word. Digest-free (staging) releases are omitted entirely.",
+          "description": "Compatibility projection: platform key -> URL for the latest listed release. A `noarch` artifact is written under `noarch` and under every host a flat-field client runs on, `linux-x64` and `windows-x64` (PRODUCTION_PLAN §5.2; FLAT_PROJECTION_KEYS in tools/lib/platform.mjs), so no such client needs to learn the word. A host added later (`macos-arm64`) has only clients that resolve `releases[].artifacts`, falling back to `noarch` themselves. Digest-free (staging) releases are omitted entirely.",
           "propertyNames": {
             "$ref": "#/$defs/platformKey"
           },

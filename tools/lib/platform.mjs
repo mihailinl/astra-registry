@@ -11,9 +11,22 @@
 
 // `macos-arm64` since 2026-11-10: Astra main carries the crate's mapping for
 // it (`platform_key_for("macos", "aarch64")`) and AstraPlugins' CLI builds for
-// it, so a Mac on Apple silicon is a host — and until this list said so, every
-// noarch plugin had no download for it and every Mac install was refused.
+// it, so a Mac on Apple silicon is a host — and until this list said so, a
+// Mac-native bundle was refused at ingest and its version record by the
+// validator. (A noarch plugin installs there through FLAT_PROJECTION_KEYS's
+// fallback below, which needs nothing from this list.)
 export const SUPPORTED_KEYS = ["linux-x64", "windows-x64", "macos-arm64", "noarch"];
+
+// The keys a noarch artifact is ALSO written under in the catalogue's flat
+// `platform_downloads` (tools/build-index.mjs): the hosts a daemon that reads
+// only the flat fields runs on. FROZEN, and not SUPPORTED_KEYS minus `noarch`.
+// Every host added after `releases[]` existed has only daemons that resolve
+// their artifact from `releases[].artifacts` with the noarch fallback (Astra
+// `RegistryRelease::artifact_for`: its own key, else `noarch`; the flat path
+// `resolve_download_url` falls back to `download_url`). So a Mac on Apple
+// silicon installs a noarch plugin with no `macos-arm64` row here, and adding
+// a host does not move the catalogue at an unchanged serial (TRUST-28).
+export const FLAT_PROJECTION_KEYS = ["linux-x64", "windows-x64"];
 
 // Reserved in the schema so nobody else claims the names, refused in practice:
 // Astra's release workflow ships no daemon for these hosts (Intel Macs, and
