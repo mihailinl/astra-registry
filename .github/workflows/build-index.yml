@@ -313,6 +313,7 @@ jobs:
           node bot/tests/asset-check.test.mjs
           node bot/tests/presentation.test.mjs
           node bot/tests/rasterize.test.mjs
+          node bot/tests/asset-files.test.mjs
 
       - name: Validate the listings
         if: ${{ !cancelled() }}
