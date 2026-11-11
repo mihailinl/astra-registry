@@ -2355,6 +2355,92 @@
         "version": "0.1.4"
       },
       {
+        "added_at": "2026-11-10",
+        "author": "YaniChap",
+        "capabilities": [
+          "client",
+          "event_handlers",
+          "tools",
+          "ui_contributions"
+        ],
+        "description": "A friendly gaming companion for Steam activity tracking, game statistics, friend messaging, and gaming session updates.",
+        "download_url": "",
+        "downloads": 0,
+        "i18n": {
+          "ru": {
+            "description": "Твой игровой компаньон в Astra: подключение Steam, отслеживание игровой активности, игровая статистика, сообщения друзьям и уведомления об игровых событиях.",
+            "name": "GameBuddy — игровой напарник"
+          }
+        },
+        "icon_url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMjggMTI4Ij4KPGRlZnM+CjxsaW5lYXJHcmFkaWVudCBpZD0iYiIgeDI9IjEiIHkyPSIxIj48c3RvcCBzdG9wLWNvbG9yPSIjMTkwMDQ0Ii8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMDAzYjc1Ii8+PC9saW5lYXJHcmFkaWVudD4KPGxpbmVhckdyYWRpZW50IGlkPSJzIiB4Mj0iMC44IiB5Mj0iMSI+PHN0b3Agc3RvcC1jb2xvcj0iI2ZmZiIvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzc3NzVkOSIvPjwvbGluZWFyR3JhZGllbnQ+CjxsaW5lYXJHcmFkaWVudCBpZD0icCIgeDI9IjEiIHkyPSIxIj48c3RvcCBzdG9wLWNvbG9yPSIjZmY3MmZhIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjNjU0MGZmIi8+PC9saW5lYXJHcmFkaWVudD4KPC9kZWZzPgo8cmVjdCB3aWR0aD0iMTI4IiBoZWlnaHQ9IjEyOCIgcng9IjI4IiBmaWxsPSJ1cmwoI2IpIi8+CjxjaXJjbGUgY3g9IjY0IiBjeT0iNjIiIHI9IjU0IiBmaWxsPSJub25lIiBzdHJva2U9IiM4NTQ1ZmYiIHN0cm9rZS13aWR0aD0iMiIvPgo8IS0tIGNhdCBlYXJzIGFuZCBoZWFkc2V0IC0tPgo8cGF0aCBkPSJNMjkgNDIgMzQgMTIgNTMgMzEgNzUgMzEgOTQgMTIgOTkgNDMiIGZpbGw9IiMyMTEzNDMiIHN0cm9rZT0iI2IzNGNmZiIgc3Ryb2tlLXdpZHRoPSI1IiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CjxwYXRoIGQ9Im0zNyAzMSAzLTEwIDkgOW0zMCAwIDktOSAzIDEwIiBmaWxsPSJ1cmwoI3ApIi8+CjxwYXRoIGQ9Ik0yMCA1OFEyMCAxOSA2NCAxOXQ0NCAzOSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMjYxNjRlIiBzdHJva2Utd2lkdGg9IjEwIi8+CjxwYXRoIGQ9Ik0yMCA1OFEyMCAxOSA2NCAxOXQ0NCAzOSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjYjg0ZGZmIiBzdHJva2Utd2lkdGg9IjMiLz4KPHJlY3QgeD0iMTQiIHk9IjQ5IiB3aWR0aD0iMTciIGhlaWdodD0iMzEiIHJ4PSI4IiBmaWxsPSIjMjkxODRmIiBzdHJva2U9IiNkMTVhZmYiIHN0cm9rZS13aWR0aD0iMyIvPgo8cmVjdCB4PSI5NyIgeT0iNDkiIHdpZHRoPSIxNyIgaGVpZ2h0PSIzMSIgcng9IjgiIGZpbGw9IiMyOTE4NGYiIHN0cm9rZT0iIzQyZGRmZiIgc3Ryb2tlLXdpZHRoPSIzIi8+CjwhLS0gYm9keSAtLT4KPHBhdGggZD0iTTM0IDg4cTQtMTMgMTctMTRoMjZxMTMgMSAxNyAxNGw1IDI5SDI5eiIgZmlsbD0idXJsKCNzKSIgc3Ryb2tlPSIjMzAyMDVmIiBzdHJva2Utd2lkdGg9IjQiLz4KPHBhdGggZD0iTTY0IDgyIDY4IDkwIDc3IDkxIDcwIDk3IDcyIDEwNiA2NCAxMDIgNTYgMTA2IDU4IDk3IDUxIDkxIDYwIDkweiIgZmlsbD0idXJsKCNwKSIvPgo8IS0tIGhlYWQgLS0+CjxwYXRoIGQ9Ik0zMCA0M3EwLTE1IDE1LTE3aDM4cTE1IDIgMTUgMTd2MjZxMCAxNy0xNiAyMEg0NlEzMCA4NiAzMCA2OXoiIGZpbGw9InVybCgjcykiIHN0cm9rZT0iIzMwMjA1ZiIgc3Ryb2tlLXdpZHRoPSI0Ii8+CjxyZWN0IHg9IjM2IiB5PSIzNCIgd2lkdGg9IjU2IiBoZWlnaHQ9IjQ1IiByeD0iMTMiIGZpbGw9IiMwOTA5MWYiIHN0cm9rZT0iIzgwNTJlOSIgc3Ryb2tlLXdpZHRoPSIyIi8+CjxwYXRoIGQ9Ik00NyA1NHE2LTkgMTIgMG0xMCAwcTYtOSAxMiAwIiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CjxwYXRoIGQ9Ik01OSA2NHE1IDcgMTAgMCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjA1YmU5IiBzdHJva2Utd2lkdGg9IjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8IS0tIHRpbnkgZ2FtZXBhZCAtLT4KPGcgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoNzUgOTEpIHJvdGF0ZSgtMTIpIj4KPHBhdGggZD0iTTIgNnEyLTUgOC01aDE3cTYgMCA4IDVsMyAxMHExIDYtNSA2bC03LTRIMTFsLTcgNHEtNiAwLTUtNnoiIGZpbGw9IiMxNzEzMmYiIHN0cm9rZT0iI2E5NGFmZiIgc3Ryb2tlLXdpZHRoPSIyIi8+CjxwYXRoIGQ9Ik0xMCA3djhtLTQtNGg4IiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CjxjaXJjbGUgY3g9IjI3IiBjeT0iOCIgcj0iMiIgZmlsbD0iIzRiZWFmZiIvPjxjaXJjbGUgY3g9IjMxIiBjeT0iMTMiIHI9IjIiIGZpbGw9IiNmZjcxZWYiLz4KPC9nPgo8L3N2Zz4=",
+        "id": "game-buddy",
+        "license": "MIT",
+        "name": "GameBuddy",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/YaniChap/game-buddy/releases/download/v0.1.2/game-buddy-0.1.2-linux-x64.astraplugin",
+          "windows-x64": "https://github.com/YaniChap/game-buddy/releases/download/v0.1.2/game-buddy-0.1.2-windows-x64.astraplugin"
+        },
+        "readme": "# !\\[GameBuddy — игровой компаньон](icon.svg)\n\n# \n\n# \\# 🎮 GameBuddy — твой игровой компаньон в Astra\n\n# \n\n# \\*\\*GameBuddy\\*\\* — плагин для Astra, который связывает игровую активность со Steam и помогает превратить её в часть общения с дружелюбным ИИ-компаньоном.\n\n# \n\n# Следи за игровыми сессиями, узнавай, во что играешь, просматривай статистику и делись игровыми моментами — а Astra будет рядом, чтобы поддержать разговор, поинтересоваться твоими успехами и немного подшутить над очередным игровым марафоном. 💜\n\n# \n\n# \\## ✨ Возможности\n\n# \n\n# \\- 🔗 \\*\\*Подключение Steam\\*\\* — привязка аккаунта с помощью восьмизначного кода через интерфейс плагина.\n\n# \\- 🟢 \\*\\*Игровая активность\\*\\* — просмотр статуса Steam, текущей и недавней игровой активности.\n\n# \\- ⏱️ \\*\\*Статистика\\*\\* — информация о времени в играх и библиотеке Steam.\n\n# \\- 🏆 \\*\\*Игровые достижения и моменты\\*\\* — запись побед, достижений и памятных событий для итогового отчёта.\n\n# \\- 🎮 \\*\\*Игровые сессии\\*\\* — отслеживание начала игры, переключений и завершения сессии на основе событий Astra.\n\n# \\- 💜 \\*\\*Общение с Astra\\*\\* — компаньон может реагировать на смену игры и обсуждать игровые приключения.\n\n# \n\n# \\## 🌌 Особенности\n\n# \n\n# \\- Неоновый интерфейс в игровом стиле.\n\n# \\- Интеграция со Steam через серверный обмен токенами.\n\n# \\- Автоматическое получение токена после ввода кода привязки.\n\n# \\- Русская и английская локализация.\n\n# \\- Интеграция с инструментами и событиями Astra.\n\n# \n\n# \\## 🧩 Инструменты Astra\n\n# \n\n# Плагин предоставляет следующие инструменты:\n\n# \n\n# \\- `game\\_coach` — игровой помощник.\n\n# \\- `current\\_game\\_session` — информация о текущей игровой сессии.\n\n# \\- `record\\_game\\_moment` — запись достижения, победы, забавного момента или другого события.\n\n# \\- `session\\_report` — итоговый отчёт об игровой сессии.\n\n# \n\n# \\## ⚙️ Как работает отслеживание сессий\n\n# \n\n# GameBuddy подписывается на события Astra `games\\_changed` и `companion\\_game\\_changed`.\n\n# \n\n# При обнаружении смены игры плагин может отправить приветственное сообщение в собственный диалог GameBuddy в Astra. При завершении сессии он может предложить подвести её итоги.\n\n# \n\n# Ответ Astra обрабатывается в фоновом режиме, чтобы обработка игровых событий не задерживалась ожиданием ответа модели.\n\n# \n\n# \\## ⚠️ Ограничения\n\n# \n\n# \\- Astra не предоставляет фиксированную схему данных для игровых событий, поэтому названия игр извлекаются с помощью осторожного анализа доступных полей.\n\n# \\- Плагин не сканирует процессы Windows и самостоятельно не отслеживает запуск игр в Steam или других лаунчерах.\n\n# \\- Длительность сессии и записанные игровые моменты хранятся в памяти и сбрасываются при перезапуске процесса плагина.\n\n# \\- Автоматическая реакция на достижения возможна, только если соответствующие данные присутствуют в одном из получаемых событий. В остальных случаях достижения и игровые моменты можно записывать через `record\\_game\\_moment`.\n\n# \\- Сообщения отправляются при обнаружении переходов между играми и соответствующих игровых событий, а не при каждом уведомлении, чтобы не перегружать чат.\n\n# \n\n# \\## 🔐 Разрешения\n\n# \n\n# GameBuddy использует следующие разрешения Astra:\n\n# \n\n# \\- `subscribe\\_events` — подписка на события `games\\_changed` и `companion\\_game\\_changed`.\n\n# \\- `send\\_chat\\_message` — отправка сообщений в собственный диалог GameBuddy в Astra. Это разрешение позволяет плагину инициировать сообщения, поэтому Astra может запросить согласие пользователя.\n\n# \\- `client` — возможность клиентской интеграции, необходимая для использования отправки сообщений.\n\n# \\- `push\\_to\\_ui` — обновление интерфейса плагина.\n\n# \n\n# \\## 🛠️ Разработка и тестирование\n\n# \n\n# Для локальной разработки требуется Rust и CLI Astra.\n\n# \n\n# ```bash\n\n# cargo test\n\n# astra-plugin locale sync\n\n# astra-plugin check . --strict\n\n# astra-plugin test .\n\n# astra-plugin dev .\n\n# ```\n\n# \n\n# Команда `astra-plugin dev .` проверяет, собирает и загружает плагин в запущенный экземпляр Astra с поддержкой горячей перезагрузки. Для локальной загрузки необходимо включить Developer Mode в Astra.\n\n# \n\n# \\## 🚀 Идея проекта\n\n# \n\n# GameBuddy — это не просто панель статистики. Это попытка сделать игровую активность частью общения с ИИ-компаньоном.\n\n# \n\n# Пусть даже после долгого игрового вечера тебя встретит не сухая статистика, а Astra, которой действительно интересно, как прошла твоя игра. 💜\n\n# \n\n# \\*\\*GameBuddy — играй, исследуй, делись\n",
+        "releases": [
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "game-buddy-0.1.2-linux-x64.astraplugin",
+                "sha256": "fcbd754f54c2867156df525c982999c4f051abd71eff37416995ea499c0e93a4",
+                "size": 3754153,
+                "url": "https://github.com/YaniChap/game-buddy/releases/download/v0.1.2/game-buddy-0.1.2-linux-x64.astraplugin"
+              },
+              "windows-x64": {
+                "filename": "game-buddy-0.1.2-windows-x64.astraplugin",
+                "sha256": "294db2b7165ce4697576a79dcd66014f6403b925d41044d18f34751edca2193c",
+                "size": 3277637,
+                "url": "https://github.com/YaniChap/game-buddy/releases/download/v0.1.2/game-buddy-0.1.2-windows-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "client",
+              "event_handlers",
+              "tools",
+              "ui_contributions"
+            ],
+            "min_astra_version": "0.2.7",
+            "permissions": {
+              "push_to_ui": {
+                "reason": "Updates the GameBuddy interface with game activity and session status."
+              },
+              "send_chat_message": {
+                "reason": "Sends game start messages and session summaries to the GameBuddy chat."
+              },
+              "subscribe_events": {
+                "reason": "Tracks game list and selected game changes to detect active gaming sessions.",
+                "types": [
+                  "games_changed",
+                  "companion_game_changed"
+                ]
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-11-10T23:47:05Z",
+            "release": {
+              "commit": "730c6d748d191584d5fb26921b8aa3a943b00f75",
+              "kind": "github_release",
+              "repo": "YaniChap/game-buddy",
+              "tag": "v0.1.2"
+            },
+            "review": "unreviewed",
+            "version": "0.1.2"
+          }
+        ],
+        "repository_url": "https://github.com/YaniChap/game-buddy",
+        "source": {
+          "kind": "github",
+          "repo": "YaniChap/game-buddy"
+        },
+        "stars": 0,
+        "updated_at": "2026-11-10T23:47:05Z",
+        "version": "0.1.2"
+      },
+      {
         "added_at": "2026-10-25",
         "author": "iaroslaviskendirov-alt",
         "capabilities": [
@@ -2737,7 +2823,7 @@
           "ui_contributions"
         ],
         "description": "Search Yandex Music, VK and Spotify; play tracks and playlists inside Astra with voice controls.",
-        "download_url": "https://github.com/Voltur792/astra-music/releases/download/v2.4.1/music-controller-2.4.1-noarch.astraplugin",
+        "download_url": "https://github.com/Voltur792/astra-music/releases/download/v2.5.0/music-controller-2.5.0-noarch.astraplugin",
         "downloads": 0,
         "i18n": {
           "ru": {
@@ -2750,12 +2836,56 @@
         "license": "MIT",
         "name": "Music Controller",
         "platform_downloads": {
-          "linux-x64": "https://github.com/Voltur792/astra-music/releases/download/v2.4.1/music-controller-2.4.1-noarch.astraplugin",
-          "noarch": "https://github.com/Voltur792/astra-music/releases/download/v2.4.1/music-controller-2.4.1-noarch.astraplugin",
-          "windows-x64": "https://github.com/Voltur792/astra-music/releases/download/v2.4.1/music-controller-2.4.1-noarch.astraplugin"
+          "linux-x64": "https://github.com/Voltur792/astra-music/releases/download/v2.5.0/music-controller-2.5.0-noarch.astraplugin",
+          "noarch": "https://github.com/Voltur792/astra-music/releases/download/v2.5.0/music-controller-2.5.0-noarch.astraplugin",
+          "windows-x64": "https://github.com/Voltur792/astra-music/releases/download/v2.5.0/music-controller-2.5.0-noarch.astraplugin"
         },
         "readme": "# Astra Music\n\n> **Linux и macOS — экспериментальная поддержка.** Полная ручная проверка на этих ОС ещё не выполнена. Для macOS пока нет выпускаемого хоста Astra. Зависимости и ограничения: [PLATFORMS.md](PLATFORMS.md).\n\nМузыка и личная радиоведущая в [Astra](https://github.com/mihailinl/AstraPlugins) от **Voltur**. Яндекс Музыка, VK и Spotify, управление голосом и отдельный плеер на рабочем столе.\n\n[Страница релиза](https://github.com/Voltur792/astra-music/releases/latest)\n\n## Установка\n\nПлагин опубликован в официальном каталоге Astra: откройте **Плагины → Каталог → Astra Music** и нажмите **«Установить»**. Astra сама проверит подпись, подготовит зависимости и предложит **«Обновить»**, когда выйдет новая версия. Настройки и входы сервисов хранятся на вашем компьютере и при обновлении сохраняются.\n\n## Возможности\n\nПлеер заранее готовит ссылку и начальный аудиобуфер следующего трека VK и Яндекса, чтобы сократить тишину при переключении. Переходы Spotify выполняет его собственный веб-плеер.\n\n- Поиск песен и исполнителей, личные плейлисты, «Моя волна», «Мои треки VK» и персональный микс Spotify.\n- Пауза, переключение треков, перемотка, лайки и громкость от 0 до 10.\n- Радиоведущая Astra: короткие подводки к песням с выбранной личностью и голосом.\n- Плеер в Astra и перемещаемый виджет Windows с прозрачностью и показом поверх окон.\n- 18 вариантов цветомузыки для плеера и фона Astra. Для каждого можно настроить цвета, размер, яркость, толщину и мягкость линий, скорость и плотность.\n- Музыка в Discord через [VC-Discord](https://github.com/Voltur792/VC-Discord), музыкальные будильники в [Таймере паузы](https://github.com/Voltur792/SPT) и заказы зрителей через Stream Companion (пока не выпущен).\n- Музыкальный мост Discord принимает ссылки на плейлисты Яндекса любого владельца: новые `/playlists/UUID` и старые `/users/владелец/playlists/номер`. Сохранять плейлист в свою медиатеку не нужно; он должен быть доступен подключённому аккаунту. В обновлённом VC-Discord используйте `!playlist ссылка` или «Астра включи плейлист ссылка». После обновления кода перезапустите оба плагина.\n\n## Подключение сервисов\n\nОткройте **Музыка → Подключения**.\n\n- **Яндекс Музыка:** введите токен аккаунта Музыки по подсказке в карточке. Для прослушивания нужна подписка Яндекс Плюс.\n- **VK:** нажмите **«Войти через VK»** и авторизуйтесь в открывшемся окне.\n- **Spotify:** нажмите **«Войти в Spotify»**, войдите в отдельном окне Edge, закройте его и нажмите **«Управлять из Astra»**. В карточке появится состояние входа. Сохранённая сессия используется при следующем запуске; если сервис её отзовёт, потребуется повторный вход.\n\nSpotify может работать **без окна браузера**. Для этого способа не нужны API-ключ и Premium; реклама и ограничения бесплатного тарифа сохраняются. Доступны поиск, плейлисты и запуск по ссылке. Кнопка **«Включить мой микс Spotify»** находится во вкладке **«Музыка»**. Если Spotify ещё не создал персональную подборку, сначала послушайте музыку в самом сервисе.\n\nВ Windows для Spotify и встроенного плеера нужен Microsoft Edge; для Spotify также нужен Node.js 22 или новее. Музыка продолжает играть при переключении вкладок, пока запущены Astra и плагин.\n\n## Astra — радиоведущая\n\nВ **Музыка → Настройки** включите отдельный режим радиоведущей. Он выключен по умолчанию.\n\n- Выберите частоту: каждую песню, раз в 3 или раз в 5 песен. Начальный вариант — раз в 3.\n- Выберите момент: в начале песни или ближе к её окончанию.\n- Включите **«Объявлять следующую песню»**, если хотите услышать анонс следующего трека. Он доступен, когда сервис сообщает очередь.\n\nAstra представляет песню и может добавить короткий рассказ о ней или исполнителе. Используются модель, личность и голос, выбранные в Astra. Достоверность рассказа зависит от модели; неизвестную следующую песню плагин не угадывает.\n\nНа время подводки музыка становится тише, затем возвращается выбранная громкость. Для озвучки подтвердите доступ к чату и событиям речи Astra, если она запросит эти разрешения.\n\n## Виджет и цветомузыка\n\nНастройки разделены по вкладкам: «Радиоведущая», «Цветомузыка», «Виджеты» и «Клавиши». Подключения сервисов находятся отдельно; кнопка помощи расположена последней в общем ряду.\n\nВ настройках включите виджет рабочего стола и выберите прозрачность и показ поверх окон. Его можно перетащить в удобное место; положение сохраняется.\n\nВстроенный плеер обрабатывает медиаклавиши следующего и предыдущего трека через ту же очередь, что кнопки виджета. На Windows для Яндекса и VK во время воспроизведения используется нативный обработчик этих двух клавиш; при паузе и остановке они освобождаются. Play/Pause остаётся под управлением медиасессии браузера. Подводка радиоведущей в режиме «В конце» начинается за 20 секунд до завершения песни.\n\nВо вкладке «Клавиши» можно назначить свои клавиши для Play/Pause, предыдущего и следующего трека, а также остановки. Нажмите «Изменить» и клавишу или сочетание — оно сохранится автоматически, без ручного ввода. Esc, кнопка отмены или 20 секунд без выбора сохраняют прежнюю привязку. «Сброс» возвращает стандартную медиаклавишу. Запись и глобальные сочетания доступны на Windows для выбранного трека Яндекса, VK или подключённого веб-плеера Spotify; свои привязки работают и при паузе, чтобы можно было продолжить воспроизведение. Например, можно назначить обычную F6 без Fn.\n\nВ карточке Astra кнопка очереди раскрывает список под виджетом поверх соседних карточек, не меняя размер плеера. Для этого нужен контроллер интерфейса с разрешением `dom_access`: подтвердите его в Astra, если появится запрос. Крестик, Escape, клик снаружи или повторное нажатие закрывают очередь. Можно выбрать любой загруженный трек Яндекса или VK. Для «Моей волны» показаны уже полученные рекомендации; очередь Spotify доступна в самом Spotify.\n\nУ отдельного настольного виджета и при недоступном контроллере Astra используется нативное окно очереди с иконкой Astra Music. Резервное окно из Astra открывается поверх окон. У нижнего края экрана очередь открывается над виджетом.\n\nКнопка «Помощь / поддержка» открывает форму на GitHub и подставляет ОС, архитектуру и доступные версии Astra Music и Astra. Опишите, что произошло, и приложите журнал плагина за время сбоя, если он доступен. Проверьте журнал перед загрузкой в публичное обращение и удалите из него токены, приватные ссылки и личные данные.\n\nЕсли плагин не запускается, [откройте форму из репозитория](https://github.com/Voltur792/astra-music/issues/new?template=bug_report.yml) и приложите также журнал Astra за день сбоя. В Windows журнал плагина находится в `%APPDATA%\\astra\\astra\\config\\logs\\plugins\\music-controller.log`, а `daemon.log.*` лежит в `%APPDATA%\\astra\\astra\\config\\logs`.\n\nВ разделе «Цвета виджетов и очереди» выберите цвета сервиса (Яндекс — жёлтый и чёрный, VK — синий, Spotify — зелёный) или свои фон и акцент. Цвет текста подбирается автоматически; свои цвета сохраняются после перезапуска и при смене режима.\n\nНа Windows цветной прямоугольник открывает стандартную палитру Windows с текущим цветом. Рядом есть отдельная кнопка «Пипетка»: нажмите её и выберите точку на экране. Esc или правая кнопка мыши отменяют выбор. Она также доступна для своих цветов цветомузыки. Пипетка считывает один пиксель при выборе, без полноэкранного снимка и перекрытия обоев.\n\nЦветомузыка включается отдельно для плеера и фона Astra. Выберите источник **«Только музыка»** или **«Все звуки»**, затем эффект и его параметры. Настройки каждого эффекта сохраняются отдельно.\n\nПока она включена, размытие страницы отключается: линии остаются чёткими, а чат и управление доступны поверх визуализации. При отключении возвращается обычное оформление.\n\nРежим «Только музыка» работает и со Spotify: анализируется звук его вкладки. В режиме «Все звуки» усилена реакция на звук компьютера, чтобы визуализация была ярче.\n\n## Discord, расписание эфиров и будильники\n\nПодключите сервис в Astra Music, затем откройте **VC-Discord → Музыка**. Выбранная там музыка звучит в голосовом канале, с отдельной громкостью. Во время трансляции Spotify локальное звучание отключается; остановка трансляции ставит его на паузу. Выбор песни и переключение Spotify общие с плеером Astra.\n\nРадиоведущая для Discord включается отдельно в VC-Discord. Во время трансляции Spotify подводки звучат только в канале.\n\nВ текстовом канале VC-Discord команда **`!playlist https://open.spotify.com/playlist/…`** или **«Астра включи плейлист ссылка»** запускает доступный плейлист Spotify, включая чужой плейлист по полной ссылке. **`!wave spotify`** или **«Астра включи мой микс»** выбирает персональную подборку подключённого аккаунта (daylist / Daily Mix). Для обоих способов Spotify должен быть подключён в Astra Music в режиме без окна браузера. Микс принадлежит владельцу подключённого аккаунта Astra Music; если Spotify ещё не показал персональных подборок, откройте в нём раздел «Для тебя» и повторите.\n\nДля автоматических эфиров обновите все три плагина: **Astra Music 1.3.0**, **VC-Discord 1.3.5** и **Таймер паузы 1.2.0**. Во вкладке **«Радио»** таймера выберите канал, музыку, дни и время начала и окончания. Astra и все три плагина должны работать в это время. Для Spotify включите режим без окна браузера.\n\nДля музыкального будильника выберите **«Музыка из Astra Music»** в таймере. Заказы зрителей и их одобрение настраиваются в Stream Companion; для трансляции музыки зрителям настройте захват звука в OBS.\n\n## Голосовое управление\n\n- «Астра, включи песню Кино Группа крови».\n- «Астра, включи мою волну».\n- «Астра, следующий трек».\n- «Астра, громкость музыки 5».\n- «Астра, останови музыку».\n\n---\n\n*This README was truncated. [Read the rest on GitHub](https://github.com/Voltur792/astra-music).*\n",
         "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "music-controller-2.5.0-noarch.astraplugin",
+                "sha256": "10b2d98b858daaced24f287f6bf2ec0ad718695bb4e6014de90384a2be90ecd6",
+                "size": 484399,
+                "url": "https://github.com/Voltur792/astra-music/releases/download/v2.5.0/music-controller-2.5.0-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "actions",
+              "dom_access",
+              "event_handlers",
+              "tools",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "dom_access": {
+                "reason": "Shows the music queue directly below Astra's music widget, above neighboring cards, without changing widget size"
+              },
+              "send_chat_message": {
+                "reason": "Optional radio presenter: announces songs using Astra's configured personality, model and voice only when enabled by the user"
+              },
+              "subscribe_events": {
+                "reason": "Temporarily lower the music player's volume while Astra listens or speaks, including optional radio announcements, then restore it",
+                "types": [
+                  "state_changed",
+                  "tts_started",
+                  "tts_completed",
+                  "tts_interrupted"
+                ]
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-11-10T18:44:13Z",
+            "release": {
+              "commit": "a55f35263a4b01c26f473ea2eaa6a6baead34482",
+              "kind": "github_release",
+              "repo": "Voltur792/astra-music",
+              "tag": "v2.5.0"
+            },
+            "review": "unreviewed",
+            "version": "2.5.0"
+          },
           {
             "artifacts": {
               "noarch": {
@@ -3179,8 +3309,8 @@
           "repo": "Voltur792/astra-music"
         },
         "stars": 0,
-        "updated_at": "2026-11-09T07:21:53Z",
-        "version": "2.4.1"
+        "updated_at": "2026-11-10T18:44:13Z",
+        "version": "2.5.0"
       },
       {
         "added_at": "2026-10-27",
@@ -5611,6 +5741,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 147
+    "serial": 149
   }
 }

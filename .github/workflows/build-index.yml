@@ -177,14 +177,14 @@ jobs:
       github.event_name != 'workflow_run' ||
       github.event.workflow_run.conclusion == 'success'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # The serial is a commit count. Without full history git counts what
           # it was given, which is 1, and the catalogue looks like it rolled
           # back to the beginning of time.
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -278,7 +278,7 @@ jobs:
       # the "Validate the listings" step below turns any `NOT verified` line
       # into `::error::` and `exit 1`, which stops the catalogue deploying for
       # every plugin — not only for one that ships `locales/`.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         if: ${{ !cancelled() && steps.pin.conclusion == 'success' }}
         with:
           repository: mihailinl/AstraPlugins
@@ -448,7 +448,7 @@ jobs:
               console.log(`ok  dist/index.json validates, serial ${doc.signed.serial}, ${doc.signed.plugins.length} plugin(s)`);
             });
           '
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: ${{ !cancelled() && steps.candidate.conclusion == 'success' }}
         with:
           name: registry-index-v1

@@ -1,0 +1,51 @@
+{
+  "$comment": "Derived from YaniChap/game-buddy@v0.1.2. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "game-buddy",
+  "version": "0.1.2",
+  "published_at": "2026-11-10T23:47:05Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "YaniChap/game-buddy",
+    "tag": "v0.1.2",
+    "commit": "730c6d748d191584d5fb26921b8aa3a943b00f75"
+  },
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://github.com/YaniChap/game-buddy/releases/download/v0.1.2/game-buddy-0.1.2-linux-x64.astraplugin",
+      "filename": "game-buddy-0.1.2-linux-x64.astraplugin",
+      "sha256": "fcbd754f54c2867156df525c982999c4f051abd71eff37416995ea499c0e93a4",
+      "size": 3754153
+    },
+    "windows-x64": {
+      "url": "https://github.com/YaniChap/game-buddy/releases/download/v0.1.2/game-buddy-0.1.2-windows-x64.astraplugin",
+      "filename": "game-buddy-0.1.2-windows-x64.astraplugin",
+      "sha256": "294db2b7165ce4697576a79dcd66014f6403b925d41044d18f34751edca2193c",
+      "size": 3277637
+    }
+  },
+  "protocol": 1,
+  "min_astra_version": "0.2.7",
+  "capabilities": [
+    "client",
+    "event_handlers",
+    "tools",
+    "ui_contributions"
+  ],
+  "permissions": {
+    "push_to_ui": {
+      "reason": "Updates the GameBuddy interface with game activity and session status."
+    },
+    "send_chat_message": {
+      "reason": "Sends game start messages and session summaries to the GameBuddy chat."
+    },
+    "subscribe_events": {
+      "reason": "Tracks game list and selected game changes to detect active gaming sessions.",
+      "types": [
+        "games_changed",
+        "companion_game_changed"
+      ]
+    }
+  }
+}

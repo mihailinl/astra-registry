@@ -1,0 +1,25 @@
+{
+  "$comment": "Derived from YaniChap/game-buddy@v0.1.2 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "schema": "astra.registry.plugin/1",
+  "id": "game-buddy",
+  "name": "GameBuddy",
+  "summary": "A friendly gaming companion for Steam activity tracking, game statistics, friend messaging, and gaming session updates.",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "YaniChap/game-buddy"
+  },
+  "added_at": "2026-11-10",
+  "description": "A friendly gaming companion for Steam activity tracking, game statistics, friend messaging, and gaming session updates.",
+  "author": {
+    "name": "YaniChap"
+  },
+  "icon": "icon.svg",
+  "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "GameBuddy — игровой напарник",
+      "summary": "Твой игровой компаньон в Astra: подключение Steam, отслеживание игровой активности, игровая статистика, сообщения друзьям и уведомления об игровых событиях."
+    }
+  }
+}
