@@ -14,7 +14,7 @@ import { cleanEnv, fixtureEnv } from "../lib/git-env.mjs";
 import { RECORD_ROOTS, checkTreeModes, displayStrings, recordFiles, recordStringProblems, runValidation } from "../validate.mjs";
 import { readTree, treeModeProblems, unaskableRoot } from "../lib/tree-modes.mjs";
 import { MAX_PATTERN_REPETITION, patternRepetition, schemaPatterns } from "../lib/schema-patterns.mjs";
-import { buildIndex } from "../build-index.mjs";
+import { NOARCH_KEY_FROM_SERIAL, buildIndex } from "../build-index.mjs";
 import { stableStringify } from "../lib/canonical.mjs";
 import { compareSemver } from "../lib/semver.mjs";
 import { validate as validateSchema } from "../lib/jsonschema.mjs";
@@ -587,7 +587,9 @@ export async function run() {
     //   schema/index-v1.json's `$defs.platformKey`   EQUAL to the vocabulary —
     //       reserved names are in the schemas "so nobody else claims the names"
     //   build-index's noarch expansion                EQUAL to SUPPORTED_KEYS —
-    //       "written under every supported platform key" (index-v1.json)
+    //       "written under every supported platform key" (index-v1.json), at
+    //       a serial past NOARCH_KEY_FROM_SERIAL's gates, and short of exactly
+    //       the gated key below its gate
     //   the committed registry/v1/index.json          a SUBSET of SUPPORTED_KEYS —
     //       the validator refuses the reserved ones, so the index never carries one
     //   platform.mjs's MANIFEST.platform table         ONTO the vocabulary, one
@@ -643,10 +645,21 @@ export async function run() {
     art.filename = art.filename.replace("linux-x64", "noarch");
     v.artifacts = { noarch: art };
     fs.writeFileSync(vf, stableStringify(v));
-    const entry = buildIndex({ root: dir, serial: 1 }).signed.plugins.find((p) => p.id === "dice-roller");
+    // At a serial past every key's gate (NOARCH_KEY_FROM_SERIAL), the
+    // expansion is every supported key; below a gate, exactly that key is
+    // missing, so the gate renders a new key from the next listing commit on
+    // and never moves the catalogue at an unchanged serial (TRUST-28).
+    const open = Math.max(1, ...Object.values(NOARCH_KEY_FROM_SERIAL));
+    const entry = buildIndex({ root: dir, serial: open }).signed.plugins.find((p) => p.id === "dice-roller");
     assert(entry && entry.download_url === art.url, "the noarch fixture did not reach the compatibility projection at all, so its keys prove nothing");
     assertEqual(sorted(Object.keys(entry.platform_downloads)), sorted(SUPPORTED_KEYS),
       "tools/build-index.mjs writes a noarch artifact under keys other than every supported key (PLATFORM_KEYS_FOR_NOARCH)");
+    for (const [gated, from] of Object.entries(NOARCH_KEY_FROM_SERIAL)) {
+      assert(SUPPORTED_KEYS.includes(gated) && gated !== "noarch", `NOARCH_KEY_FROM_SERIAL gates ${gated}, which is not a supported host key`);
+      const before = buildIndex({ root: dir, serial: from - 1 }).signed.plugins.find((p) => p.id === "dice-roller");
+      assertEqual(sorted(Object.keys(before.platform_downloads)), sorted(SUPPORTED_KEYS.filter((k) => k !== gated)),
+        `at serial ${from - 1}, one below its gate, the noarch expansion is not every supported key but ${gated}`);
+    }
     for (const [k, url] of Object.entries(entry.platform_downloads)) {
       assertEqual(url, art.url, `build-index wrote the noarch artifact's ${k} download as another URL`);
     }
