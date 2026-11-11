@@ -1,0 +1,8 @@
+{
+  "schema": "astra.registry.identity/1",
+  "plugin_id": "tg-voice",
+  "repository_id": "1454306391",
+  "repository_owner_id": "97849444",
+  "repo": "YaniChap/astra-telegram-assistant",
+  "token_hash": "060101c3fd604ad5"
+}

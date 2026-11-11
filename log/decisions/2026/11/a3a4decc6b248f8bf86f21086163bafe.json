@@ -1,0 +1,26 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "linux-x64:82c61d95c861ba9926be3d07a8d7d728cfb2d6252c394b120293a9ae322a10ae",
+    "windows-x64:7bc3eb8d08567242dfd6cb287d24c5e977fa2277bfec4c6bd005e72a7294635f"
+  ],
+  "commit": "03d8c31029e6b26bfe1577a0838202db278d480c",
+  "decided_at": "2026-11-11T20:15:41Z",
+  "decision_id": "a3a4decc6b248f8bf86f21086163bafe",
+  "fingerprint": "f1f39d4ddc5ef435",
+  "plugin_id": "tg-voice",
+  "reasons": [
+    "P_PUBLISHED",
+    "P_REVIEW_PRIORITY"
+  ],
+  "repo": "YaniChap/astra-telegram-assistant",
+  "repository_id": "1454306391",
+  "repository_owner_id": "97849444",
+  "run": "43094510504/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "7bcd0ff5-6a47-4e73-a447-4daf45f89f28",
+  "tag": "v0.1.12",
+  "trigger": "ci",
+  "version": "0.1.12"
+}
