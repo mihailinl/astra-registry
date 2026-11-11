@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "linux-x64:1a154b3c3b7d7cb05cb167b14d9de49dfcb941de771b50ba765c4135cfe84474",
+    "windows-x64:e2f8bf0bb1b748b201ad931e34b31acda75ec3087475fa597e02669a4b72e06f"
+  ],
+  "commit": "2f416c288e09d17d5314c6d93201ca6c7a527297",
+  "decided_at": "2026-11-11T18:39:59Z",
+  "decision_id": "bd6fc3bd647d1de449cf40d8a445762e",
+  "fingerprint": "0f924c78d6dd0cd2",
+  "plugin_id": "game-buddy",
+  "reasons": [
+    "B_BINDING_UNUSABLE"
+  ],
+  "repo": "YaniChap/game-buddy",
+  "repository_id": "1453242887",
+  "repository_owner_id": "97849444",
+  "run": "43079631169/1",
+  "schema": "astra.registry.decision/1",
+  "state": "refused",
+  "submission_id": "2cb4e32e-6f0d-42c6-80fe-43c67672bf8d",
+  "tag": "v0.2.0",
+  "trigger": "poll",
+  "version": "0.2.0"
+}
