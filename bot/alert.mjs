@@ -138,8 +138,17 @@ export function ownerChat(env = process.env) {
   const owner = env.ASTRA_ALERT_OWNER_CHAT_ID;
   if (!present(owner)) return null;
   if (present(env.ASTRA_ALERT_CHAT_ID) && owner.trim() === env.ASTRA_ALERT_CHAT_ID.trim()) return null;
+  // The copy chat receives every shared page, so an owner chat that IS the
+  // copy chat would be a quiet chat with all the noise in it, and an owner
+  // page there would look like a copy. Refused: today's routing, and a
+  // warning that says why (`ownerSentence`; review of #506, S7).
+  if (present(env.ASTRA_ALERT_COPY_CHAT_ID) && owner.trim() === env.ASTRA_ALERT_COPY_CHAT_ID.trim()) return null;
   return owner;
 }
+
+/** The code of a state pair, `<code>|<id>`; empty for a red verdict with no codes. */
+const codeOf = (pair) => pair.split("|")[0];
+const codesOf = (pairs) => [...new Set(pairs.map(codeOf).filter(Boolean))];
 
 /**
  * Where a page about these codes of this check goes: `{ shared, owner }`, each
@@ -155,10 +164,22 @@ export function routeOf(check, codes, env = process.env) {
   return { shared, owner };
 }
 
+/** The warning for an owner chat that is the copy chat, or null (S7). */
+export function ownerChatRefusal(env = process.env) {
+  if (!present(env.ASTRA_ALERT_OWNER_CHAT_ID) || !present(env.ASTRA_ALERT_COPY_CHAT_ID)) return null;
+  if (env.ASTRA_ALERT_OWNER_CHAT_ID.trim() !== env.ASTRA_ALERT_COPY_CHAT_ID.trim()) return null;
+  if (present(env.ASTRA_ALERT_CHAT_ID) && env.ASTRA_ALERT_OWNER_CHAT_ID.trim() === env.ASTRA_ALERT_CHAT_ID.trim()) return null;
+  return "ASTRA_ALERT_OWNER_CHAT_ID is the copy chat (ASTRA_ALERT_COPY_CHAT_ID), which receives every shared page, so it is " +
+    "ignored and owner-class alarms go to the alarm chat with the rest; give the owner a chat of his own";
+}
+
 /** One sentence on the owner chat, for a log line. */
 function ownerSentence(env) {
   if (!present(env.ASTRA_ALERT_OWNER_CHAT_ID)) return "no owner chat is set, so owner-class alarms go to the alarm chat with the rest";
-  if (ownerChat(env) === null) return "ASTRA_ALERT_OWNER_CHAT_ID is the alarm chat itself, so it changes nothing";
+  if (ownerChat(env) === null && present(env.ASTRA_ALERT_CHAT_ID) && env.ASTRA_ALERT_OWNER_CHAT_ID.trim() === env.ASTRA_ALERT_CHAT_ID.trim()) {
+    return "ASTRA_ALERT_OWNER_CHAT_ID is the alarm chat itself, so it changes nothing";
+  }
+  if (ownerChat(env) === null) return "ASTRA_ALERT_OWNER_CHAT_ID is the copy chat, so it is ignored (the warning above says why)";
   return "ASTRA_ALERT_OWNER_CHAT_ID is set, so owner-class alarms go there only";
 }
 
@@ -389,13 +410,17 @@ export function alertDecision(verdict, state, { now = new Date() } = {}) {
   }
   const pairs = pairsOf(verdict);
   const at = `${now.toISOString().slice(0, 19)}Z`;
-  const page = (why) => {
+  // `fresh`: the pairs this page is FOR — all of them, or only the new ones.
+  // The page goes to the chats those pairs route to (`routeOf`), so a pair
+  // already paged in one chat is not paged there again because another chat
+  // owed a different one (review of #506, S3).
+  const page = (why, fresh = pairs) => {
     next.checks[verdict.check] = { pairs, first_red: prior?.first_red ?? at, last_sent: at };
-    return { act: "page", why, state: next, changed: true };
+    return { act: "page", why, fresh, state: next, changed: true };
   };
   if (!prior || !Array.isArray(prior.pairs)) return page("the check turned red");
   const fresh = pairs.filter((p) => !prior.pairs.includes(p));
-  if (fresh.length) return page(`a code or id not paged since it turned red: ${fresh.join(", ")}`);
+  if (fresh.length) return page(`a code or id not paged since it turned red: ${fresh.join(", ")}`, fresh);
   const since = now.getTime() - Date.parse(prior.last_sent);
   // A page "sent" in the future is not one this registry sent: the state is
   // forged or the clock is wrong, and either way the page goes out. Without
@@ -440,10 +465,15 @@ export async function runAlert({
   stateFile = null,
   now = new Date(),
 } = {}) {
+  let saved = false;
+  // `state_changed` rides on a failure too: a page that reached one chat of
+  // two saved that chat's pairs (S3), and the save job must carry them on.
   const fail = (problems) => {
     for (const p of problems) log.error(`FAIL  ${p}`);
-    return { code: 1, delivered_at: null, copy_delivered: null, alerted: false, problems };
+    return { code: 1, delivered_at: null, copy_delivered: null, alerted: false, state_changed: saved, problems };
   };
+  const refused = ownerChatRefusal(env);
+  if (refused) log.error(`::warning::${refused}`);
 
   const missing = credentialProblems(env);
   if (missing.length) return fail(missing);
@@ -467,7 +497,6 @@ export async function runAlert({
   const key = stateKey(env);
   if (stateFile && !key) log.error("::warning::ASTRA_ALERT_STATE_HMAC_KEY is not in this job, so the alert state is not trusted or saved and every red pages");
   const decided = stateFile ? alertDecision(verdict, readSignedState(stateFile, key), { now }) : null;
-  let saved = false;
   const save = () => {
     if (!decided?.changed || !key) return;
     fs.mkdirSync(path.dirname(path.resolve(stateFile)), { recursive: true });
@@ -476,17 +505,28 @@ export async function runAlert({
   };
   if (decided?.act === "resolve") {
     // To the chats the page went to: the route of the codes that were paged.
-    const was = [...new Set(decided.prior.pairs.map((p) => p.split("|")[0]).filter(Boolean))];
-    const to = routeOf(verdict.check, was, env);
+    const to = routeOf(verdict.check, codesOf(decided.prior.pairs), env);
     const text = renderResolved(verdict, decided.prior);
+    let sharedSent = false;
     try {
-      if (to.shared) await sendMessage({ token: env.ASTRA_ALERT_TELEGRAM_TOKEN, chatId: env.ASTRA_ALERT_CHAT_ID, text, apiBase, fetchImpl });
+      if (to.shared) {
+        await sendMessage({ token: env.ASTRA_ALERT_TELEGRAM_TOKEN, chatId: env.ASTRA_ALERT_CHAT_ID, text, apiBase, fetchImpl });
+        sharedSent = true;
+      }
       if (to.owner) await sendMessage({ token: env.ASTRA_ALERT_TELEGRAM_TOKEN, chatId: ownerChat(env), text, apiBase, fetchImpl });
     } catch (e) {
+      // Per chat (review of #506, S3): the chat that got "resolved" is done;
+      // only the owner's pairs stay in the state, so the next green run sends
+      // "resolved" to the owner chat alone.
+      if (sharedSent && decided) {
+        const mine = ownerCodes(verdict.check);
+        decided.state.checks[verdict.check] = { ...decided.prior, pairs: decided.prior.pairs.filter((p) => mine.has(codeOf(p))) };
+        save();
+      }
       // Kept as unresolved: the next green run tries again, and a red one in
       // between pages as the state it is.
       log.error(`::warning::the "resolved" message for ${verdict.check} did not send: ${e.message}`);
-      return { code: 0, delivered_at: null, copy_delivered: null, alerted: false, resolved: false, state_changed: false, problems: [] };
+      return { code: 0, delivered_at: null, copy_delivered: null, alerted: false, resolved: false, state_changed: saved, problems: [] };
     }
     save();
     log.log(`ok    ${verdict.check} is green again; "resolved" sent once`);
@@ -519,7 +559,7 @@ export async function runAlert({
 
   const text = renderVerdict(verdict, ackUrl);
   const token = env.ASTRA_ALERT_TELEGRAM_TOKEN;
-  const to = routeOf(verdict.check, verdict.codes, env);
+  const to = routeOf(verdict.check, decided ? codesOf(decided.fresh) : verdict.codes, env);
 
   // The alarm chat when the page is for it, then the owner chat when it is
   // for him. Each is a destination the page was owed, so either failing fails
@@ -538,6 +578,15 @@ export async function runAlert({
     try {
       mine = await sendMessage({ token, chatId: ownerChat(env), text, apiBase, fetchImpl });
     } catch (e) {
+      // Per chat (review of #506, S3): the alarm chat WAS paged. Its pairs are
+      // saved as paged, the owner's are left out, so the next run pages the
+      // owner chat alone instead of the alarm group again on every run.
+      if (to.shared && decided) {
+        const owned = ownerCodes(verdict.check);
+        const entry = decided.state.checks[verdict.check];
+        entry.pairs = entry.pairs.filter((p) => !owned.has(codeOf(p)));
+        if (entry.pairs.length) save();
+      }
       return fail([`the alarm did not reach the owner chat (ASTRA_ALERT_OWNER_CHAT_ID): ${e.message}`]);
     }
     if (!to.shared) result = mine;
@@ -625,6 +674,8 @@ async function main(argv) {
     const problems = credentialProblems();
     for (const p of problems) console.error(`FAIL  ${p}`);
     if (problems.length) return 1;
+    const refusedChat = ownerChatRefusal(process.env);
+    if (refusedChat) console.error(`::warning::${refusedChat}`);
     console.log(`ok    environment \`alerts\` carries every required channel secret (${REQUIRED_SECRETS.map(([n]) => n).join(", ")}); ${copySentence(process.env)}; ${ownerSentence(process.env)}`);
     return 0;
   }
@@ -643,7 +694,7 @@ async function main(argv) {
 
   const out = await runAlert({ verdict, ack: args.ack, ifRed: args.ifRed, stateFile: args.state });
   if (out.delivered_at) console.log(`delivered_at=${out.delivered_at}`);
-  if (process.env.GITHUB_OUTPUT && out.code === 0) {
+  if (process.env.GITHUB_OUTPUT && (out.code === 0 || out.state_changed === true)) {
     fs.appendFileSync(process.env.GITHUB_OUTPUT, stepOutputs(out, args.state));
   }
   return out.code;

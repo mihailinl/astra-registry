@@ -173,12 +173,29 @@ permissions: {}
 #     A lock on `remember` alone would not close that, since it is `load` to
 #     `remember` that races, and it would make one hung `remember` stop every
 #     publication;
-#   * the alert jobs send messages; two of them never corrupt anything.
+#   * the alert jobs only send messages.
 #
-# A run that hangs after `claim` holds its leases only until they expire; the
-# service then returns each submission to the state it was claimed from and
-# leases it again (FLOW-19, BOT-15). And a hung `publish` would hold the
-# publish group, so the group's name carries `vars.ASTRA_BOT_WRITER_EPOCH`:
+# **What overlap does cost** (review of #506, S6). Two overlapping runs race
+# two small read-modify-write states, and the last saver wins: the poll memory
+# (above, and the BOT-92 shadow streak in it, which can then undercount, so
+# the owner's shadow alarm comes a run late, never falsely), and the alert
+# state of `poll-alert` (an occasional duplicate page, or a lost or doubled
+# "resolved").
+#
+# **What a hang costs, live** (S2). A run that hangs after `claim` holds its
+# leases only until they expire (60 minutes); the service then returns each
+# submission to the state it was claimed from and leases it again (FLOW-19).
+# But a hung `publish`, or a hung `alert` that `publish` needs, makes every
+# later run claim, wait behind it and expire too, and after 3 counted lease
+# ends a submission is PARKED (BOT-15: 6 hours, `W_LEASE_EXPIRED` shown to its
+# author). The run watchdog pages at 30 minutes, long before three lease
+# periods; docs/RUNBOOK.md §7.13 says what to do: bump the writer epoch, then
+# unpark. No guard in `claim` stops claiming while a writer is stuck: it would
+# need `actions: read` in a job that holds the bot token, or a new job in
+# front of it, and neither is a few lines.
+#
+# A hung `publish` holds the publish group, so the group's name carries
+# `vars.ASTRA_BOT_WRITER_EPOCH`:
 # changing that repository variable moves every later run to a fresh group with
 # no edit to this file, which is inside TRUST-31's set. A name is all it
 # changes; `publish-apply.mjs` still refuses a racing push it cannot prove safe.

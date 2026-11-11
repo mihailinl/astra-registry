@@ -31,6 +31,7 @@ import {
   copyChat,
   credentialProblems,
   ownerChat,
+  ownerChatRefusal,
   routeOf,
   alertDecision,
   rfc3339,
@@ -1556,6 +1557,65 @@ await test("run-watchdog: its heartbeat waits on the owner's act — a summary l
   }
   assert.deepEqual(CHECKS.filter((c) => c.receiver_pending).map((c) => c.name), ["run-watchdog"]);
   assert.ok(alertsEnvironmentSecrets().includes("ASTRA_DEADMAN_URL_RUN_WATCHDOG"), "the owner's act is missing from the list environment `alerts` is built from");
+});
+
+await test("review of #506 S3: an owner chat that fails after the alarm chat got the page does not re-page the alarm chat every run", async () => {
+  const dir = fs.mkdtempSync(path.join(REPO, ".alert-owner-s3-"));
+  try {
+    const stateFile = path.join(dir, "state.json");
+    const env = { ...OWNER, ASTRA_ALERT_COPY_CHAT_ID: undefined, ASTRA_ALERT_STATE_HMAC_KEY: "k".repeat(40) };
+    const sent = [];
+    let ownerUp = false;
+    const fetchImpl = async (url, init) => {
+      const b = JSON.parse(init.body);
+      if (b.chat_id === "-1009" && !ownerUp) return { ok: false, status: 400, json: async () => ({ ok: false }) };
+      sent.push(b.chat_id);
+      return { ok: true, status: 200, json: async () => ({ ok: true, result: { date: 1789_000_000 } }) };
+    };
+    const mixed = { ...VERDICT, codes: ["ROLL_45_TRUST_EXPIRES_SOON", "SERVE_85_DRIFT"], ids: undefined, hexes: undefined };
+    const at = (min) => new Date(Date.parse("2026-11-10T03:00:00Z") + min * 60_000);
+    const send = (verdict, min) => runAlert({ verdict, env, ifRed: true, fetchImpl, log: quiet, stateFile, now: at(min) });
+    const first = await send(mixed, 0);
+    assert.equal(first.code, 1, "an owner page that did not arrive is still a red run");
+    assert.equal(first.state_changed, true, "the alarm chat's pairs were not saved, so the save job carries nothing");
+    for (let i = 1; i <= 5; i++) assert.equal((await send(mixed, i * 10)).code, 1);
+    assert.deepEqual(sent, ["-1001"], "the alarm group got the same page again on every run the owner chat was broken");
+    ownerUp = true;
+    const healed = await send(mixed, 60);
+    assert.equal(healed.code, 0);
+    assert.deepEqual(sent, ["-1001", "-1009"], "once the owner chat works, the owner page goes to it alone");
+    await send(mixed, 70);
+    assert.equal(sent.length, 2, "the healed state paged again");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+await test("review of #506 S7: an owner chat that is the COPY chat is refused, with a warning, and routing is today's", async () => {
+  const env = { ...ENV, ASTRA_ALERT_OWNER_CHAT_ID: " -1002 " };
+  assert.equal(ownerChat(env), null);
+  assert.match(ownerChatRefusal(env), /is the copy chat/);
+  assert.equal(ownerChatRefusal(OWNER), null);
+  const api = chats();
+  const warned = [];
+  const out = await runAlert({ verdict: STALE, env, fetchImpl: api.fetchImpl, log: { log: () => {}, error: (l) => warned.push(l) } });
+  assert.equal(out.code, 0);
+  assert.deepEqual(api.to(), ["-1001", "-1002"], "an owner chat equal to the copy chat changed where the page went");
+  assert.ok(warned.some((l) => /^::warning::.*copy chat/.test(l)), "the refusal was not said");
+});
+
+await test("review of #506 S4: reach-assertion skips a receiver_pending credential with a warning and still posts the rest", async () => {
+  const { env } = reachEnv();
+  delete env.ASTRA_DEADMAN_URL_RUN_WATCHDOG;
+  const r = reachReceiver();
+  const out = await reach({ env, fetchImpl: r.fetchImpl });
+  assert.ok(!out.codes.includes("REACH_CREDENTIAL_NOT_ONE_CHECK"), `a check the owner has not created turned reach red: ${out.codes}`);
+  assert.ok(out.posts > 0, "nothing was posted, so one pending check held back every other credential");
+  assert.ok(out.lines.some((l) => /^warn {2}ASTRA_DEADMAN_URL_RUN_WATCHDOG .*waits on the owner/.test(l)));
+  const { env: other } = reachEnv();
+  delete other.ASTRA_DEADMAN_URL_SIGNER;
+  assert.ok((await reach({ env: other, fetchImpl: reachReceiver().fetchImpl })).codes.includes("REACH_CREDENTIAL_NOT_ONE_CHECK"),
+    "a missing credential of a check that exists stopped being red");
 });
 
 console.log(`\n${failures === 0 ? "PASS" : "FAIL"}  bot/tests/alert.test.mjs, ${failures} failed`);

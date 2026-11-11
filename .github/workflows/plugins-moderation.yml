@@ -155,9 +155,14 @@ permissions: {}
 # could carry it. In the 200 runs to 2026-11-11, 3 were dispatched while the
 # run before them was still going.
 #
-# A hung `commit` would hold the group, so its name carries
-# `vars.ASTRA_BOT_WRITER_EPOCH`: changing that repository variable moves later
-# runs to a fresh group with no edit to this file (TRUST-31's set).
+# Overlapping runs also race the `settled` job's alert state (last saver wins:
+# an occasional duplicate page, or a lost or doubled "resolved").
+#
+# A hung `commit` holds the group, and every later run's `commit` waits behind
+# it; moderation takes no leases, so nothing is parked, but no decision lands
+# until it is cleared. Its name carries `vars.ASTRA_BOT_WRITER_EPOCH`: changing
+# that repository variable moves later runs to a fresh group with no edit to
+# this file (TRUST-31's set). docs/RUNBOOK.md §7.13.
 
 # Committed "false" since B-T5.1 (2026-10-14), as `plugins-ingest.yml`'s was
 # by B-T3.6 the day before. It was "true" through R3 and read by no step, so

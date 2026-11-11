@@ -984,14 +984,35 @@ support to purge it. For the six known ghosts (37655506182, 39698520903,
 **Ingest and moderation hold no workflow-level group (since fix No. 2).** In
 `Plugins ingest` and `Plugins moderation` only the job that pushes to `main`
 (`publish`, `commit`) is in a group, and that group queues (`queue: max`) and
-never cancels. A hung read (`claim`, `verify`, `check`, an alert job) blocks
-only its own run, and the next run goes past it; leases it held expire and the
-service leases them again. A hung writer still blocks later writers of its
-workflow: cancel it as above, and if GitHub refuses, set (or bump) the
-repository variable `ASTRA_BOT_WRITER_EPOCH` (`gh variable set
-ASTRA_BOT_WRITER_EPOCH --body 1 -R mihailinl/astra-registry`). The group names
-end in it, so the next run uses a fresh group, with no edit to the workflows,
-which are inside TRUST-31's set. `Signer` keeps its workflow-level group with
+never cancels. A hung read (`claim`, `verify`, `check`) blocks only its own
+run, and the next run goes past it; leases it held expire (60 minutes) and the
+service leases them again (FLOW-19).
+
+**A hung writer is the expensive case, live.** A hung ingest `publish` — or a
+hung `alert` that `publish` needs — makes every later run claim, queue behind
+it and let its leases expire too. After 3 counted lease ends a submission is
+**parked** for 6 hours and its author sees `W_LEASE_EXPIRED` (BOT-15). The
+watchdog pages at 30 minutes, well inside the first lease period, so act then:
+
+1. cancel the hung run as above; if GitHub refuses, set (or bump) the
+   repository variable `ASTRA_BOT_WRITER_EPOCH` (`gh variable set
+   ASTRA_BOT_WRITER_EPOCH --body 1 -R mihailinl/astra-registry`). The group
+   names end in it, so the next run uses a fresh group, with no edit to the
+   workflows, which are inside TRUST-31's set;
+2. then, for any submission the service shows parked with `W_LEASE_EXPIRED`,
+   use the operator **unpark** in the plugins service panel (BOT-15's
+   "operator action"; the author's own Retry does the same), so it does not
+   wait out the 6 hours.
+
+A hung moderation `commit` parks nothing (moderation takes no leases), but no
+decision lands until it is cleared the same way.
+
+**What overlapping runs cost.** Runs can now overlap, and the last saver wins
+two small states: the poll memory (a polled tag offered again; the BOT-92
+shadow streak can undercount, so the owner's shadow alarm comes a run late,
+never falsely) and an alert job's once-per-state memory (an occasional
+duplicate page, or a lost or doubled "resolved"). Two overlapping moderation
+runs can each alert for the same decision. `Signer` keeps its workflow-level group with
 `cancel-in-progress: false`, so a hung signer run blocks it until somebody
 cancels it; the watchdog is how somebody finds out in 30 minutes instead of
 five days.
@@ -1012,7 +1033,11 @@ With secret `ASTRA_ALERT_OWNER_CHAT_ID` (environment `alerts`) set to a chat of
 his own, those pages go there ONLY — the first page, the daily repeat and
 "resolved". A page carrying both kinds of code goes to both chats. Unset,
 blank, or equal to `ASTRA_ALERT_CHAT_ID`, nothing changes: every page goes to
-the alarm group as before. To set it: create the chat with the registry's bot
+the alarm group as before. An owner chat equal to `ASTRA_ALERT_COPY_CHAT_ID` is
+refused the same way, with a warning in every alert job, because the copy chat
+gets every shared page. If the owner chat is unreachable, the alert job is red,
+the alarm group is NOT paged again for it, and the owner page is retried on
+the next run until it lands. To set it: create the chat with the registry's bot
 in it, then `gh secret set ASTRA_ALERT_OWNER_CHAT_ID --env alerts -R
 mihailinl/astra-registry` and paste the chat id.
 
