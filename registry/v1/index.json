@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "+gIeOGHij9EO5KmTtBW6psfwQ8Ophkysx6CnpEr+c75YjnWl7/WoMw3J0GA8KFC/u98LvkM7mXWq5ktkzjuJDg=="
+      "sig": "/c9ihOYiLxoGPNnw/uYyZTYhIOiIvvTCd/FfR3VgdXetx5UGeZ91wjy02DunrCp4Urp3LQ1GEiQNxUyAycfPCw=="
     }
   ],
   "signed": {
-    "expires_at": "2026-12-11T04:58:44Z",
-    "issued_at": "2026-11-11T04:58:44Z",
+    "expires_at": "2026-12-11T21:05:11Z",
+    "issued_at": "2026-11-11T21:05:11Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
@@ -5002,6 +5002,91 @@
         "version": "0.1.4"
       },
       {
+        "added_at": "2026-11-11",
+        "author": "YaniChap",
+        "capabilities": [
+          "client",
+          "event_handlers",
+          "tools",
+          "ui_contributions"
+        ],
+        "description": "Telegram integration for the Astra local AI assistant. Receives messages, checks user access by Telegram @username, forwards messages to Astra, and automatically sends replies back to Telegram.…",
+        "download_url": "",
+        "downloads": 0,
+        "i18n": {
+          "ru": {
+            "description": "Голосовой помощник для локального ИИ-ассистента Astra. Принимает сообщения, проверяет доступ пользователей по Telegram @username, передаёт сообщения Astra и автоматически отправляет ответы обратно в…",
+            "name": "Голосовой помощник"
+          }
+        },
+        "icon_url": "data:image/svg+xml;base64,CjxzdmcgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB3aWR0aD0iMjU2IiBoZWlnaHQ9IjI1NiIgdmlld0JveD0iMCAwIDI1NiAyNTYiPgogIDxkZWZzPgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJiZyIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjMjVCOEYyIj48L3N0b3A+CiAgICAgIDxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iIzI0NjNEOCI+PC9zdG9wPgogICAgPC9saW5lYXJHcmFkaWVudD4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0ic3RhciIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjRkZGRkZGIj48L3N0b3A+CiAgICAgIDxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iI0JDRUJGRiI+PC9zdG9wPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CgogIDxyZWN0IHg9IjgiIHk9IjgiIHdpZHRoPSIyNDAiIGhlaWdodD0iMjQwIiByeD0iNTgiIGZpbGw9InVybCgjYmcpIj48L3JlY3Q+CgogIDxwYXRoIGQ9Ik01MiAxMjEuNSAxOTUgNjZjNy0yLjcgMTMuNSAxLjcgMTEgMTIuN2wtMjQuNCAxMTUuMWMtMS44IDguMi02LjcgMTAuMi0xMy41IDYuNGwtNDEuNy0zMC44LTIwLjEgMTkuNGMtMi4yIDIuMi00IDQtOC4xIDRsMy00Mi41IDc3LjMtNjkuOGMzLjQtMy0wLjgtNC43LTUuMy0xLjdsLTk1LjYgNjAuMi00MS4yLTEyLjhjLTguOS0yLjgtOS04LjkgMy42LTEzLjdaIiBmaWxsPSIjRkZGRkZGIj48L3BhdGg+CgogIDxwYXRoIGQ9Ik0xOTAgMjQgMTk3IDQ0IDIxNyA1MSAxOTcgNTggMTkwIDc4IDE4MyA1OCAxNjMgNTEgMTgzIDQ0WiIgZmlsbD0idXJsKCNzdGFyKSI+PC9wYXRoPgogIDxjaXJjbGUgY3g9IjIyMiIgY3k9IjkxIiByPSI1IiBmaWxsPSIjRkZGRkZGIiBvcGFjaXR5PSIuOSI+PC9jaXJjbGU+Cjwvc3ZnPgo=",
+        "id": "tg-voice",
+        "license": "MIT",
+        "name": "Voice Message Assistant",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/YaniChap/astra-telegram-assistant/releases/download/v0.1.12/tg-voice-0.1.12-linux-x64.astraplugin",
+          "windows-x64": "https://github.com/YaniChap/astra-telegram-assistant/releases/download/v0.1.12/tg-voice-0.1.12-windows-x64.astraplugin"
+        },
+        "readme": "# Astra Telegram Assistant\n\nПлагин для интеграции Telegram с локальным ассистентом Astra.\n\n## Возможности\n\n- Приём текстовых сообщений от пользователей Telegram.\n- Проверка доступа пользователей по списку разрешённых аккаунтов.\n- Управление владельцем и разрешёнными пользователями через Telegram `@username`.\n- Передача входящего сообщения в Astra для формирования ответа.\n- Автоматическая отправка сформированного ответа обратно в Telegram.\n- Озвучивание входящих сообщений и ответов средствами голосового движка Astra.\n- Сохранение истории переписки бота.\n\n## Как работает\n\n1. Пользователь пишет Telegram-боту.\n2. Плагин проверяет, разрешено ли этому пользователю взаимодействовать с ботом.\n3. Текст сообщения передаётся Astra.\n4. Astra формирует ответ.\n5. Ответ автоматически отправляется пользователю в Telegram.\n6. Astra может дополнительно произнести сообщение локальным голосом.\n\n## Настройка\n\n1. Создайте Telegram-бота через BotFather.\n2. Укажите токен бота в настройках плагина.\n3. Укажите Telegram `@username` владельца.\n4. Запустите бота и отправьте ему `/start`.\n5. Добавьте разрешённых пользователей, если это необходимо.\n6. Убедитесь, что плагину разрешено отправлять сообщения в Astra.\n\n## Ограничения\n\n- Для привязки Telegram-аккаунта пользователь должен сначала открыть бота и отправить `/start`.\n- Внутри Telegram используется текстовый обмен.\n- Распознавание входящих голосовых сообщений Telegram штатным API плагина пока не поддерживается.\n- Для работы необходим запущенный Astra и доступный Telegram Bot API.\n\n## Безопасность\n\nНе публикуйте токен Telegram-бота и не передавайте его посторонним. Добавляйте в список доступа только доверенных пользователей.\n",
+        "releases": [
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "tg-voice-0.1.12-linux-x64.astraplugin",
+                "sha256": "82c61d95c861ba9926be3d07a8d7d728cfb2d6252c394b120293a9ae322a10ae",
+                "size": 7880258,
+                "url": "https://github.com/YaniChap/astra-telegram-assistant/releases/download/v0.1.12/tg-voice-0.1.12-linux-x64.astraplugin"
+              },
+              "windows-x64": {
+                "filename": "tg-voice-0.1.12-windows-x64.astraplugin",
+                "sha256": "7bc3eb8d08567242dfd6cb287d24c5e977fa2277bfec4c6bd005e72a7294635f",
+                "size": 7664329,
+                "url": "https://github.com/YaniChap/astra-telegram-assistant/releases/download/v0.1.12/tg-voice-0.1.12-windows-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "client",
+              "event_handlers",
+              "tools",
+              "ui_contributions"
+            ],
+            "min_astra_version": "0.2.7",
+            "permissions": {
+              "client": {
+                "reason": "Requests speech through Astra’s configured voice engine when the daemon permits plugin client access"
+              },
+              "push_to_ui": {
+                "reason": "Displays plugin status and controls"
+              },
+              "send_chat_message": {
+                "reason": "Sends recent Telegram message context to Astra AI to generate reply drafts"
+              },
+              "subscribe_events": {
+                "reason": "Receives Astra events required for plugin operation"
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-11-11T20:13:31Z",
+            "release": {
+              "commit": "03d8c31029e6b26bfe1577a0838202db278d480c",
+              "kind": "github_release",
+              "repo": "YaniChap/astra-telegram-assistant",
+              "tag": "v0.1.12"
+            },
+            "review": "unreviewed",
+            "version": "0.1.12"
+          }
+        ],
+        "repository_url": "https://github.com/YaniChap/astra-telegram-assistant",
+        "source": {
+          "kind": "github",
+          "repo": "YaniChap/astra-telegram-assistant"
+        },
+        "stars": 0,
+        "updated_at": "2026-11-11T20:13:31Z",
+        "version": "0.1.12"
+      },
+      {
         "added_at": "2026-10-28",
         "author": "Voltur",
         "capabilities": [
@@ -5810,6 +5895,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 150
+    "serial": 151
   }
 }
