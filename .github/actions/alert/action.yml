@@ -94,7 +94,7 @@
 #         ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
 #         ASTRA_DEADMAN_URL_SERVED_SET: ${{ secrets.ASTRA_DEADMAN_URL_SERVED_SET }}
 #       steps:
-#         - uses: actions/checkout@v4
+#         - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 #           with:
 #             ref: ${{ github.sha }}
 #             sparse-checkout: |

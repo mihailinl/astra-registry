@@ -195,7 +195,7 @@ jobs:
       # and in which run — no token and no response body (ops entry 100).
       settled: ${{ steps.history.outputs.settled }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # Every job in this run reads the same tree, which is also the tree
           # whose `job_workflow_sha` the service hashes under TRUST-31.
@@ -204,7 +204,7 @@ jobs:
           # which a shallow clone hides; `holdDeletions` refuses one rather
           # than report fewer.
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -292,11 +292,11 @@ jobs:
       ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
       ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -366,7 +366,7 @@ jobs:
       results: ${{ steps.apply.outputs.results }}
       main_commit: ${{ steps.apply.outputs.main_commit }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # The compile reads git history: MOD-13's next advisory id is "one
           # more than the highest ever ADDED", which a shallow clone cannot
@@ -374,7 +374,7 @@ jobs:
           # `source.repo` of the listing.
           fetch-depth: 0
           ref: ${{ github.sha }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -649,10 +649,10 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -685,7 +685,7 @@ jobs:
     outputs:
       state: ${{ steps.state.outputs.state }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -696,7 +696,7 @@ jobs:
             bot/lib/alert-checks.mjs
             tools/lib/ids.mjs
           sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
       - uses: ./.github/actions/alert-state
@@ -737,11 +737,11 @@ jobs:
       ASTRA_ALERT_STATE_HMAC_KEY: ${{ secrets.ASTRA_ALERT_STATE_HMAC_KEY }}
       ASTRA_DEADMAN_URL_MODERATION_RUN: ${{ secrets.ASTRA_DEADMAN_URL_MODERATION_RUN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -804,7 +804,7 @@ jobs:
       contents: read
       id-token: none
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -815,7 +815,7 @@ jobs:
             bot/lib/alert-checks.mjs
             tools/lib/ids.mjs
           sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
       - uses: ./.github/actions/alert-state
