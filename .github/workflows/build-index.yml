@@ -192,7 +192,10 @@ jobs:
       # is the last gate before a listing reaches a stranger's machine, and it
       # has to be a gate that still runs when a registry is down or a lockfile
       # is being argued about. If you ever add a dependency here, explain in
-      # this comment why the gate is better for it.
+      # this comment why the gate is better for it. (The one piece of code the
+      # generator needs that this repository did not write, the SVG rasterizer,
+      # is checked in under bot/lib/third-party/resvg-wasm and checked against a pinned
+      # digest each time it loads, so there is still nothing to install.)
       - name: Self-test (schemas, canonical JSON, the rejections)
         run: node tools/selftest.mjs --loads  # records what the run loads; no gate passes this (ops couplings 116)
 
@@ -309,6 +312,7 @@ jobs:
           node bot/moderation.mjs --check
           node bot/tests/asset-check.test.mjs
           node bot/tests/presentation.test.mjs
+          node bot/tests/rasterize.test.mjs
 
       - name: Validate the listings
         if: ${{ !cancelled() }}

@@ -53,6 +53,7 @@
     "E_ENTRY_SHELL",
     "E_ENTRY_TRAVERSAL",
     "E_HOST_RPC_UNDECLARED",
+    "E_ICON_FORMAT",
     "E_ID_CHARSET",
     "E_ID_RESERVED",
     "E_ID_RESERVED_DEVICE",
@@ -103,6 +104,8 @@
     "E_PROBE_UNAVAILABLE",
     "E_RELEASE_COMMIT_MISMATCH",
     "E_RELEASE_NOT_FOUND",
+    "E_SVG_RASTERIZE",
+    "E_SVG_TEXT",
     "E_TOML_MANIFEST_DISAGREE",
     "E_TRADEMARK",
     "E_TRUST_UNPROVISIONED",
@@ -575,6 +578,15 @@
       "remedy": "Declare the capability the call needs, or remove the call. The four that block are `FireTrigger`, `SendChatMessage`, `SetVariable` and `SetThemeContribution` — each of them acts on the user's session rather than inside your plugin."
     },
     {
+      "code": "E_ICON_FORMAT",
+      "level": "error",
+      "stage": "derive",
+      "fix": "new_tag",
+      "panel_only": false,
+      "title": "The icon must be PNG, JPEG, WebP or SVG",
+      "remedy": "Export the icon as `icon.png` (128x128 is plenty), `icon.webp`, `icon.jpg` or `icon.svg`, put it in the bundle in place of `icon.ico`, and release again."
+    },
+    {
       "code": "E_ID_CHARSET",
       "level": "error",
       "stage": "manifest",
@@ -1023,6 +1035,24 @@
       "panel_only": false,
       "title": "That repository has no release with that tag",
       "remedy": "Publish the release (a draft is invisible to everyone but you) and check the tag spelling. The bot reads it unauthenticated, so a private repository looks the same as a missing one."
+    },
+    {
+      "code": "E_SVG_RASTERIZE",
+      "level": "error",
+      "stage": "derive",
+      "fix": "new_tag",
+      "panel_only": false,
+      "title": "The SVG icon could not be drawn",
+      "remedy": "The registry draws an SVG icon to a PNG, and this one did not parse as a picture. Check that it opens in a browser, or export the icon as PNG, and release again."
+    },
+    {
+      "code": "E_SVG_TEXT",
+      "level": "error",
+      "stage": "derive",
+      "fix": "new_tag",
+      "panel_only": false,
+      "title": "The SVG icon contains text",
+      "remedy": "The registry draws an SVG icon to a PNG with no fonts, so text in it would vanish. Convert the text to outlines (paths) in your editor, or export the icon as PNG, and release again."
     },
     {
       "code": "E_TOML_MANIFEST_DISAGREE",

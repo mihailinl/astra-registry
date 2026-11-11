@@ -64,6 +64,7 @@ import { compareSemver } from "./lib/semver.mjs";
 import { loadIdentities, loadPublishers, loadSources, REPO_ROOT } from "./lib/sources.mjs";
 import { INDEX_SCHEMA } from "../bot/lib/sign.mjs";
 import { MAX_README_BYTES, iconDataUri } from "../bot/lib/assets.mjs";
+import { RasterError, rasterizeSvg } from "../bot/lib/rasterize.mjs";
 import { FLAT_PROJECTION_KEYS } from "./lib/platform.mjs";
 
 const BANNER =
@@ -82,6 +83,28 @@ const BANNER =
 // unchanged serial (TRUST-28). `tools/selftest/validation.mjs` asks the built
 // index which keys it wrote.
 const PLATFORM_KEYS_FOR_NOARCH = FLAT_PROJECTION_KEYS;
+
+/**
+ * The first serial at which an SVG icon is carried as a PNG drawn from it.
+ *
+ * The index carries raster icons only: PNG, WebP and JPEG as committed, an SVG
+ * drawn by `bot/lib/rasterize.mjs`. Taught first, rendered later — the same
+ * rule as the review mark (B.4, `releaseRecord` above). DEC-9 counts only
+ * commits under `plugins/`, so a generator that drew the 19 committed SVGs the
+ * moment it learned to would change `signed.plugins` at an unchanged serial:
+ * TRUST-28 would carry the served catalogue in the signer until some listing
+ * commit, and `tools/selftest/catalogue.mjs`'s "an equal serial means an equal
+ * catalogue" would be red on `main`, and so in every bot job that runs the
+ * selftest over a tree with no `plugins/` change. Gated, the commit that adds
+ * this renders exactly `main`'s catalogue, and the first commit under
+ * `plugins/` after it raises the serial and brings the PNGs with it.
+ *
+ * The value is `main`'s serial when this lands, plus one (2026-11-11: main's
+ * catalogue is serial 150). If a listing commit lands first, the equal-serial
+ * check goes red on the pull request again and the number moves up; it is never
+ * lowered below a serial already served.
+ */
+export const RASTER_ICONS_FROM_SERIAL = 151;
 
 /**
  * The pathspec the catalogue's serial is counted over — `git rev-list --count
@@ -264,7 +287,7 @@ function flatDownloads(latest) {
  * which it already did for every JSON document here; it stays deterministic
  * because the same tree yields the same bytes. No clock, no network.
  */
-function presentation(root, plugin) {
+function presentation(root, plugin, serial) {
   const dir = path.join(root, "plugins", plugin.dir);
   const p = plugin.doc;
   const out = {};
@@ -288,7 +311,7 @@ function presentation(root, plugin) {
     bad(
       `plugins/${plugin.dir}/plugin.json`,
       `carries icon_url ${JSON.stringify(p.icon_url)}, and the signed catalogue takes a committed icon or ` +
-        "nothing (BOT-79). Commit the picture beside plugin.json — icon.png, .webp, .svg, .jpg, .jpeg or .ico " +
+        "nothing (BOT-79). Commit the picture beside plugin.json — icon.png, .webp, .svg, .jpg or .jpeg " +
         "— and name it in `icon`: the generator inlines those bytes as a data: URI, inside the signature.",
     );
   }
@@ -298,7 +321,18 @@ function presentation(root, plugin) {
     if (!fs.existsSync(file)) {
       bad(`plugins/${plugin.dir}/plugin.json`, `names icon ${JSON.stringify(p.icon)}, which is not in the directory`);
     } else {
-      out.icon_url = iconDataUri({ name: p.icon, bytes: fs.readFileSync(file) });
+      const icon = { name: p.icon, bytes: fs.readFileSync(file) };
+      try {
+        out.icon_url =
+          serial >= RASTER_ICONS_FROM_SERIAL && icon.name === "icon.svg"
+            ? iconDataUri({ name: "icon.png", bytes: rasterizeSvg(icon.bytes) })
+            : iconDataUri(icon);
+      } catch (e) {
+        // A picture that cannot be drawn is a build error naming the listing, never an icon
+        // quietly missing from the catalogue.
+        if (!(e instanceof RasterError)) throw e;
+        bad(`plugins/${plugin.dir}/${p.icon}`, `${e.code}: ${e.message}`);
+      }
     }
   } else {
     out.icon_url = "";
@@ -437,6 +471,9 @@ export function publisherKeyProblems(doc, publishers) {
 }
 
 export function buildIndex({ root = REPO_ROOT, serial } = {}) {
+  // Resolved once: what the icons render as (`RASTER_ICONS_FROM_SERIAL`) and the
+  // document's own `serial` must be one number.
+  const theSerial = resolveSerial({ explicit: serial, root });
   const { errors, plugins } = loadSources(root);
   const { errors: pubErrors, publishers } = loadPublishers(root);
   errors.push(...pubErrors);
@@ -489,7 +526,7 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
     const { download_url, platform_downloads } = flatDownloads(latest);
     const p = plugin.doc;
 
-    const pres = presentation(root, plugin);
+    const pres = presentation(root, plugin, theSerial);
     if (pres.errors.length) {
       entryErrors.push(...pres.errors);
       continue;
@@ -571,7 +608,7 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
     signatures: [],
     signed: {
       schema: INDEX_SCHEMA,
-      serial: resolveSerial({ explicit: serial, root }),
+      serial: theSerial,
       plugins: entries,
       // One record per publisher, and only for publishers something in this
       // catalogue actually points at — a record for an owner with no listing

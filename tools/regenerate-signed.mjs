@@ -344,7 +344,7 @@ export function scanClosure(work, entry = ENTRY) {
       if (bare) {
         findings.push(
           `${rel}:${line}: imports ${JSON.stringify(spec)}, a package rather than a file in this tree. ` +
-          "The registry vendors nothing, and a dependency resolved at run time is code no reviewer pinned",
+          "A dependency resolved at run time is code no reviewer pinned; the one bundled module sits under bot/lib/third-party and is imported by path",
         );
         continue;
       }

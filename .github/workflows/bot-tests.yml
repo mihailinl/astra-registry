@@ -173,6 +173,10 @@ jobs:
         if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node bot/tests/presentation.test.mjs
 
+      - name: The icon drawn to a PNG, and the formats refused
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
+        run: node bot/tests/rasterize.test.mjs
+
       - name: The icon and README lifted out of the bundle
         if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node bot/tests/asset-check.test.mjs

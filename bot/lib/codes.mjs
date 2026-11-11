@@ -619,6 +619,30 @@ export const CODES = {
       "catches accidents; it does not catch anyone who is trying.",
   },
 
+  // ── the icon: a format the registry carries ────────────────────────────────
+  // The index carries raster icons only: PNG, JPEG and WebP as they are, an SVG drawn to a PNG.
+  E_ICON_FORMAT: {
+    level: "error", stage: "derive", fix: "new_tag",
+    title: "The icon must be PNG, JPEG, WebP or SVG",
+    remedy:
+      "Export the icon as `icon.png` (128x128 is plenty), `icon.webp`, `icon.jpg` or `icon.svg`, " +
+      "put it in the bundle in place of `icon.ico`, and release again.",
+  },
+  E_SVG_TEXT: {
+    level: "error", stage: "derive", fix: "new_tag",
+    title: "The SVG icon contains text",
+    remedy:
+      "The registry draws an SVG icon to a PNG with no fonts, so text in it would vanish. Convert the " +
+      "text to outlines (paths) in your editor, or export the icon as PNG, and release again.",
+  },
+  E_SVG_RASTERIZE: {
+    level: "error", stage: "derive", fix: "new_tag",
+    title: "The SVG icon could not be drawn",
+    remedy:
+      "The registry draws an SVG icon to a PNG, and this one did not parse as a picture. Check that it " +
+      "opens in a browser, or export the icon as PNG, and release again.",
+  },
+
   // ── the bot's own output ───────────────────────────────────────────────────
   E_DERIVED_LISTING_INVALID: {
     level: "error", stage: "derive", fix: "registry",

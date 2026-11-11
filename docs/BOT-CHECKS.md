@@ -417,6 +417,9 @@ Held to the same rules a hand-written listing is held to.
 
 | Code | Level | Meaning | What to do |
 |---|---|---|---|
+| `E_ICON_FORMAT` | error | The icon must be PNG, JPEG, WebP or SVG | Export the icon as `icon.png` (128x128 is plenty), `icon.webp`, `icon.jpg` or `icon.svg`, put it in the bundle in place of `icon.ico`, and release again. |
+| `E_SVG_TEXT` | error | The SVG icon contains text | The registry draws an SVG icon to a PNG with no fonts, so text in it would vanish. Convert the text to outlines (paths) in your editor, or export the icon as PNG, and release again. |
+| `E_SVG_RASTERIZE` | error | The SVG icon could not be drawn | The registry draws an SVG icon to a PNG, and this one did not parse as a picture. Check that it opens in a browser, or export the icon as PNG, and release again. |
 | `E_DERIVED_LISTING_INVALID` | error | The listing the bot derived does not pass this repository's own validator | A bug in this registry, not in your plugin. There is nothing further for you to do here. If you reported this on an issue, leave it open. |
 ## Where each check lives
 
