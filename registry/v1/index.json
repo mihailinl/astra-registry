@@ -5382,6 +5382,68 @@
         "version": "1.5.0"
       },
       {
+        "added_at": "2026-11-11",
+        "author": "megapunk04",
+        "capabilities": [
+          "tools",
+          "ui_contributions"
+        ],
+        "description": "Downloads VRM models from the Steam Workshop via DepotDownloaderMod and shows a 3D preview before saving.",
+        "download_url": "https://github.com/megapunk04/vrm-workshop/releases/download/v1.0.0/vrm-workshop-1.0.0-noarch.astraplugin",
+        "downloads": 0,
+        "i18n": {
+          "ru": {
+            "description": "Скачивает VRM-модели из мастерской Steam через DepotDownloaderMod и показывает 3D-превью до сохранения.",
+            "name": "VRM Workshop"
+          }
+        },
+        "icon_url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjgiIGhlaWdodD0iMTI4IiB2aWV3Qm94PSIwIDAgMTI4IDEyOCI+CiAgPHJlY3Qgd2lkdGg9IjEyOCIgaGVpZ2h0PSIxMjgiIHJ4PSIyNCIgZmlsbD0iIzRhN2RmZiIvPgogIDxyZWN0IHg9IjI4IiB5PSIzNCIgd2lkdGg9IjcyIiBoZWlnaHQ9IjYwIiByeD0iMTAiIGZpbGw9IiNmZmZmZmYiIGZpbGwtb3BhY2l0eT0iMC45NSIvPgogIDxyZWN0IHg9IjM4IiB5PSI0NiIgd2lkdGg9IjUyIiBoZWlnaHQ9IjM2IiByeD0iNiIgZmlsbD0iI2RjZTRmZiIvPgogIDxjaXJjbGUgY3g9IjUyIiBjeT0iNTgiIHI9IjYiIGZpbGw9IiM0YTdkZmYiLz4KICA8Y2lyY2xlIGN4PSI3NiIgY3k9IjU4IiByPSI2IiBmaWxsPSIjNGE3ZGZmIi8+CiAgPHBhdGggZD0iTTQ4IDcyIFE2NCA4NCA4MCA3MiIgc3Ryb2tlPSIjNGE3ZGZmIiBzdHJva2Utd2lkdGg9IjQiIGZpbGw9Im5vbmUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjEwMCIgY3k9Ijk0IiByPSIxMCIgZmlsbD0iIzdjNWNmZiIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utd2lkdGg9IjMiLz4KPC9zdmc+Cg==",
+        "id": "vrm-workshop",
+        "license": "MIT",
+        "name": "VRM Workshop",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/megapunk04/vrm-workshop/releases/download/v1.0.0/vrm-workshop-1.0.0-noarch.astraplugin",
+          "noarch": "https://github.com/megapunk04/vrm-workshop/releases/download/v1.0.0/vrm-workshop-1.0.0-noarch.astraplugin",
+          "windows-x64": "https://github.com/megapunk04/vrm-workshop/releases/download/v1.0.0/vrm-workshop-1.0.0-noarch.astraplugin"
+        },
+        "readme": "# VRM Workshop\n\nПлагин для **Astra** — скачивает VRM-модели из мастерской Steam (без владения игрой) и показывает 3D-превью до сохранения.\n\n*Astra*\n*Version*\n*License*\n\n---\n\n## Возможности\n\n- 🔍 **Поиск приложений** по названию (Steam Store API) — клик по приложению открывает каталог его работ.\n- 🗂 **Каталог работ мастерской** — сетка с превью, названием и размером; пагинация по страницам.\n- 👗 **Скины** — у многих персонажей несколько версий (скинов) одной модели; плагин находит их по имени и позволяет переключиться.\n- 🖼 **3D-превью** — модель рендерится прямо во вкладке (three.js + GLTFLoader), можно вращать мышью.\n- ⬇️ **Скачивание в Загрузки** — сохраняет выбранный .vrm с понятным именем.\n- 🕘 **История поиска** — недавно найденные приложения под рукой, одним кликом открывается каталог.\n- 🎙 **Голосовой вызов** — инструмент `download_vrm_workshop` для скачивания по ссылке/ID.\n\n## Как это работает\n\n1. **Поиск приложения** — `store.steampowered.com/api/storesearch/` → appid, название, иконка.\n2. **Каталог работ** — парсинг `steamcommunity.com/workshop/browse/` (id работ извлекаются из HTML), детали — через `GetPublishedFileDetails` пачками до 100 id.\n3. **Скачивание** — `DepotDownloaderMod.exe -app <appid> -pubfile <id>` анонимно, без владения игрой. Модель ищется по `*.vrm|*.glb|*.gltf` и копируется в кэш.\n4. **Превью** — VRM — это GLTF, поэтому three.js рендерит геометрию и текстуры; OrbitControls дают вращение мышью.\n\n## Установка\n\n1. Скопируй папку плагина в каталог проектов Astra:\n   ```\n   %APPDATA%\\astra\\astra\\data\\plugin-projects\\\n   ```\n2. Установи зависимости:\n   ```\n   pip install -r requirements.txt\n   ```\n3. Перезапусти Astra / перезагрузи плагин — во вкладках появится **VRM Workshop**.\n\n> Требуется **.NET 9** для `DepotDownloaderMod.exe`.\n\n## Использование\n\n- **Вкладка**: найди приложение → кликни по нему → выбери работу → крути модель мышью → «Скачать в Загрузки».\n- **Голосом/в чате**: «скачай VRM-модель по ссылке » или «скачай работу ».\n\n## Структура\n\n```\nvrm-workshop/\n├── plugin.toml          # манифест плагина\n├── main.py              # backend (Python, astra-plugin-sdk)\n├── requirements.txt     # astra-plugin-sdk>=0.6,<0.7\n├── ui/\n│   ├── index.html       # страница-вкладка (three.js + GLTFLoader)\n│   ├── vendor/          # three.min.js r147, GLTFLoader.js, OrbitControls.js\n│   └── cache/           # скачанные .vrm (раздаются по относительному пути)\n├── bin/depotdl/         # DepotDownloaderMod.exe + DLL (.NET 9)\n└── cache/               # временные папки загрузки dl_<id>\n```\n\n## Приватность\n\nПлагин не запрашивает никаких разрешений Astra: всё происходит внутри своей папки, в Загрузки пишет только по явному действию пользователя. Скачивание анонимное.\n\n## Лицензия\n\nMIT — см. [LICENSE](LICENSE).\n",
+        "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "vrm-workshop-1.0.0-noarch.astraplugin",
+                "sha256": "6d6e0b5bdf65a9e418374d2cd5b69221348af8e7d1ad433ed4ea2a5e804f06a4",
+                "size": 194149,
+                "url": "https://github.com/megapunk04/vrm-workshop/releases/download/v1.0.0/vrm-workshop-1.0.0-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools",
+              "ui_contributions"
+            ],
+            "permissions": {},
+            "protocol": 1,
+            "published_at": "2026-11-11T04:52:21Z",
+            "release": {
+              "commit": "259df61c9f7318600711d49582901fc33ac11c23",
+              "kind": "github_release",
+              "repo": "megapunk04/vrm-workshop",
+              "tag": "v1.0.0"
+            },
+            "review": "unreviewed",
+            "version": "1.0.0"
+          }
+        ],
+        "repository_url": "https://github.com/megapunk04/vrm-workshop",
+        "source": {
+          "kind": "github",
+          "repo": "megapunk04/vrm-workshop"
+        },
+        "stars": 0,
+        "updated_at": "2026-11-11T04:52:21Z",
+        "version": "1.0.0"
+      },
+      {
         "added_at": "2026-11-07",
         "author": "DtieR",
         "capabilities": [
@@ -5741,6 +5803,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 149
+    "serial": 150
   }
 }

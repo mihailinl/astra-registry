@@ -1,0 +1,25 @@
+{
+  "$comment": "Derived from megapunk04/vrm-workshop@v1.0.0 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "schema": "astra.registry.plugin/1",
+  "id": "vrm-workshop",
+  "name": "VRM Workshop",
+  "summary": "Downloads VRM models from the Steam Workshop via DepotDownloaderMod and shows a 3D preview before saving.",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "megapunk04/vrm-workshop"
+  },
+  "added_at": "2026-11-11",
+  "description": "Downloads VRM models from the Steam Workshop via DepotDownloaderMod and shows a 3D preview before saving.",
+  "author": {
+    "name": "megapunk04"
+  },
+  "icon": "icon.svg",
+  "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "VRM Workshop",
+      "summary": "Скачивает VRM-модели из мастерской Steam через DepotDownloaderMod и показывает 3D-превью до сохранения."
+    }
+  }
+}

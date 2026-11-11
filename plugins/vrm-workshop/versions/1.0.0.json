@@ -1,0 +1,28 @@
+{
+  "$comment": "Derived from megapunk04/vrm-workshop@v1.0.0. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "vrm-workshop",
+  "version": "1.0.0",
+  "published_at": "2026-11-11T04:52:21Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "megapunk04/vrm-workshop",
+    "tag": "v1.0.0",
+    "commit": "259df61c9f7318600711d49582901fc33ac11c23"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/megapunk04/vrm-workshop/releases/download/v1.0.0/vrm-workshop-1.0.0-noarch.astraplugin",
+      "filename": "vrm-workshop-1.0.0-noarch.astraplugin",
+      "sha256": "6d6e0b5bdf65a9e418374d2cd5b69221348af8e7d1ad433ed4ea2a5e804f06a4",
+      "size": 194149
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "tools",
+    "ui_contributions"
+  ],
+  "permissions": {}
+}
