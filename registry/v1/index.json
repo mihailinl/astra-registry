@@ -26,6 +26,7 @@
         "name": "Anim Studio",
         "platform_downloads": {
           "linux-x64": "https://github.com/FluffyTaill/astra-anim-studio/releases/download/v1.4.1/anim-studio-1.4.1-noarch.astraplugin",
+          "macos-arm64": "https://github.com/FluffyTaill/astra-anim-studio/releases/download/v1.4.1/anim-studio-1.4.1-noarch.astraplugin",
           "noarch": "https://github.com/FluffyTaill/astra-anim-studio/releases/download/v1.4.1/anim-studio-1.4.1-noarch.astraplugin",
           "windows-x64": "https://github.com/FluffyTaill/astra-anim-studio/releases/download/v1.4.1/anim-studio-1.4.1-noarch.astraplugin"
         },
@@ -322,6 +323,7 @@
         "name": "APA — Pixel Art for Astra",
         "platform_downloads": {
           "linux-x64": "https://github.com/superdedkot/astrapixelart/releases/download/v0.3.3/astrapixelart-0.3.3-noarch.astraplugin",
+          "macos-arm64": "https://github.com/superdedkot/astrapixelart/releases/download/v0.3.3/astrapixelart-0.3.3-noarch.astraplugin",
           "noarch": "https://github.com/superdedkot/astrapixelart/releases/download/v0.3.3/astrapixelart-0.3.3-noarch.astraplugin",
           "windows-x64": "https://github.com/superdedkot/astrapixelart/releases/download/v0.3.3/astrapixelart-0.3.3-noarch.astraplugin"
         },
@@ -387,6 +389,7 @@
         "name": "Auto Assistant",
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/auto-assistant/releases/download/v1.2.2/auto-assistant-1.2.2-noarch.astraplugin",
+          "macos-arm64": "https://github.com/Voltur792/auto-assistant/releases/download/v1.2.2/auto-assistant-1.2.2-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/auto-assistant/releases/download/v1.2.2/auto-assistant-1.2.2-noarch.astraplugin",
           "windows-x64": "https://github.com/Voltur792/auto-assistant/releases/download/v1.2.2/auto-assistant-1.2.2-noarch.astraplugin"
         },
@@ -594,6 +597,7 @@
         "name": "Browser Control",
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/browser-control/releases/download/v1.2.0/browser-control-1.2.0-noarch.astraplugin",
+          "macos-arm64": "https://github.com/Voltur792/browser-control/releases/download/v1.2.0/browser-control-1.2.0-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/browser-control/releases/download/v1.2.0/browser-control-1.2.0-noarch.astraplugin",
           "windows-x64": "https://github.com/Voltur792/browser-control/releases/download/v1.2.0/browser-control-1.2.0-noarch.astraplugin"
         },
@@ -848,6 +852,7 @@
         "name": "Companion Life",
         "platform_downloads": {
           "linux-x64": "https://github.com/FluffyTaill/astra-companion-life/releases/download/v1.6.0/companion-life-1.6.0-noarch.astraplugin",
+          "macos-arm64": "https://github.com/FluffyTaill/astra-companion-life/releases/download/v1.6.0/companion-life-1.6.0-noarch.astraplugin",
           "noarch": "https://github.com/FluffyTaill/astra-companion-life/releases/download/v1.6.0/companion-life-1.6.0-noarch.astraplugin",
           "windows-x64": "https://github.com/FluffyTaill/astra-companion-life/releases/download/v1.6.0/companion-life-1.6.0-noarch.astraplugin"
         },
@@ -1056,6 +1061,7 @@
         "name": "VRM Manager",
         "platform_downloads": {
           "linux-x64": "https://github.com/denchik2444/vrm-manager/releases/download/v1.1.7/denchik-vroid-manager-1.1.7-noarch.astraplugin",
+          "macos-arm64": "https://github.com/denchik2444/vrm-manager/releases/download/v1.1.7/denchik-vroid-manager-1.1.7-noarch.astraplugin",
           "noarch": "https://github.com/denchik2444/vrm-manager/releases/download/v1.1.7/denchik-vroid-manager-1.1.7-noarch.astraplugin",
           "windows-x64": "https://github.com/denchik2444/vrm-manager/releases/download/v1.1.7/denchik-vroid-manager-1.1.7-noarch.astraplugin"
         },
@@ -1120,6 +1126,7 @@
         "name": "Detective Case",
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/detective-game/releases/download/v0.4.2/detective-game-0.4.2-noarch.astraplugin",
+          "macos-arm64": "https://github.com/Voltur792/detective-game/releases/download/v0.4.2/detective-game-0.4.2-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/detective-game/releases/download/v0.4.2/detective-game-0.4.2-noarch.astraplugin",
           "windows-x64": "https://github.com/Voltur792/detective-game/releases/download/v0.4.2/detective-game-0.4.2-noarch.astraplugin"
         },
@@ -1488,6 +1495,7 @@
         "name": "TG for Astra",
         "platform_downloads": {
           "linux-x64": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.24/dwertyfa-astra-tg-0.1.24-noarch.astraplugin",
+          "macos-arm64": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.24/dwertyfa-astra-tg-0.1.24-noarch.astraplugin",
           "noarch": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.24/dwertyfa-astra-tg-0.1.24-noarch.astraplugin",
           "windows-x64": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.24/dwertyfa-astra-tg-0.1.24-noarch.astraplugin"
         },
@@ -1846,6 +1854,7 @@
         "name": "PrimeAI",
         "platform_downloads": {
           "linux-x64": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.17/dwertyfa-prime-ai-0.2.17-noarch.astraplugin",
+          "macos-arm64": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.17/dwertyfa-prime-ai-0.2.17-noarch.astraplugin",
           "noarch": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.17/dwertyfa-prime-ai-0.2.17-noarch.astraplugin",
           "windows-x64": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.17/dwertyfa-prime-ai-0.2.17-noarch.astraplugin"
         },
@@ -2464,6 +2473,7 @@
         "name": "Game Companion",
         "platform_downloads": {
           "linux-x64": "https://github.com/iaroslaviskendirov-alt/game-companion/releases/download/v0.1.1/game-companion-0.1.1-noarch.astraplugin",
+          "macos-arm64": "https://github.com/iaroslaviskendirov-alt/game-companion/releases/download/v0.1.1/game-companion-0.1.1-noarch.astraplugin",
           "noarch": "https://github.com/iaroslaviskendirov-alt/game-companion/releases/download/v0.1.1/game-companion-0.1.1-noarch.astraplugin",
           "windows-x64": "https://github.com/iaroslaviskendirov-alt/game-companion/releases/download/v0.1.1/game-companion-0.1.1-noarch.astraplugin"
         },
@@ -2541,6 +2551,7 @@
         "name": "JSON Tools",
         "platform_downloads": {
           "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/json-tools-v0.1.2/json-tools-0.1.2-noarch.astraplugin",
+          "macos-arm64": "https://github.com/mihailinl/AstraPlugins/releases/download/json-tools-v0.1.2/json-tools-0.1.2-noarch.astraplugin",
           "noarch": "https://github.com/mihailinl/AstraPlugins/releases/download/json-tools-v0.1.2/json-tools-0.1.2-noarch.astraplugin",
           "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/json-tools-v0.1.2/json-tools-0.1.2-noarch.astraplugin"
         },
@@ -2628,6 +2639,7 @@
         "name": "Knowledge Graph",
         "platform_downloads": {
           "linux-x64": "https://github.com/Belnash3/knowledge-graph/releases/download/v0.2.0/knowledge-graph-0.2.0-noarch.astraplugin",
+          "macos-arm64": "https://github.com/Belnash3/knowledge-graph/releases/download/v0.2.0/knowledge-graph-0.2.0-noarch.astraplugin",
           "noarch": "https://github.com/Belnash3/knowledge-graph/releases/download/v0.2.0/knowledge-graph-0.2.0-noarch.astraplugin",
           "windows-x64": "https://github.com/Belnash3/knowledge-graph/releases/download/v0.2.0/knowledge-graph-0.2.0-noarch.astraplugin"
         },
@@ -2723,6 +2735,7 @@
         "name": "Minecraft for Astra",
         "platform_downloads": {
           "linux-x64": "https://github.com/teletemagame-dev/minecraft-for-astra/releases/download/v0.3.3/minecraft-for-astra-0.3.3-noarch.astraplugin",
+          "macos-arm64": "https://github.com/teletemagame-dev/minecraft-for-astra/releases/download/v0.3.3/minecraft-for-astra-0.3.3-noarch.astraplugin",
           "noarch": "https://github.com/teletemagame-dev/minecraft-for-astra/releases/download/v0.3.3/minecraft-for-astra-0.3.3-noarch.astraplugin",
           "windows-x64": "https://github.com/teletemagame-dev/minecraft-for-astra/releases/download/v0.3.3/minecraft-for-astra-0.3.3-noarch.astraplugin"
         },
@@ -2837,6 +2850,7 @@
         "name": "Music Controller",
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/astra-music/releases/download/v2.5.0/music-controller-2.5.0-noarch.astraplugin",
+          "macos-arm64": "https://github.com/Voltur792/astra-music/releases/download/v2.5.0/music-controller-2.5.0-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/astra-music/releases/download/v2.5.0/music-controller-2.5.0-noarch.astraplugin",
           "windows-x64": "https://github.com/Voltur792/astra-music/releases/download/v2.5.0/music-controller-2.5.0-noarch.astraplugin"
         },
@@ -3336,6 +3350,7 @@
         "name": "Phone Remote",
         "platform_downloads": {
           "linux-x64": "https://github.com/FluffyTaill/astra-remote/releases/download/v0.8.5/phone-remote-0.8.5-noarch.astraplugin",
+          "macos-arm64": "https://github.com/FluffyTaill/astra-remote/releases/download/v0.8.5/phone-remote-0.8.5-noarch.astraplugin",
           "noarch": "https://github.com/FluffyTaill/astra-remote/releases/download/v0.8.5/phone-remote-0.8.5-noarch.astraplugin",
           "windows-x64": "https://github.com/FluffyTaill/astra-remote/releases/download/v0.8.5/phone-remote-0.8.5-noarch.astraplugin"
         },
@@ -3779,6 +3794,7 @@
         "name": "Photo Frame",
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/photo-frame/releases/download/v0.3.0/photo-frame-0.3.0-noarch.astraplugin",
+          "macos-arm64": "https://github.com/Voltur792/photo-frame/releases/download/v0.3.0/photo-frame-0.3.0-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/photo-frame/releases/download/v0.3.0/photo-frame-0.3.0-noarch.astraplugin",
           "windows-x64": "https://github.com/Voltur792/photo-frame/releases/download/v0.3.0/photo-frame-0.3.0-noarch.astraplugin"
         },
@@ -3868,6 +3884,7 @@
         "name": "Pixel Drummer",
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/pixel-drummer/releases/download/v0.6.1/pixel-drummer-0.6.1-noarch.astraplugin",
+          "macos-arm64": "https://github.com/Voltur792/pixel-drummer/releases/download/v0.6.1/pixel-drummer-0.6.1-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/pixel-drummer/releases/download/v0.6.1/pixel-drummer-0.6.1-noarch.astraplugin",
           "windows-x64": "https://github.com/Voltur792/pixel-drummer/releases/download/v0.6.1/pixel-drummer-0.6.1-noarch.astraplugin"
         },
@@ -4167,6 +4184,7 @@
         "name": "Screen Translator",
         "platform_downloads": {
           "linux-x64": "https://github.com/FluffyTaill/astra-screen-translator/releases/download/v0.2.2/screen-translator-0.2.2-noarch.astraplugin",
+          "macos-arm64": "https://github.com/FluffyTaill/astra-screen-translator/releases/download/v0.2.2/screen-translator-0.2.2-noarch.astraplugin",
           "noarch": "https://github.com/FluffyTaill/astra-screen-translator/releases/download/v0.2.2/screen-translator-0.2.2-noarch.astraplugin",
           "windows-x64": "https://github.com/FluffyTaill/astra-screen-translator/releases/download/v0.2.2/screen-translator-0.2.2-noarch.astraplugin"
         },
@@ -4294,6 +4312,7 @@
         "name": "Sea Battle",
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/astra-sea-battle/releases/download/v0.5.1/sea-battle-0.5.1-noarch.astraplugin",
+          "macos-arm64": "https://github.com/Voltur792/astra-sea-battle/releases/download/v0.5.1/sea-battle-0.5.1-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/astra-sea-battle/releases/download/v0.5.1/sea-battle-0.5.1-noarch.astraplugin",
           "windows-x64": "https://github.com/Voltur792/astra-sea-battle/releases/download/v0.5.1/sea-battle-0.5.1-noarch.astraplugin"
         },
@@ -4361,6 +4380,7 @@
         "name": "Sleep Pause Timer",
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/SPT/releases/download/v1.3.2/sleep-pause-timer-1.3.2-noarch.astraplugin",
+          "macos-arm64": "https://github.com/Voltur792/SPT/releases/download/v1.3.2/sleep-pause-timer-1.3.2-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/SPT/releases/download/v1.3.2/sleep-pause-timer-1.3.2-noarch.astraplugin",
           "windows-x64": "https://github.com/Voltur792/SPT/releases/download/v1.3.2/sleep-pause-timer-1.3.2-noarch.astraplugin"
         },
@@ -4621,6 +4641,7 @@
         "name": "Sub Models for Astra",
         "platform_downloads": {
           "linux-x64": "https://github.com/teletemagame-dev/sub-models-for-astra/releases/download/v0.14.0/sub-models-for-astra-0.14.0-noarch.astraplugin",
+          "macos-arm64": "https://github.com/teletemagame-dev/sub-models-for-astra/releases/download/v0.14.0/sub-models-for-astra-0.14.0-noarch.astraplugin",
           "noarch": "https://github.com/teletemagame-dev/sub-models-for-astra/releases/download/v0.14.0/sub-models-for-astra-0.14.0-noarch.astraplugin",
           "windows-x64": "https://github.com/teletemagame-dev/sub-models-for-astra/releases/download/v0.14.0/sub-models-for-astra-0.14.0-noarch.astraplugin"
         },
@@ -4867,6 +4888,7 @@
         "name": "Text Utils",
         "platform_downloads": {
           "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.4/text-utils-0.1.4-noarch.astraplugin",
+          "macos-arm64": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.4/text-utils-0.1.4-noarch.astraplugin",
           "noarch": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.4/text-utils-0.1.4-noarch.astraplugin",
           "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.4/text-utils-0.1.4-noarch.astraplugin"
         },
@@ -5015,6 +5037,7 @@
         "name": "TTS for Fish Audio",
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/tts-for-fish-audio/releases/download/v0.5.0/tts-for-fish-audio-0.5.0-noarch.astraplugin",
+          "macos-arm64": "https://github.com/Voltur792/tts-for-fish-audio/releases/download/v0.5.0/tts-for-fish-audio-0.5.0-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/tts-for-fish-audio/releases/download/v0.5.0/tts-for-fish-audio-0.5.0-noarch.astraplugin",
           "windows-x64": "https://github.com/Voltur792/tts-for-fish-audio/releases/download/v0.5.0/tts-for-fish-audio-0.5.0-noarch.astraplugin"
         },
@@ -5099,6 +5122,7 @@
         "name": "Voice communication-Discord",
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.5/vc-discord-1.4.5-noarch.astraplugin",
+          "macos-arm64": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.5/vc-discord-1.4.5-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.5/vc-discord-1.4.5-noarch.astraplugin",
           "windows-x64": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.5/vc-discord-1.4.5-noarch.astraplugin"
         },
@@ -5220,6 +5244,7 @@
         "name": "Voice Text Input",
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/voice-text-input/releases/download/v1.5.0/voice-text-input-1.5.0-noarch.astraplugin",
+          "macos-arm64": "https://github.com/Voltur792/voice-text-input/releases/download/v1.5.0/voice-text-input-1.5.0-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/voice-text-input/releases/download/v1.5.0/voice-text-input-1.5.0-noarch.astraplugin",
           "windows-x64": "https://github.com/Voltur792/voice-text-input/releases/download/v1.5.0/voice-text-input-1.5.0-noarch.astraplugin"
         },
@@ -5403,6 +5428,7 @@
         "name": "VRM Workshop",
         "platform_downloads": {
           "linux-x64": "https://github.com/megapunk04/vrm-workshop/releases/download/v1.0.0/vrm-workshop-1.0.0-noarch.astraplugin",
+          "macos-arm64": "https://github.com/megapunk04/vrm-workshop/releases/download/v1.0.0/vrm-workshop-1.0.0-noarch.astraplugin",
           "noarch": "https://github.com/megapunk04/vrm-workshop/releases/download/v1.0.0/vrm-workshop-1.0.0-noarch.astraplugin",
           "windows-x64": "https://github.com/megapunk04/vrm-workshop/releases/download/v1.0.0/vrm-workshop-1.0.0-noarch.astraplugin"
         },
@@ -5464,6 +5490,7 @@
         "name": "Wallpaper Engine for Astra",
         "platform_downloads": {
           "linux-x64": "https://github.com/Dtierofficial/astra-wallpaper-engine/releases/download/v1.1.2/wallpaper-engine-1.1.2-noarch.astraplugin",
+          "macos-arm64": "https://github.com/Dtierofficial/astra-wallpaper-engine/releases/download/v1.1.2/wallpaper-engine-1.1.2-noarch.astraplugin",
           "noarch": "https://github.com/Dtierofficial/astra-wallpaper-engine/releases/download/v1.1.2/wallpaper-engine-1.1.2-noarch.astraplugin",
           "windows-x64": "https://github.com/Dtierofficial/astra-wallpaper-engine/releases/download/v1.1.2/wallpaper-engine-1.1.2-noarch.astraplugin"
         },
@@ -5654,6 +5681,7 @@
         "name": "Yandex Smart Home",
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/Y-home-f-astra/releases/download/v0.6.0/yandex-smart-home-0.6.0-noarch.astraplugin",
+          "macos-arm64": "https://github.com/Voltur792/Y-home-f-astra/releases/download/v0.6.0/yandex-smart-home-0.6.0-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/Y-home-f-astra/releases/download/v0.6.0/yandex-smart-home-0.6.0-noarch.astraplugin",
           "windows-x64": "https://github.com/Voltur792/Y-home-f-astra/releases/download/v0.6.0/yandex-smart-home-0.6.0-noarch.astraplugin"
         },

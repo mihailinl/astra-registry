@@ -512,10 +512,12 @@ export async function run() {
     fs.cpSync(path.join(REPO_ROOT, "tests/fixtures/id-collision/plugins/dice-roller"), path.join(dir, "plugins/dice-roller"), { recursive: true });
     const vf = path.join(dir, "plugins/dice-roller/versions/1.0.0.json");
     const v = JSON.parse(fs.readFileSync(vf, "utf8"));
-    v.artifacts["macos-arm64"] = { ...v.artifacts["linux-x64"] };
-    v.artifacts["macos-arm64"].url = v.artifacts["macos-arm64"].url.replace("linux-x64", "macos-arm64");
-    v.artifacts["macos-arm64"].filename = v.artifacts["macos-arm64"].filename.replace("linux-x64", "macos-arm64");
-    v.artifacts["macos-arm64"].sha256 = "2".repeat(64);
+    // An Intel Mac: Astra ships a daemon for Apple silicon (`macos-arm64`,
+    // supported since 2026-11-10) and none for this.
+    v.artifacts["macos-x64"] = { ...v.artifacts["linux-x64"] };
+    v.artifacts["macos-x64"].url = v.artifacts["macos-x64"].url.replace("linux-x64", "macos-x64");
+    v.artifacts["macos-x64"].filename = v.artifacts["macos-x64"].filename.replace("linux-x64", "macos-x64");
+    v.artifacts["macos-x64"].sha256 = "2".repeat(64);
     fs.writeFileSync(vf, stableStringify(v));
     const { report } = await validateTree(dir);
     assert(errorsMatching(report, "reserved key with no host").length === 1,
@@ -592,7 +594,8 @@ export async function run() {
     //       {os, arch} pair per key
     //   E_PLATFORM_UNSUPPORTED's remedy (bot/lib/codes.mjs, and generated from
     //       it into tools/codes-table.json and the token file)   NAMES
-    //       SUPPORTED_KEYS, and "macOS and arm64 names" describes RESERVED_KEYS
+    //       SUPPORTED_KEYS, and "Intel Mac and arm64 Linux and Windows names"
+    //       describes RESERVED_KEYS
     //
     // Measured on main (70df193) before this: widening or narrowing the index
     // schema's enum, and adding a pair to the manifest table, left every check
@@ -678,11 +681,14 @@ export async function run() {
     const named = [...remedy.matchAll(/`([^`]+)`/g)].map((m) => m[1]).filter(isKeyShaped);
     assertEqual(sorted(named), sorted(SUPPORTED_KEYS),
       "E_PLATFORM_UNSUPPORTED's remedy tells an author the hosts that exist, and they are not tools/lib/platform.mjs's SUPPORTED_KEYS");
-    assert(/macOS and arm64 names are reserved/.test(remedy),
+    assert(/Intel Mac and arm64 Linux and Windows names are reserved/.test(remedy),
       "E_PLATFORM_UNSUPPORTED's remedy no longer says which names are reserved; this check holds the sentence it had");
-    const described = (k) => k.startsWith("macos-") || k.endsWith("-arm64");
+    // "Intel Mac" is `macos-x64`; "arm64 Linux and Windows" is `linux-arm64` and
+    // `windows-arm64`. Since 2026-11-10 `macos-arm64` is a host, so the sentence
+    // is no longer "macOS and arm64" and this predicate is no longer a prefix.
+    const described = (k) => k === "macos-x64" || /^(linux|windows)-arm64$/.test(k);
     assertEqual([...RESERVED_KEYS.filter((k) => !described(k)), ...SUPPORTED_KEYS.filter(described)].join(" "), "",
-      "\"macOS and arm64 names are reserved\" (E_PLATFORM_UNSUPPORTED's remedy) no longer describes RESERVED_KEYS");
+      "\"Intel Mac and arm64 Linux and Windows names are reserved\" (E_PLATFORM_UNSUPPORTED's remedy) no longer describes RESERVED_KEYS");
   });
 
 

@@ -7566,7 +7566,7 @@
       "fix": "new_tag",
       "panel_only": false,
       "title": "Astra ships no daemon for that platform",
-      "remedy": "`linux-x64`, `windows-x64` and `noarch` are the hosts that exist. macOS and arm64 names are reserved and unusable."
+      "remedy": "`linux-x64`, `windows-x64`, `macos-arm64` and `noarch` are the hosts that exist. Intel Mac and arm64 Linux and Windows names are reserved and unusable."
     },
     {
       "code": "E_PLUGIN_TOML_MISSING",

@@ -588,14 +588,28 @@ arch = ["x86_64"]
         assert!(out.findings[0].message.contains("99.0.0"));
     }
 
-    /// A macOS or arm64 bundle has no host: Astra's release workflow builds no
-    /// daemon for either, so listing it would publish a file nobody can run.
+    /// An Intel Mac or arm64 Linux/Windows bundle has no host: Astra's release
+    /// workflow builds no daemon for those, so listing it would publish a file
+    /// nobody can run. (`GOOD` is `x86_64`, so `macos` here is an Intel Mac.)
     #[test]
     fn a_platform_with_no_astra_daemon_is_refused() {
         let toml = GOOD.replace(r#"os = ["linux"]"#, r#"os = ["macos"]"#);
         let out = probe(&req(&toml));
         assert!(!out.ok);
         assert_eq!(codes(&out), vec!["E_PLATFORM_UNSUPPORTED"]);
+    }
+
+    /// A Mac on Apple silicon is a host since 2026-11-10, and the key is the
+    /// crate's, so it is the one `tools/lib/platform.mjs` supports and the one
+    /// the daemon looks the download up under.
+    #[test]
+    fn an_apple_silicon_bundle_gets_the_macos_arm64_key() {
+        let toml = GOOD
+            .replace(r#"os = ["linux"]"#, r#"os = ["macos"]"#)
+            .replace(r#"arch = ["x86_64"]"#, r#"arch = ["aarch64"]"#);
+        let out = probe(&req(&toml));
+        assert!(out.ok, "{:?}", out.findings);
+        assert_eq!(out.manifest.expect("facts").platform_key.as_deref(), Some("macos-arm64"));
     }
 
     /// `noarch` is the interpreted-language case and it is not an error: the

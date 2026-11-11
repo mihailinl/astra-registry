@@ -121,11 +121,11 @@
       "type": "object",
       "minProperties": 1,
       "maxProperties": 8,
-      "description": "Platform key -> artifact. The keys are byte-identical to the CLI's --target strings (AstraPlugins astra-plugin-cli, task 2.1) and to the daemon's platform key (Astra registry_client.rs), so nothing has to agree twice. macos-* and *-arm64 are reserved names: Astra ships no daemon for them, so an artifact under those keys would have no host.",
+      "description": "Platform key -> artifact. The keys are byte-identical to the CLI's --target strings (AstraPlugins astra-plugin-cli, task 2.1) and to the daemon's platform key (Astra registry_client.rs), so nothing has to agree twice. linux-arm64, windows-arm64 and macos-x64 are reserved names: Astra ships no daemon for them, so an artifact under those keys would have no host. macos-arm64 is a host since 2026-11-10.",
       "propertyNames": {
         "enum": [
-          "linux-x64", "windows-x64", "noarch",
-          "linux-arm64", "windows-arm64", "macos-x64", "macos-arm64"
+          "linux-x64", "windows-x64", "macos-arm64", "noarch",
+          "linux-arm64", "windows-arm64", "macos-x64"
         ]
       },
       "additionalProperties": { "$ref": "#/$defs/artifact" }

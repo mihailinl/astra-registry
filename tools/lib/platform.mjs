@@ -1,6 +1,6 @@
 // The platform vocabulary, in one place.
 //
-// The same three strings have to mean the same thing in four programs: the
+// The same four strings have to mean the same thing in four programs: the
 // CLI's `--target` (AstraPlugins astra-plugin-cli), the bundle's
 // `MANIFEST.platform` (an {os, arch} pair, not a key), this registry's artifact
 // keys, and the daemon's platform lookup (Astra registry_client.rs). Nothing in
@@ -9,14 +9,19 @@
 // conversion that FAILS on anything not in it rather than falling through to a
 // plausible-looking default.
 
-export const SUPPORTED_KEYS = ["linux-x64", "windows-x64", "noarch"];
+// `macos-arm64` since 2026-11-10: Astra main carries the crate's mapping for
+// it (`platform_key_for("macos", "aarch64")`) and AstraPlugins' CLI builds for
+// it, so a Mac on Apple silicon is a host — and until this list said so, every
+// noarch plugin had no download for it and every Mac install was refused.
+export const SUPPORTED_KEYS = ["linux-x64", "windows-x64", "macos-arm64", "noarch"];
 
 // Reserved in the schema so nobody else claims the names, refused in practice:
-// Astra's release workflow ships no daemon for these hosts. `tools/validate.mjs`
+// Astra's release workflow ships no daemon for these hosts (Intel Macs, and
+// arm64 Linux and Windows). `tools/validate.mjs`
 // refuses an artifact under one of them by reading this list, and knows the
 // vocabulary as SUPPORTED_KEYS and this together; until 2026-09-22 it kept two
 // literals of its own and nothing at run time read this one.
-export const RESERVED_KEYS = ["linux-arm64", "windows-arm64", "macos-x64", "macos-arm64"];
+export const RESERVED_KEYS = ["linux-arm64", "windows-arm64", "macos-x64"];
 
 const FROM_MANIFEST = new Map([
   ["linux/x86_64", "linux-x64"],
