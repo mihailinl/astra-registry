@@ -131,23 +131,33 @@ on:
 
 permissions: {}
 
-# One group for the whole workflow, and no group on any job (BOT-5).
+# No workflow-level group (BOT-5 as of fix No. 2). Only `commit` is serialised.
 #
-# `cancel-in-progress: false` matters more here than in the ingest graph: a
-# cancelled run that had already pushed a release commit and not yet posted its
-# result leaves a decision applied on `main` and unsettled at the service, and
-# the next run re-posts it under BOT-82's key — which is fine — but a run
-# cancelled mid-push leaves nothing at all, and the hold it was releasing waits
-# another ten minutes. Never killing a started run is what keeps that to ten
-# minutes rather than to an operator noticing.
-concurrency:
-  # Renamed 2026-10-30 (was `registry-moderation`): after GitHub's 14:31Z incident a run's environment job sat
-  # `waiting` with no reviewer and no timer, and GitHub refused cancel, force-cancel and delete,
-  # so the orphan held this group for good and every later run queued behind it. A new name is
-  # the only way past a run GitHub will not end; BOT-5's rule (one workflow-level group,
-  # cancel-in-progress: false) is unchanged.
-  group: registry-moderation-2
-  cancel-in-progress: false
+# Until fix No. 2 one group held the whole run. On 2026-10-30 a run's
+# environment job sat `waiting` with no runner and no timer, GitHub refused to
+# cancel or delete it, and the group had to be renamed (`registry-moderation`
+# → `registry-moderation-2`) before anything could run again.
+#
+# Now only `commit`, the job with `contents: write`, is in a group, and the
+# group QUEUES (`queue: max`: up to 100 waiting, first in first out), so a
+# third `commit` waits instead of cancelling the second. Nothing that has
+# started is ever cancelled (`cancel-in-progress: false`), which is what the
+# old rule protected: a run cancelled mid-push leaves the hold it was releasing
+# waiting another ten minutes. Everything else runs outside any group, so a
+# job that hangs blocks only its own run.
+#
+# Two runs can now overlap, and both may list the same decision. `commit` is
+# idempotent by `service_decision_id` and by the settled record, and a push
+# that `main` moved under re-runs the compile against the new `main` (the
+# `apply` step), so the second run commits nothing for work the first landed
+# and `report` re-posts under BOT-82's key. What an overlap can cost is a
+# second `alert` for the same decision: MOD-8 alerts before every push that
+# could carry it. In the 200 runs to 2026-11-11, 3 were dispatched while the
+# run before them was still going.
+#
+# A hung `commit` would hold the group, so its name carries
+# `vars.ASTRA_BOT_WRITER_EPOCH`: changing that repository variable moves later
+# runs to a fresh group with no edit to this file (TRUST-31's set).
 
 # Committed "false" since B-T5.1 (2026-10-14), as `plugins-ingest.yml`'s was
 # by B-T3.6 the day before. It was "true" through R3 and read by no step, so
@@ -359,6 +369,12 @@ jobs:
     if: always() && !cancelled()
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # The one serialised job of this workflow (BOT-5); the comment above
+    # `env:` says why it is this one and why the group queues.
+    concurrency:
+      group: plugins-moderation-commit-${{ vars.ASTRA_BOT_WRITER_EPOCH || '0' }}
+      cancel-in-progress: false
+      queue: max
     permissions:
       contents: write
       id-token: none

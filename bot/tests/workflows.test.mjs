@@ -157,23 +157,19 @@ test("the publish path asks ids.mjs, wherever it lives", () => {
 
 // B-T0.3. The `publish` job had `concurrency: { group: registry-publish }`,
 // which serialised commits and in exchange let a stranger's release ping
-// replace another author's PENDING publish — GitHub keeps one pending run per
-// group. Racing publishes are handled in `publish-apply.mjs` now; a group here
-// would bring the hazard back with nothing saying so.
-test("the publish job serialises nothing", () => {
-  // Asked of `plugins-ingest.yml` since cutover commit E deleted `ingest.yml`,
-  // whose publish job it was written for; the hazard is the same one.
-  const lines = read("plugins-ingest.yml").split("\n");
-  const at = lines.findIndex((l) => /^  publish:/.test(l));
-  assert.ok(at >= 0, "plugins-ingest.yml has no publish job");
-  let end = at + 1;
-  while (end < lines.length && !/^  \S/.test(lines[end])) end++;
-  const offenders = lines
-    .slice(at, end)
-    .map((l, i) => [l, at + i + 1])
-    .filter(([l]) => /^\s+concurrency:/.test(l))
-    .map(([, n]) => `plugins-ingest.yml:${n}`);
-  assert.equal(offenders.join(", "), "", "the publish job is in a concurrency group again");
+// replace another author's PENDING publish — GitHub kept one pending job per
+// group. Racing publishes are handled in `publish-apply.mjs`, and since fix
+// No. 2 the job is in a group again, one that QUEUES (`queue: max`, GitHub
+// since 2026-05-07: up to 100 waiting, first in first out), so a third publish
+// waits behind the second instead of cancelling it. The group without the
+// queue is the B-T0.3 hazard, and this is red on it; the full rule for every
+// job of both bot workflows is the BOT-5 test below.
+test("the publish job's group queues, so no pending publish is dropped", () => {
+  const job = allJobs().find((j) => j.file === "plugins-ingest.yml" && j.job === "publish");
+  assert.ok(job, "plugins-ingest.yml has no publish job");
+  const group = jobGroup(job);
+  assert.ok(group, "the publish job is in no concurrency group: two pushes to main could run at once (BOT-5)");
+  assert.equal(group.queue, "max", "the publish job's group keeps one pending job, so a third publish cancels the second (B-T0.3)");
 });
 
 // B-T1.5 (BOT-7). `ingest.yml`'s first job compares the published root.json
@@ -2358,6 +2354,24 @@ const INGEST = "plugins-ingest.yml";
 const mintsToken = (job) => code(job).some((l) => /^\s+id-token:\s*write\s*$/.test(l));
 /** Does this job declare `contents: write`? */
 const writesRepo = (job) => code(job).some((l) => /^\s+contents:\s*write\s*(#.*)?$/.test(l));
+
+/** A job's own `concurrency:` block: { group, cancel, queue }, or null. Line-oriented, comments ignored. */
+function jobGroup(job) {
+  const lines = code(job);
+  const i = lines.findIndex((l) => /^ {4}concurrency:/.test(l));
+  if (i < 0) return null;
+  const out = { group: null, cancel: null, queue: null };
+  const inline = /^ {4}concurrency:\s*(\S.*)$/.exec(lines[i]);
+  if (inline) out.group = inline[1].trim();
+  for (let k = i + 1; k < lines.length && /^ {6}\S/.test(lines[k]); k++) {
+    const m = /^ {6}([a-z-]+):\s*(.*?)\s*$/.exec(lines[k]);
+    if (!m) continue;
+    if (m[1] === "group") out.group = m[2];
+    if (m[1] === "cancel-in-progress") out.cancel = m[2];
+    if (m[1] === "queue") out.queue = m[2];
+  }
+  return out;
+}
 /** Does this job name the plugins-service environment, anywhere? */
 const namesService = (job) => code(job).some((l) => l.includes("plugins-service"));
 
@@ -2576,23 +2590,37 @@ test("every job in environment `bot-state` holds the memory key and nothing else
 });
 
 // BOT-4 and BOT-5. Two lints, one test, because they fail the same way: a
-// dispatch that can be aimed, and a job group that can drop a pending run.
+// dispatch that can be aimed, and a group that can drop or block a run.
 //
 // **Inputs.** A dispatch of a token-holding workflow may mean exactly one
 // thing, "pull now". An input is how it comes to mean "pull THIS release, for
 // THIS account" — and whoever may dispatch then chooses whose authority the
 // run re-proves. `ingest.yml` had exactly that shape and B-T0.6 removed it.
 //
-// **Job-level concurrency.** GitHub keeps one PENDING run per group and
-// cancels the middle one when a third queues. On a workflow-level group that
-// is harmless: a run that has not started has claimed nothing. On a JOB-level
-// group inside a run that has already claimed leases, it is not — those
-// submissions are then leased to a run that will never report, and they wait
-// out the lease before anybody can have them.
-test("a bot workflow takes no dispatch input and puts no job in its own group", () => {
+// **Concurrency, since fix No. 2.** Until then the rule was one workflow-level
+// group with `cancel-in-progress: false` and none on a job, and it failed the
+// other way round: a run whose job never got a runner held the group, and so
+// every later run, for ever (2026-10-30, when GitHub would not cancel the run
+// and both groups were renamed; `Moderation coverage` for five days from
+// 2026-11-05). So now:
+//
+//   * no workflow-level group — a job that hangs blocks only its own run;
+//   * a job is in a group EXACTLY when it holds `contents: write`, the push to
+//     `main`. Computed, not listed: a job that gains a write gains the lock in
+//     the same edit, and a reader put in the writers' group is red here,
+//     because one hung reader would then stop every publication;
+//   * that group never cancels (`cancel-in-progress: false`) and QUEUES
+//     (`queue: max`), so a third writer waits instead of cancelling the
+//     second, whose run has already claimed — the hazard the old rule existed
+//     to keep before the claim;
+//   * its name carries `vars.ASTRA_BOT_WRITER_EPOCH`, the way past a writer
+//     GitHub will not end, without an edit inside TRUST-31's set.
+test("a bot workflow takes no dispatch input, and only its writers are serialised, in a group that queues", () => {
   const present = botWorkflows();
   assert.ok(present.length >= 1, "no bot workflow is on disk; this rule has no subject");
   const problems = [];
+  const names = new Map();
+  let writers = 0;
   for (const file of present) {
     const lines = read(file).split("\n");
 
@@ -2614,26 +2642,44 @@ test("a bot workflow takes no dispatch input and puts no job in its own group", 
       if (line >= 0) problems.push(`${file}:${line + 1} declares ${trigger}, which BOT-4 refuses in a bot workflow`);
     }
 
-    for (const job of allJobs().filter((j) => j.file === file)) {
-      code(job).forEach((l, i) => {
-        if (/^\s+concurrency:/.test(l)) {
-          problems.push(
-            `${file}:${job.line + i} (job ${job.job}) is in a concurrency group of its own. BOT-5: one group ` +
-            `for the workflow, cancel-in-progress: false, and none on a job — a cancelled job inside a run ` +
-            `that already claimed leaves those leases to expire`,
-          );
-        }
-      });
+    const top = lines.findIndex((l) => /^concurrency:/.test(l));
+    if (top >= 0) {
+      problems.push(
+        `${file}:${top + 1} declares a workflow-level concurrency group. BOT-5: a run whose job never gets a ` +
+        `runner then holds every later run for ever; only the writer jobs are serialised`,
+      );
     }
 
-    const src = read(file);
-    const workflowGroup = /^concurrency:\n(?:\s+#.*\n)*\s+group:\s*\S+/m.test(src);
-    if (!workflowGroup) problems.push(`${file} declares no workflow-level concurrency group (BOT-5)`);
-    if (!/^\s{2}cancel-in-progress:\s*false\s*$/m.test(src)) {
-      problems.push(`${file}'s workflow-level group is not cancel-in-progress: false (BOT-5)`);
+    for (const job of allJobs().filter((j) => j.file === file)) {
+      const group = jobGroup(job);
+      const writes = writesRepo(job);
+      if (writes) writers++;
+      if (!writes && group) {
+        problems.push(
+          `${where(job)} is in concurrency group ${group.group} and holds no \`contents: write\`. BOT-5: a job that ` +
+          `writes nothing shared needs no lock, and in the writers' group one hung run of it stops every push`,
+        );
+      }
+      if (writes && !group) {
+        problems.push(`${where(job)} holds \`contents: write\` and is in no concurrency group: two runs could push at once (BOT-5)`);
+      }
+      if (!group) continue;
+      if (group.cancel !== "false") {
+        problems.push(`${where(job)}'s group does not say \`cancel-in-progress: false\`; a newer run could kill a push mid-way (BOT-5)`);
+      }
+      if (group.queue !== "max") {
+        problems.push(`${where(job)}'s group does not say \`queue: max\`; GitHub then keeps one pending job and a third cancels the second, after its claim (BOT-5)`);
+      }
+      if (!/\$\{\{\s*vars\.ASTRA_BOT_WRITER_EPOCH\s*\|\|\s*'0'\s*\}\}$/.test(group.group)) {
+        problems.push(`${where(job)}'s group ${group.group} does not end in the writer epoch, so a writer GitHub will not end could only be passed by an edit inside TRUST-31's set`);
+      }
+      const stem = group.group.replace(/\$\{\{.*$/, "");
+      if (names.has(stem)) problems.push(`${where(job)} shares group ${stem} with ${names.get(stem)}`);
+      names.set(stem, where(job));
     }
   }
-  assert.equal(problems.join("\n"), "", "a bot workflow can be aimed, or can drop a run that already claimed");
+  assert.ok(writers >= 2, `only ${writers} writer job(s) found; publish and commit both hold contents: write`);
+  assert.equal(problems.join("\n"), "", "a bot workflow can be aimed, or one run can block or drop another");
 });
 
 // BOT-56. A bot job holding a bot OIDC token or `contents: write` restores no

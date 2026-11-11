@@ -145,22 +145,43 @@ on:
 # later is a visible edit and not an omission.
 permissions: {}
 
-# One group for the whole workflow, and no group on any job (BOT-5).
+# No workflow-level group (BOT-5 as of fix No. 2). Only `publish` is serialised.
 #
-# GitHub keeps exactly one PENDING run per group: queue a third and the middle
-# one is cancelled. With `cancel-in-progress: false` a run that has already
-# started is never killed, which is what matters here — a cancelled run that
-# had already claimed leaves those submissions leased to nobody until the lease
-# expires. Replacing a run that has not started yet is harmless, because it has
-# claimed nothing.
-concurrency:
-  # Renamed 2026-10-30 (was `plugins-ingest`): after GitHub's 14:31Z incident a run's environment job sat
-  # `waiting` with no reviewer and no timer, and GitHub refused cancel, force-cancel and delete,
-  # so the orphan held this group for good and every later run queued behind it. A new name is
-  # the only way past a run GitHub will not end; BOT-5's rule (one workflow-level group,
-  # cancel-in-progress: false) is unchanged.
-  group: plugins-ingest-2
-  cancel-in-progress: false
+# Until fix No. 2 one group held the whole run, from `roots` to `report`. A run
+# whose job never got a runner therefore held every later run for ever:
+# `timeout-minutes` counts only once a job is on a runner, and on 2026-10-30
+# GitHub refused cancel, force-cancel and delete for such a run, so the group
+# had to be renamed (`plugins-ingest` → `plugins-ingest-2`) to get past it. On
+# 2026-11-05 the same shape held `Moderation coverage` for five days.
+#
+# Now only the job that WRITES shared state, `publish` (`contents: write`, the
+# one push to `main`), is in a group, and that group QUEUES (`queue: max`: up to
+# 100 waiting, first in first out) rather than keeping one pending job and
+# cancelling the one before it. Everything else in this file runs outside any
+# group, so a job that hangs blocks only its own run, and the next run's jobs
+# go past it. Why nothing else needs the lock:
+#
+#   * `claim` cannot hand two runs the same submission: BOT-12 makes the service
+#     hold at most one live lease per submission, under concurrent claims too;
+#   * `report` posts a result the service keys and settles itself (BOT-17,
+#     BOT-18), and BOT-6 orders it after its own run's `publish`, not after
+#     anybody else's;
+#   * `remember` saves the poll memory under this run's own cache key. Two
+#     overlapping runs can each load the same memory, and the later save then
+#     drops the earlier run's registered tags; the next poll offers them again
+#     and the service answers a repeated `register` as the same tag (BOT-11).
+#     A lock on `remember` alone would not close that, since it is `load` to
+#     `remember` that races, and it would make one hung `remember` stop every
+#     publication;
+#   * the alert jobs send messages; two of them never corrupt anything.
+#
+# A run that hangs after `claim` holds its leases only until they expire; the
+# service then returns each submission to the state it was claimed from and
+# leases it again (FLOW-19, BOT-15). And a hung `publish` would hold the
+# publish group, so the group's name carries `vars.ASTRA_BOT_WRITER_EPOCH`:
+# changing that repository variable moves every later run to a fresh group with
+# no edit to this file, which is inside TRUST-31's set. A name is all it
+# changes; `publish-apply.mjs` still refuses a racing push it cannot prove safe.
 
 # Committed as `"true"` through R3's shadow, and read by every job that could
 # write or post. B-T3.6's commit (2026-10-13) turns it off, and the job_workflow_sha
@@ -1108,6 +1129,13 @@ jobs:
       needs.decide.result == 'success' && needs.decide.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # The one serialised job of this workflow (BOT-5): two pushes to `main`
+    # never run at once, and a third waits in line instead of cancelling the
+    # second, whose run has already claimed. The comment above `env:` says why.
+    concurrency:
+      group: plugins-ingest-publish-${{ vars.ASTRA_BOT_WRITER_EPOCH || '0' }}
+      cancel-in-progress: false
+      queue: max
     permissions:
       contents: write
       id-token: none
