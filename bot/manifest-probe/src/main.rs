@@ -37,7 +37,8 @@
 use std::io::Read;
 
 use astra_plugin_manifest::{
-    CAPABILITY_NAMES, PERMISSION_NAMES, PluginManifest, is_reserved_device_name, platform_key_for,
+    CAPABILITY_NAMES, PERMISSION_NAMES, PluginManifest, check_reserved_keys, is_reserved_device_name,
+    platform_key_for,
 };
 use serde::{Deserialize, Serialize};
 
@@ -165,12 +166,11 @@ fn probe(request: &Request) -> Response {
 
     // ── `kind` and `requires`: reserved, and asked first ────────────────────
     //
-    // The crate at the pin parses a manifest that says `kind =
-    // "game-integration"` as a plugin and says nothing, because its top level
-    // is permissive by design (manifest.rs, `PluginManifest`). So the question
-    // is asked here, of the text, before the crate's answer can make it moot.
-    // An item of another kind is not shaped like a plugin either, and its
-    // author needs to hear about the kind rather than about a missing `[entry]`.
+    // The crate decides (`check_reserved_keys`, which `PluginManifest::from_str`
+    // also runs), but it is asked here, of the text, before parsing: an item of
+    // another kind is not shaped like a plugin, and its author needs to hear
+    // about the kind rather than about a missing `[entry]`, in a sentence with
+    // this registry as its subject rather than "this version of Astra".
     if let Some(refusal) = reserved_item_keys(&request.plugin_toml) {
         return Response {
             schema: RESULT_SCHEMA,
@@ -345,48 +345,30 @@ fn probe(request: &Request) -> Response {
 
 /// `kind` and `requires`, reserved and failing closed (contract 3.14.0).
 ///
-/// **The same rule as Astra's own `check_reserved_keys`** in
-/// `astra-rs/astra-plugin-manifest/src/manifest.rs`, so that the registry
-/// refuses exactly what Astra refuses, in the same order and with the same
-/// sentences, the subject changed from "this version of Astra" to "this
-/// registry":
+/// **Astra's own rule, called, not copied**: `check_reserved_keys` in
+/// `astra-plugin-manifest` (re-vendored by AstraPlugins, and at the pin since
+/// `5286768`) decides, so the registry refuses exactly what Astra refuses and in
+/// the same order — `kind` first. Only the sentences are the registry's, the
+/// subject changed from "this version of Astra" to "this registry"; a `kind`
+/// that is not a string keeps the crate's own sentence, which has no subject.
 ///
-///   * `kind` absent or the string `"plugin"` passes; another string is "this
-///     item is a <kind>", and anything that is not a string is refused by type;
-///   * `requires` absent, an empty array, an empty table or a string that is
-///     empty after trimming passes; anything else is refused;
-///   * both keys are top-level keys, and `kind` is asked first.
-///
-/// It is a copy only until the pin reaches a crate that has the function:
-/// `the_reservation_is_a_copy_only_until_the_pinned_crate_has_its_own` goes red
-/// on that bump. A file that is not TOML is not judged here; the crate names
-/// that below, exactly as it did before the reservation.
+/// Until 2026-11-10 this was a copy of the rule, kept because the crate at the
+/// pin did not have it yet, with a test that went red on the bump that brought
+/// it. That bump is this one. A file that is not TOML is not judged here; the
+/// crate names that below, exactly as it did before the reservation.
 fn reserved_item_keys(plugin_toml: &str) -> Option<Finding> {
     let top = plugin_toml.parse::<toml::Table>().ok()?;
-    let refuse = |message: String| Some(Finding::error("E_KIND_UNSUPPORTED", message));
-    match top.get("kind") {
-        None => {}
-        Some(toml::Value::String(k)) if k == "plugin" => {}
-        Some(toml::Value::String(k)) => {
-            return refuse(format!("this item is a {k}; this registry lists plugins only for now."));
-        }
-        Some(other) => {
-            return refuse(format!("`kind` must be a string such as \"plugin\", not {}", other.type_str()));
-        }
-    }
-    let empty = match top.get("requires") {
-        None => true,
-        Some(toml::Value::Array(a)) => a.is_empty(),
-        Some(toml::Value::Table(t)) => t.is_empty(),
-        Some(toml::Value::String(s)) => s.trim().is_empty(),
-        Some(_) => false,
+    let kind = top.get("kind");
+    let refusal = check_reserved_keys(kind, top.get("requires")).err()?;
+    let message = if check_reserved_keys(kind, None).is_ok() {
+        // `kind` passed on its own, so it was `requires` that was refused.
+        "this item requires other items, and this registry cannot list dependencies yet.".to_string()
+    } else if let Some(toml::Value::String(k)) = kind {
+        format!("this item is a {k}; this registry lists plugins only for now.")
+    } else {
+        refusal.to_string()
     };
-    if !empty {
-        return refuse(
-            "this item requires other items, and this registry cannot list dependencies yet.".to_string(),
-        );
-    }
-    None
+    Some(Finding::error("E_KIND_UNSUPPORTED", message))
 }
 
 /// The crate's prose, mapped onto a code the docs describe and a stranger can
@@ -650,15 +632,21 @@ arch = ["x86_64"]
     const REQUIRES_REFUSED: &str =
         "this item requires other items, and this registry cannot list dependencies yet.";
 
-    /// The reason the key is reserved and not merely documented: the crate at
-    /// the pin parses this manifest as a plugin and says nothing about `kind`,
-    /// so without the probe's question it would be listed as one.
+    /// The crate at the pin refuses this too (`check_reserved_keys`), and the
+    /// probe asks first only so the author reads the registry's sentence, not
+    /// Astra's "this version of Astra installs plugins only". Until `5286768`
+    /// the crate parsed it as a plugin and said nothing about `kind`.
     #[test]
     fn a_kind_other_than_plugin_is_refused_by_name() {
         let toml = top(r#"kind = "game-integration""#);
+        let crate_says = PluginManifest::from_str(&toml)
+            .err()
+            .map(|e| e.chain().map(|c| c.to_string()).collect::<Vec<_>>().join(": "))
+            .unwrap_or_default();
         assert!(
-            PluginManifest::from_str(&toml).is_ok(),
-            "the crate at the pin accepts this, which is why the probe has to ask: {toml}"
+            crate_says.contains("this item is a game-integration"),
+            "the crate at the pin no longer refuses this by its kind, so the probe and Astra \
+             disagree about it: {crate_says:?}\n{toml}"
         );
         assert_eq!(refusal(&toml), KIND_REFUSED);
         for kind in ["Plugin", "plugin ", "", "plugins"] {
@@ -765,28 +753,32 @@ game = { steam_appid = 3527290, product = "PEAK" }
         assert_eq!(codes(&probe(&req(&broken))), vec!["E_MANIFEST_INVALID"]);
     }
 
-    /// The copy above is a copy of a function the pinned crate does not have
-    /// yet. The bump that brings it (Astra's `check_reserved_keys`, re-vendored
-    /// by AstraPlugins) is the moment to stop copying: call the crate's
-    /// function over the cases above and assert it agrees, then delete this
-    /// test. Until then a copy that outlived its reason would go on judging
-    /// manifests next to the definition it was copied from, unnoticed.
+    /// The probe's answer is the crate's answer over every reserved-key case
+    /// the tests above use: refused exactly when `check_reserved_keys` refuses,
+    /// with the crate's sentence where the registry keeps it.
     #[test]
-    fn the_reservation_is_a_copy_only_until_the_pinned_crate_has_its_own() {
-        let (pin, text) = pinned_file(
-            "astra-plugin-cli/vendor/astra-plugin-manifest/src/manifest.rs",
-            "the probe's reserved-key copy and the crate's own check",
-        );
-        assert!(
-            text.contains("pub struct PluginManifest"),
-            "{pin}'s manifest.rs does not define PluginManifest, so this read the wrong file"
-        );
-        assert!(
-            !text.contains("fn check_reserved_keys"),
-            "the crate at {pin} has its own `check_reserved_keys`. Make the probe's copy agree with it \
-             by calling it over the reserved-key cases, keep only the registry's sentences here, and \
-             delete this test."
-        );
+    fn the_reservation_is_the_crates_and_only_the_words_are_the_registrys() {
+        for lines in [
+            "", r#"kind = "plugin""#, r#"kind = "game-integration""#, r#"kind = "Plugin""#,
+            r#"kind = """#, "kind = 1", "kind = []", "requires = []", "requires = {}",
+            r#"requires = "  ""#, r#"requires = ["x"]"#, r#"requires = { x = "1" }"#, "requires = 0",
+            r#"kind = "plugin"
+requires = ["x"]"#,
+            r#"kind = 1
+requires = ["x"]"#,
+        ] {
+            let toml = top(lines);
+            let t = toml.parse::<toml::Table>().expect("fixture is TOML");
+            let crate_says = check_reserved_keys(t.get("kind"), t.get("requires")).err();
+            let ours = reserved_item_keys(&toml);
+            assert_eq!(crate_says.is_some(), ours.is_some(), "{lines:?}: {crate_says:?} vs {ours:?}");
+            if let (Some(c), Some(o)) = (crate_says, ours) {
+                assert_eq!(o.code, "E_KIND_UNSUPPORTED");
+                if !matches!(t.get("kind"), None | Some(toml::Value::String(_))) {
+                    assert_eq!(o.message, c.to_string(), "a non-string kind keeps the crate's words");
+                }
+            }
+        }
     }
 
     /// The sections the CLI's fork silently dropped. If any of them stops
