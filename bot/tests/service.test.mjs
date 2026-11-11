@@ -3520,6 +3520,27 @@ test("claim: at most three leases, each held to §4.3's grammar; the answer's sh
   }
 });
 
+test("claim: `answered` says what the service SAID — shadow, live, or none when there was no answer (registry fix No. 2)", async () => {
+  // poll-run.mjs counts `shadow` runs in a row and pages the owner at three;
+  // `none` must not count, because "no answer" pages through its own wait code
+  // and is nothing the owner's acknowledgement could end.
+  const cases = [
+    [() => ok({ schema: "astra.plugins.bot-leases/1", shadow: true, leases: [lease()] }), "shadow"],
+    [() => ok({ schema: "astra.plugins.bot-leases/1", shadow: false, leases: [lease()] }), "live"],
+    [() => ok({ schema: "astra.plugins.bot-leases/1", shadow: false, leases: [] }), "live"],
+    [() => refusal("unavailable"), "none"],
+  ];
+  for (const [answer, want] of cases) {
+    const s = await stub(answer);
+    try {
+      const out = await claimJob({ client: client(s), log: { log: () => {}, error: () => {} } });
+      assert.equal(out.answered, want);
+    } finally {
+      await s.close();
+    }
+  }
+});
+
 test("claim: an answer with no `shadow` is read as shadow and alerts (BOT-92; B-T3.6's canary)", async () => {
   const s = await stub(() => ok({ schema: "astra.plugins.bot-leases/1", leases: [lease()] }));
   try {

@@ -388,6 +388,9 @@ export const BOT_87_CODES = Object.freeze({
   sweepFailed: "BOT_87_SWEEP_FAILED",
 });
 
+/** Registry fix No. 2: the service answered `claim` in shadow `SHADOW_RUNS_ALARM` runs in a row (poll-run.mjs). */
+export const SHADOW_RUNS_CODE = "BOT_92_SHADOW_RUNS";
+
 /**
  * The decision states after which a tag's story is over (BOT-19).
  *
@@ -603,6 +606,12 @@ export function memoryProblem(m) {
     if (!Array.isArray(row.registered) || !row.registered.every(isUsableTag)) return `repos.${k}.registered is not a list of tags`;
     const dp = deferredProblem(row.deferred);
     if (dp) return `repos.${k}.deferred is not a waiting set: ${dp}`;
+  }
+  if (m.shadow !== undefined) {
+    const h = m.shadow;
+    if (!h || typeof h !== "object" || !Number.isSafeInteger(h.runs) || h.runs < 1 || !isTime(h.since)) {
+      return "shadow is not {runs, since}";
+    }
   }
   const s = m.sweep;
   if (!s || typeof s !== "object" || !Number.isSafeInteger(s.count) || s.count < 0) return "sweep.count is not a count";
@@ -1217,8 +1226,9 @@ export function runSweep({ memory, listings, lsRemote = lsRemoteTags, now = new 
  * Plugin ids and 40-hex SHAs only. A tag is a stranger's text and the channel
  * carries none; the SHA and the id find it.
  */
-export function bot87Verdict({ unregistered = [], stale = [], discarded = null, failed = [], run } = {}) {
+export function bot87Verdict({ unregistered = [], stale = [], discarded = null, failed = [], run, shadowRuns = 0 } = {}) {
   const codes = [];
+  if (shadowRuns > 0) codes.push(SHADOW_RUNS_CODE);
   if (unregistered.length) codes.push(BOT_87_CODES.unregistered);
   if (stale.length) codes.push(BOT_87_CODES.stale);
   if (discarded) codes.push(BOT_87_CODES.discarded);

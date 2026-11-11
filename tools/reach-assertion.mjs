@@ -59,11 +59,12 @@ import { VERDICT_SCHEMA, runUrl } from "../bot/lib/alert-verdict.mjs";
 export const CHECK = "reach-assertion";
 
 // Floors, written before the loops they guard: every loop below over an empty
-// table is green about nothing. Fourteen ping URLs are what `alerts` holds on
-// 2026-09-25 (thirteen registry checks, `alarm-ack` twice); four service check
+// table is green about nothing. Fifteen ping URLs are what the table names
+// since registry fix No. 2 (fourteen registry checks with `run-watchdog`,
+// `alarm-ack` twice; fourteen on 2026-09-25); four service check
 // names are what contract 2.12.0 records. Floors, not equalities: a check
 // added is not a broken walk.
-export const CREDENTIAL_FLOOR = 14;
+export const CREDENTIAL_FLOOR = 15;
 export const SERVICE_NAME_FLOOR = 4;
 
 export const CREDENTIAL_SHAPE =

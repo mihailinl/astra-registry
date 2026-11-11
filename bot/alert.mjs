@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // One alarm, through Telegram's Bot API, to the alarm group the owner and
-// KNICE share — and to a separate copy chat only if one is set.
+// KNICE share — and to a separate copy chat only if one is set. An alarm only
+// the owner can act on goes to his quiet chat instead, once he has set one
+// (`ownerChat`, registry fix No. 2).
 //
 //     node bot/alert.mjs --verdict <file>        send, and print delivered_at
 //     node bot/alert.mjs --verdict <file> --ack  … with the acknowledgement link
@@ -52,7 +54,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { renderVerdict, verdictProblems } from "./lib/alert-verdict.mjs";
-import { secretName } from "./lib/alert-checks.mjs";
+import { ownerCodes, secretName } from "./lib/alert-checks.mjs";
 
 /** The one host this script talks to. There is no override, by design. */
 export const TELEGRAM_API = "https://api.telegram.org";
@@ -99,6 +101,7 @@ export const REQUIRED_SECRETS = [
  */
 export const OPTIONAL_SECRETS = [
   ["ASTRA_ALERT_COPY_CHAT_ID", "a separate chat that receives a second copy of every page (optional since 2026-09-23)"],
+  ["ASTRA_ALERT_OWNER_CHAT_ID", "the owner's quiet chat: the alarms only he can act on, and nothing else (registry fix No. 2)"],
 ];
 
 const present = (value) => typeof value === "string" && value.trim() !== "";
@@ -114,6 +117,49 @@ export function copyChat(env = process.env) {
   if (!present(copy)) return null;
   if (present(env.ASTRA_ALERT_CHAT_ID) && copy.trim() === env.ASTRA_ALERT_CHAT_ID.trim()) return null;
   return copy;
+}
+
+/**
+ * The owner's quiet chat (registry fix No. 2), or null when there is none to
+ * route to: absent or blank, or the alarm chat itself — then every page goes
+ * where it went before, exactly as if the secret did not exist.
+ *
+ * Why a second chat at all. The alarm group carried 160 to 206 messages a day
+ * in the week to 2026-11-10, and the few that only the owner can answer — a
+ * run GitHub will not end, a trust document running out, the service holding
+ * every bot call for his acknowledgement — drowned in them. With this set, a
+ * page whose codes are all owner-class (`ownerCodes`, decided by the check's
+ * row in bot/lib/alert-checks.mjs and nowhere here) goes to this chat ONLY;
+ * one whose codes are all something else stays in the alarm chat (and its
+ * copy); a page carrying both goes to both, so nobody loses a line they had.
+ * The first page, the daily repeat and "resolved" all follow the same rule.
+ */
+export function ownerChat(env = process.env) {
+  const owner = env.ASTRA_ALERT_OWNER_CHAT_ID;
+  if (!present(owner)) return null;
+  if (present(env.ASTRA_ALERT_CHAT_ID) && owner.trim() === env.ASTRA_ALERT_CHAT_ID.trim()) return null;
+  return owner;
+}
+
+/**
+ * Where a page about these codes of this check goes: `{ shared, owner }`, each
+ * true or false, never both false. A red verdict with no codes is not
+ * owner-class: the class is a list of codes, and an empty one matches none.
+ */
+export function routeOf(check, codes, env = process.env) {
+  if (ownerChat(env) === null) return { shared: true, owner: false };
+  const mine = ownerCodes(check);
+  const list = Array.isArray(codes) ? codes : [];
+  const owner = list.some((c) => mine.has(c));
+  const shared = list.length === 0 || list.some((c) => !mine.has(c));
+  return { shared, owner };
+}
+
+/** One sentence on the owner chat, for a log line. */
+function ownerSentence(env) {
+  if (!present(env.ASTRA_ALERT_OWNER_CHAT_ID)) return "no owner chat is set, so owner-class alarms go to the alarm chat with the rest";
+  if (ownerChat(env) === null) return "ASTRA_ALERT_OWNER_CHAT_ID is the alarm chat itself, so it changes nothing";
+  return "ASTRA_ALERT_OWNER_CHAT_ID is set, so owner-class alarms go there only";
 }
 
 /** One sentence on the copy chat, for a log line. */
@@ -429,8 +475,13 @@ export async function runAlert({
     saved = true;
   };
   if (decided?.act === "resolve") {
+    // To the chats the page went to: the route of the codes that were paged.
+    const was = [...new Set(decided.prior.pairs.map((p) => p.split("|")[0]).filter(Boolean))];
+    const to = routeOf(verdict.check, was, env);
+    const text = renderResolved(verdict, decided.prior);
     try {
-      await sendMessage({ token: env.ASTRA_ALERT_TELEGRAM_TOKEN, chatId: env.ASTRA_ALERT_CHAT_ID, text: renderResolved(verdict, decided.prior), apiBase, fetchImpl });
+      if (to.shared) await sendMessage({ token: env.ASTRA_ALERT_TELEGRAM_TOKEN, chatId: env.ASTRA_ALERT_CHAT_ID, text, apiBase, fetchImpl });
+      if (to.owner) await sendMessage({ token: env.ASTRA_ALERT_TELEGRAM_TOKEN, chatId: ownerChat(env), text, apiBase, fetchImpl });
     } catch (e) {
       // Kept as unresolved: the next green run tries again, and a red one in
       // between pages as the state it is.
@@ -468,12 +519,28 @@ export async function runAlert({
 
   const text = renderVerdict(verdict, ackUrl);
   const token = env.ASTRA_ALERT_TELEGRAM_TOKEN;
+  const to = routeOf(verdict.check, verdict.codes, env);
 
-  let result;
-  try {
-    result = await sendMessage({ token, chatId: env.ASTRA_ALERT_CHAT_ID, text, apiBase, fetchImpl });
-  } catch (e) {
-    return fail([`the alarm did not reach the owner's chat: ${e.message}`]);
+  // The alarm chat when the page is for it, then the owner chat when it is
+  // for him. Each is a destination the page was owed, so either failing fails
+  // the run; `delivered_at` is the alarm chat's time, or the owner chat's for
+  // a page that went to him alone.
+  let result = null;
+  if (to.shared) {
+    try {
+      result = await sendMessage({ token, chatId: env.ASTRA_ALERT_CHAT_ID, text, apiBase, fetchImpl });
+    } catch (e) {
+      return fail([`the alarm did not reach the alarm chat: ${e.message}`]);
+    }
+  }
+  if (to.owner) {
+    let mine;
+    try {
+      mine = await sendMessage({ token, chatId: ownerChat(env), text, apiBase, fetchImpl });
+    } catch (e) {
+      return fail([`the alarm did not reach the owner chat (ASTRA_ALERT_OWNER_CHAT_ID): ${e.message}`]);
+    }
+    if (!to.shared) result = mine;
   }
 
   // No time, no delivery. TRUST-32 gates publication on this value, and a
@@ -492,7 +559,7 @@ export async function runAlert({
   // was paged, and holding back a publication because a COPY failed would
   // punish the wrong thing. It is still visible — the annotation is in the
   // run, and `copy_delivered=false` is a step output somebody can gate on.
-  const copy = copyChat(env);
+  const copy = to.shared ? copyChat(env) : null;
   let copyDelivered = null;
   if (copy !== null) {
     try {
@@ -505,7 +572,8 @@ export async function runAlert({
   }
 
   save();
-  log.log(`ok    alarm delivered to the alarm chat at ${deliveredAt}; ${copySentence(env)}` +
+  const where = to.shared && to.owner ? "the alarm chat and the owner chat" : to.owner ? "the owner chat alone" : "the alarm chat";
+  log.log(`ok    alarm delivered to ${where} at ${deliveredAt}; ${copySentence(env)}; ${ownerSentence(env)}` +
     (decided ? ` (${decided.why})` : ""));
   if (copyDelivered === false) log.log("warn  the separate copy did not send; delivered_at stands");
   return { code: 0, delivered_at: deliveredAt, copy_delivered: copyDelivered, alerted: true, state_changed: saved, problems: [] };
@@ -557,7 +625,7 @@ async function main(argv) {
     const problems = credentialProblems();
     for (const p of problems) console.error(`FAIL  ${p}`);
     if (problems.length) return 1;
-    console.log(`ok    environment \`alerts\` carries every required channel secret (${REQUIRED_SECRETS.map(([n]) => n).join(", ")}); ${copySentence(process.env)}`);
+    console.log(`ok    environment \`alerts\` carries every required channel secret (${REQUIRED_SECRETS.map(([n]) => n).join(", ")}); ${copySentence(process.env)}; ${ownerSentence(process.env)}`);
     return 0;
   }
 

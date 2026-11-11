@@ -202,7 +202,7 @@ export async function claimJob({ client, polled = [], mode = null, log = console
       ? "unreachable or held for a TRUST-31 acknowledgement"
       : answer.wait ?? answer.refused ?? "no answer";
     log.log(`claim: no leases this run (${cause})`);
-    return { submissions: [], leases: {}, shadow: true, registered, wouldRegister, refused: [], alerts: client.alerts };
+    return { submissions: [], leases: {}, shadow: true, answered: "none", registered, wouldRegister, refused: [], alerts: client.alerts };
   }
   const shadow = answer.shadow === true;
   const list = Array.isArray(answer.body?.leases) ? answer.body.leases : [];
@@ -225,7 +225,11 @@ export async function claimJob({ client, polled = [], mode = null, log = console
   for (const r of refused) {
     log.error(`::error::claim: a lease${r.submission_id ? ` for ${r.submission_id}` : ""} is outside §4.3's grammar (${r.problems.length} problem(s)); nothing is fetched for it`);
   }
-  return { submissions: Object.keys(leases), leases, shadow, registered, wouldRegister, refused, alerts: client.alerts };
+  // `answered` (registry fix No. 2) is what the service SAID, and only that:
+  // `shadow` above also covers "no answer", which pages through its own wait
+  // code, while a 200 marked shadow is TRUST-31 holding every bot call for an
+  // acknowledgement only the owner can give. poll-run.mjs counts these.
+  return { submissions: Object.keys(leases), leases, shadow, answered: shadow ? "shadow" : "live", registered, wouldRegister, refused, alerts: client.alerts };
 }
 
 // ── ask ─────────────────────────────────────────────────────────────────────
@@ -506,6 +510,7 @@ async function main(argv) {
     output("registered", out.registered);
     output("leases", out.leases);
     output("shadow", String(out.shadow));
+    output("answered", out.answered);
     summaryLine(`claim: ${out.submissions.length} lease(s)${out.shadow ? ", every one shadow (BOT-92)" : ""}; ${out.refused.length} refused`);
     return out.refused.length || out.alerts.length ? 1 : 0;
   }

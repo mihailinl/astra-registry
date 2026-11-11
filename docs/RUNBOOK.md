@@ -966,8 +966,11 @@ and the known ghosts. It is red, in the Actions tab and in GitHub's failure
 e-mail, when anything is stale or silent; the verdict job needs no runner from
 environment `alerts`, so it turns red even when the alarm job hangs. The
 alarm to Telegram is sent once per state through the same action as every
-other check. It posts no heartbeat: registering a check for it needs a change
-inside TRUST-31's set.
+other check, and its alert job posts the heartbeat of receiver check
+`run-watchdog` (secret `ASTRA_DEADMAN_URL_RUN_WATCHDOG` in environment
+`alerts`). Until the owner creates that check and stores its URL, the job says
+so in its summary and stays green. Its stale-run and silent-workflow alarms go
+to the owner's quiet chat once `ASTRA_ALERT_OWNER_CHAT_ID` is set (§7.14).
 
 **What to do.** Open the stale run. Re-run it (`gh run rerun <id>`); if it
 stays stale, cancel it (`gh run cancel <id>`), which frees the group. The next
@@ -978,12 +981,40 @@ a force-cancel), it is a ghost: do not retry; add its id to `ghosts` in
 support to purge it. For the six known ghosts (37655506182, 39698520903,
 39698355160, 42066476714, 42066736817, 42066989559) nothing is to be done.
 
-**Ingest, moderation and the signer queue by design.** `Plugins ingest`,
-`Plugins moderation` and `Signer` have `cancel-in-progress: false`: a run
-that has started has claimed submissions, held a key or may have pushed, and a
-kill leaves them leased to nobody. A hung one therefore blocks its group until
-somebody cancels it; the watchdog is how somebody finds out in 30 minutes
-instead of five days.
+**Ingest and moderation hold no workflow-level group (since fix No. 2).** In
+`Plugins ingest` and `Plugins moderation` only the job that pushes to `main`
+(`publish`, `commit`) is in a group, and that group queues (`queue: max`) and
+never cancels. A hung read (`claim`, `verify`, `check`, an alert job) blocks
+only its own run, and the next run goes past it; leases it held expire and the
+service leases them again. A hung writer still blocks later writers of its
+workflow: cancel it as above, and if GitHub refuses, set (or bump) the
+repository variable `ASTRA_BOT_WRITER_EPOCH` (`gh variable set
+ASTRA_BOT_WRITER_EPOCH --body 1 -R mihailinl/astra-registry`). The group names
+end in it, so the next run uses a fresh group, with no edit to the workflows,
+which are inside TRUST-31's set. `Signer` keeps its workflow-level group with
+`cancel-in-progress: false`, so a hung signer run blocks it until somebody
+cancels it; the watchdog is how somebody finds out in 30 minutes instead of
+five days.
+
+### 7.14 The owner's quiet chat
+
+The alarm group carries everything (160 to 206 messages a day in the week to
+2026-11-10). The few alarms only the owner can act on are marked in ONE place,
+the `owner_codes` of their check's row in `bot/lib/alert-checks.mjs`:
+
+| check | codes | the owner's act |
+|---|---|---|
+| `run-watchdog` | `A_RUN_STALE`, `A_WORKFLOW_SILENT` | a run GitHub will not end; a bot workflow that stopped succeeding |
+| `served-set` | `ROLL_45_TRUST_EXPIRES_SOON`, `ROLL_45_INDEX_KEY_EXPIRES_SOON` | the root ceremony |
+| `poll-and-sweep` | `BOT_92_SHADOW_RUNS` | acknowledge the tree on the site: the service answered `claim` in shadow 3 ingest runs in a row |
+
+With secret `ASTRA_ALERT_OWNER_CHAT_ID` (environment `alerts`) set to a chat of
+his own, those pages go there ONLY — the first page, the daily repeat and
+"resolved". A page carrying both kinds of code goes to both chats. Unset,
+blank, or equal to `ASTRA_ALERT_CHAT_ID`, nothing changes: every page goes to
+the alarm group as before. To set it: create the chat with the registry's bot
+in it, then `gh secret set ASTRA_ALERT_OWNER_CHAT_ID --env alerts -R
+mihailinl/astra-registry` and paste the chat id.
 
 ## 8. Testing the chain without any real key
 

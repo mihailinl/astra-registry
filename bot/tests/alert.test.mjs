@@ -30,6 +30,8 @@ import {
   TELEGRAM_API,
   copyChat,
   credentialProblems,
+  ownerChat,
+  routeOf,
   alertDecision,
   rfc3339,
   runAlert,
@@ -47,7 +49,7 @@ import {
   serviceNames,
   verdictOf,
 } from "../../tools/reach-assertion.mjs";
-import { renderVerdict, verdictProblems, runUrl, VERDICT_SCHEMA } from "../lib/alert-verdict.mjs";
+import { renderVerdict, verdictProblems, runUrl, CODE_PATTERN, VERDICT_SCHEMA } from "../lib/alert-verdict.mjs";
 import {
   CHECKS,
   GITHUB_SCHEDULED_PARTIES,
@@ -56,7 +58,9 @@ import {
   PARTIES,
   alertsEnvironmentSecrets,
   CHECK_NAME_PATTERN,
+  OWNER_CODE_PATTERN,
   boundMinutes,
+  ownerCodes,
   optionalAlertsSecrets,
   secretName,
   tableProblems,
@@ -333,7 +337,7 @@ await test("the channel requires the bot token and the alarm chat, and nothing e
   // here. The loop below walks this list, so it is only as good as the list.
   assert.deepEqual(REQUIRED_SECRETS.map(([name]) => name), ["ASTRA_ALERT_TELEGRAM_TOKEN", "ASTRA_ALERT_CHAT_ID"],
     "the channel's required secrets changed");
-  assert.deepEqual(OPTIONAL_SECRETS.map(([name]) => name), ["ASTRA_ALERT_COPY_CHAT_ID"],
+  assert.deepEqual(OPTIONAL_SECRETS.map(([name]) => name), ["ASTRA_ALERT_COPY_CHAT_ID", "ASTRA_ALERT_OWNER_CHAT_ID"],
     "the channel's optional secrets changed");
 });
 
@@ -736,6 +740,8 @@ await test("each check's bound, by name: five GitHub-scheduled checks moved to a
     conformance: D,
     // B-T5.0 fixed its interval at BOT-51's 600 s; posted from GitHub, so a day
     "poll-and-sweep": D,
+    // registry fix No. 2: the watchdog's cron is every 600 s; posted from GitHub, so a day
+    "run-watchdog": D,
     // unchanged: no interval, so no bound
     "alarm-ack": null,
   };
@@ -1403,6 +1409,153 @@ await test("R4 wired: no cache, an unreadable one, a forged handoff or a state f
   } finally {
     fs.rmSync(cache, { recursive: true, force: true });
   }
+});
+
+// ── the owner's quiet chat (registry fix No. 2) ─────────────────────────────
+//
+// The alarm group carried 160 to 206 messages a day in the week to 2026-11-10,
+// and the few only the owner can act on drowned in them. With
+// ASTRA_ALERT_OWNER_CHAT_ID set, an owner-class page (its check row's
+// `owner_codes`) goes there ONLY — first page, daily repeat and "resolved";
+// with it unset, nothing at all changes.
+
+console.log("\nthe owner's quiet chat — owner-class alarms there only, everything else where it was\n");
+
+const OWNER = { ...ENV, ASTRA_ALERT_OWNER_CHAT_ID: "-1009" };
+const STALE = {
+  schema: VERDICT_SCHEMA, check: "run-watchdog", status: "red", codes: ["A_RUN_STALE"],
+  run: "https://github.com/minice/astra-registry/actions/runs/43",
+};
+function chats() {
+  const sent = [];
+  const fetchImpl = async (url, init) => {
+    const b = JSON.parse(init.body);
+    sent.push({ chat: b.chat_id, text: b.text });
+    return { ok: true, status: 200, json: async () => ({ ok: true, result: { date: 1789_000_000 + sent.length } }) };
+  };
+  return { sent, fetchImpl, to: () => sent.map((m) => m.chat) };
+}
+
+await test("owner chat set: an owner-class page goes to the owner chat ONLY — no alarm chat, no copy", async () => {
+  const api = chats();
+  const out = await runAlert({ verdict: STALE, env: OWNER, fetchImpl: api.fetchImpl, log: quiet });
+  assert.equal(out.code, 0);
+  assert.deepEqual(api.to(), ["-1009"], "an owner-class alarm reached the shared chat as well, where it drowns");
+  assert.equal(out.delivered_at, rfc3339(1789_000_001), "delivered_at is not the owner chat's own time");
+  assert.equal(out.copy_delivered, null);
+});
+
+await test("owner chat set: every other page stays in the alarm chat and its copy", async () => {
+  const api = chats();
+  await runAlert({ verdict: VERDICT, env: OWNER, fetchImpl: api.fetchImpl, log: quiet });
+  assert.deepEqual(api.to(), ["-1001", "-1002"], "a page nobody marked owner-class left the shared chat");
+});
+
+await test("owner chat set: a page carrying both kinds goes to both, so nobody loses a line", async () => {
+  const api = chats();
+  const mixed = { ...VERDICT, codes: ["ROLL_45_TRUST_EXPIRES_SOON", "SERVE_85_DRIFT"] };
+  await runAlert({ verdict: mixed, env: OWNER, fetchImpl: api.fetchImpl, log: quiet });
+  assert.deepEqual(api.to(), ["-1001", "-1009", "-1002"], "a mixed page did not reach the alarm chat, the owner chat and the copy");
+  const runway = { ...VERDICT, codes: ["ROLL_45_INDEX_KEY_EXPIRES_SOON"], ids: undefined, hexes: undefined };
+  const api2 = chats();
+  await runAlert({ verdict: runway, env: OWNER, fetchImpl: api2.fetchImpl, log: quiet });
+  assert.deepEqual(api2.to(), ["-1009"], "an index key running out is owner-class through served-set's row");
+});
+
+await test("owner chat unset, blank, or the alarm chat itself: every page goes exactly where it went before", async () => {
+  for (const env of [ENV, { ...ENV, ASTRA_ALERT_OWNER_CHAT_ID: "  " }, { ...ENV, ASTRA_ALERT_OWNER_CHAT_ID: " -1001 " }]) {
+    const api = chats();
+    const out = await runAlert({ verdict: STALE, env, fetchImpl: api.fetchImpl, log: quiet });
+    assert.equal(out.code, 0);
+    assert.deepEqual(api.to(), ["-1001", "-1002"], `with ${JSON.stringify(env.ASTRA_ALERT_OWNER_CHAT_ID)} an owner-class page did not go to the shared chat`);
+    assert.equal(out.delivered_at, rfc3339(1789_000_001));
+  }
+  assert.equal(ownerChat(ENV), null);
+  assert.deepEqual(routeOf("run-watchdog", ["A_RUN_STALE"], ENV), { shared: true, owner: false });
+});
+
+await test("owner chat set: the daily repeat and `resolved` follow the page to the owner chat, and nowhere else", async () => {
+  const dir = fs.mkdtempSync(path.join(REPO, ".alert-owner-test-"));
+  try {
+    const stateFile = path.join(dir, "state.json");
+    const api = chats();
+    const env = { ...OWNER, ASTRA_ALERT_STATE_HMAC_KEY: "k".repeat(40) };
+    const at = (min) => new Date(Date.parse("2026-11-10T03:00:00Z") + min * 60_000);
+    const send = (verdict, min) => runAlert({ verdict, env, ifRed: true, fetchImpl: api.fetchImpl, log: quiet, stateFile, now: at(min) });
+    await send(STALE, 0);
+    await send(STALE, 10);
+    await send(STALE, 24 * 60 + 1);
+    await send({ ...STALE, status: "green", codes: undefined }, 24 * 60 + 11);
+    assert.deepEqual(api.to(), ["-1009", "-1009", "-1009"], "page, repeat and resolved did not all go to the owner chat alone");
+    assert.match(api.sent[2].text, /resolved/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+await test("owner chat set: an owner page that does not reach it fails the run, like the alarm chat's", async () => {
+  const fetchImpl = async () => ({ ok: false, status: 500, json: async () => ({}) });
+  const out = await runAlert({ verdict: STALE, env: OWNER, fetchImpl, log: quiet });
+  assert.equal(out.code, 1);
+  assert.equal(out.delivered_at, null);
+  assert.match(out.problems.join(""), /owner chat/);
+});
+
+await test("the owner class is decided in ONE place, the table, and each of its codes is one a poster really emits", () => {
+  assert.equal(OWNER_CODE_PATTERN, CODE_PATTERN, "the table's code grammar and the verdict's differ");
+  const marked = CHECKS.filter((c) => c.owner_codes);
+  assert.deepEqual(marked.map((c) => c.name).sort(), ["poll-and-sweep", "run-watchdog", "served-set"],
+    "the owner class moved; registry fix No. 2 gave it exactly the watchdog, the ROLL-45 runway and the shadow streak");
+  // A canary for the coupling: a code renamed at its poster and not here would
+  // route nothing, and its alarm would quietly return to the shared chat.
+  const sources = [];
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(path.join(REPO, dir), { withFileTypes: true })) {
+      const rel = path.join(dir, e.name);
+      if (e.isDirectory()) { if (!/node_modules|tests|fixtures|target/.test(e.name)) walk(rel); continue; }
+      if (/\.mjs$/.test(e.name) && rel !== path.join("bot", "lib", "alert-checks.mjs")) sources.push(fs.readFileSync(path.join(REPO, rel), "utf8"));
+    }
+  };
+  walk("bot"); walk("tools");
+  const all = sources.join("\n");
+  for (const c of marked) {
+    for (const code of c.owner_codes) assert.ok(all.includes(`"${code}"`), `${c.name}'s owner code ${code} is emitted by nothing in bot/ or tools/`);
+  }
+  // The alert script routes by the table and names no check or code.
+  const script = fs.readFileSync(path.join(REPO, "bot", "alert.mjs"), "utf8");
+  for (const c of marked) {
+    for (const code of c.owner_codes) assert.ok(!script.includes(code), `bot/alert.mjs names ${code}; the class lives in the table`);
+  }
+  assert.deepEqual([...ownerCodes("nothing-like-it")], []);
+  const bad = (row) => tableProblems([{ ...CHECKS.find((c) => c.name === "run-watchdog"), ...row }]);
+  assert.match(bad({ owner_codes: [] }).join(""), /owner_codes is not a non-empty list/);
+  assert.match(bad({ owner_codes: ["a sentence"] }).join(""), /owner_codes is not/);
+  assert.match(bad({ owner_codes: ["A_RUN_STALE", "A_RUN_STALE"] }).join(""), /twice/);
+  assert.match(bad({ party: "probe-host" }).join(""), /owner_codes on a check whose alarms/);
+});
+
+await test("run-watchdog: its heartbeat waits on the owner's act — a summary line, not a red step — and posts once the secret exists", async () => {
+  const dir = fs.mkdtempSync(path.join(REPO, ".heartbeat-pending-"));
+  try {
+    const summary = path.join(dir, "summary.md");
+    const r = recorder();
+    const out = await postHeartbeat({ check: "run-watchdog", env: { GITHUB_STEP_SUMMARY: summary }, fetchImpl: r.fetchImpl, log: quiet });
+    assert.equal(out.code, 0, "a receiver check the owner has not created turned the step red");
+    assert.equal(r.calls.length, 0);
+    const said = fs.readFileSync(summary, "utf8");
+    assert.match(said, /ASTRA_DEADMAN_URL_RUN_WATCHDOG is not set/);
+    assert.match(said, /healthchecks\.io/);
+    const set = await postHeartbeat({ check: "run-watchdog", env: { ASTRA_DEADMAN_URL_RUN_WATCHDOG: "https://receiver.example/ping/wd" }, fetchImpl: recorder().fetchImpl, log: quiet });
+    assert.equal(set.code, 0);
+    assert.equal(set.pending, undefined);
+    // Every other row keeps the rule: a missing secret is red.
+    const other = await postHeartbeat({ check: "served-set", env: {}, fetchImpl: recorder().fetchImpl, log: quiet });
+    assert.equal(other.code, 1, "receiver_pending leaked to a check whose receiver exists");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  assert.deepEqual(CHECKS.filter((c) => c.receiver_pending).map((c) => c.name), ["run-watchdog"]);
+  assert.ok(alertsEnvironmentSecrets().includes("ASTRA_DEADMAN_URL_RUN_WATCHDOG"), "the owner's act is missing from the list environment `alerts` is built from");
 });
 
 console.log(`\n${failures === 0 ? "PASS" : "FAIL"}  bot/tests/alert.test.mjs, ${failures} failed`);

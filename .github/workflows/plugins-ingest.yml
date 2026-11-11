@@ -427,6 +427,10 @@ jobs:
       # The claim answer's `shadow` (BOT-92). `"true"` whenever the answer was
       # shadow or could not be read, never defaulted the other way.
       shadow: ${{ steps.claim.outputs.shadow }}
+      # What the claim answer said: `shadow`, `live`, or `none` when there was
+      # no answer to read. `remember` counts the shadow runs in a row, and the
+      # third pages the owner (BOT_92_SHADOW_RUNS, bot/lib/poll-run.mjs).
+      answered: ${{ steps.claim.outputs.answered }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -507,6 +511,7 @@ jobs:
           ASTRA_SWEPT: ${{ needs.sweep.outputs.remote }}
           ASTRA_SWEEP_DUE: ${{ needs.load.outputs.sweep_due }}
           ASTRA_SWEEP_RESULT: ${{ needs.sweep.result }}
+          ASTRA_CLAIM_ANSWERED: ${{ needs.claim.outputs.answered }}
         run: node bot/lib/poll-run.mjs remember
 
       # Under this run's own key: a cache entry cannot be overwritten, and the
@@ -584,6 +589,7 @@ jobs:
       ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
       ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
       ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      ASTRA_ALERT_OWNER_CHAT_ID: ${{ secrets.ASTRA_ALERT_OWNER_CHAT_ID }}
       # R4: signs and verifies the once-per-state memory (review of #480);
       # absent, every red pages and nothing is saved.
       ASTRA_ALERT_STATE_HMAC_KEY: ${{ secrets.ASTRA_ALERT_STATE_HMAC_KEY }}
@@ -1047,6 +1053,7 @@ jobs:
       ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
       ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
       ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      ASTRA_ALERT_OWNER_CHAT_ID: ${{ secrets.ASTRA_ALERT_OWNER_CHAT_ID }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

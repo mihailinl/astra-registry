@@ -621,7 +621,7 @@ test("R4: the alert state's signing key reaches only the alert jobs that take a 
 test("the alert-state action holds no secret and sends nothing", () => {
   const src = fs.readFileSync(path.join(REPO, ".github", "actions", "alert-state", "action.yml"), "utf8");
   const lines = src.split("\n").filter((l) => !l.trim().startsWith("#"));
-  for (const bad of [/secrets\./, /github\.token/, /ASTRA_ALERT_(TELEGRAM_TOKEN|CHAT_ID|COPY_CHAT_ID)/, /ASTRA_DEADMAN_URL_/, /--verdict/, /heartbeat/]) {
+  for (const bad of [/secrets\./, /github\.token/, /ASTRA_ALERT_(TELEGRAM_TOKEN|CHAT_ID|COPY_CHAT_ID|OWNER_CHAT_ID)/, /ASTRA_DEADMAN_URL_/, /--verdict/, /heartbeat/]) {
     assert.equal(lines.filter((l) => bad.test(l)).join("\n"), "", `the alert-state action reaches for ${bad}`);
   }
 });
