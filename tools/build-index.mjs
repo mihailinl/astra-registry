@@ -87,7 +87,8 @@ const PLATFORM_KEYS_FOR_NOARCH = FLAT_PROJECTION_KEYS;
 /**
  * The first serial at which an SVG icon is carried as a PNG drawn from it.
  *
- * The index carries raster icons only: PNG, WebP and JPEG as committed, an SVG
+ * The index carries raster icons only: PNG, WebP and JPEG as committed (a WebP
+ * beside a PNG wins), an SVG
  * drawn by `bot/lib/rasterize.mjs`. Taught first, rendered later — the same
  * rule as the review mark (B.4, `releaseRecord` above). DEC-9 counts only
  * commits under `plugins/`, so a generator that drew the 19 committed SVGs the
@@ -321,7 +322,14 @@ function presentation(root, plugin, serial) {
     if (!fs.existsSync(file)) {
       bad(`plugins/${plugin.dir}/plugin.json`, `names icon ${JSON.stringify(p.icon)}, which is not in the directory`);
     } else {
-      const icon = { name: p.icon, bytes: fs.readFileSync(file) };
+      // From the same serial, a WebP committed beside a PNG is the one inlined: the author's own
+      // bytes, the smaller of two pictures they shipped for the one slot (a choice of file, not a
+      // re-encode). `plugin.json` still names the PNG; the record is not edited.
+      const webp = path.join(dir, "icon.webp");
+      const useWebp = serial >= RASTER_ICONS_FROM_SERIAL && p.icon === "icon.png" && fs.existsSync(webp);
+      const icon = useWebp
+        ? { name: "icon.webp", bytes: fs.readFileSync(webp) }
+        : { name: p.icon, bytes: fs.readFileSync(file) };
       try {
         out.icon_url =
           serial >= RASTER_ICONS_FROM_SERIAL && icon.name === "icon.svg"

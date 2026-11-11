@@ -51,7 +51,7 @@ const FIXTURE_SVG = Buffer.from(
  * system zlib (zlib-ng on one machine and stock zlib on another encode the same pixels to different
  * bytes), so this digest is the same on every machine; if it moves, the pin or the encoder moved.
  */
-const GOLDEN_SHA256 = "5a1c49a2e21e4bff128abf1176089c3c3f8b513a3afdb8dffeed3b9477017fb9";
+const GOLDEN_SHA256 = "3b3047741fcccb770165fb1d492840574149d868a93f7f73be7bff3de80429e7";
 
 function pngSize(png) { return [png.readUInt32BE(16), png.readUInt32BE(20)]; }
 
@@ -167,6 +167,14 @@ await test("from RASTER_ICONS_FROM_SERIAL no icon in the index is an SVG, and be
   assert(media.every((m) => m === "image/png" || m === "image/webp" || m === "image/jpeg"), `a non-raster icon: ${[...new Set(media)]}`);
   const below = mediaOf(buildIndex({ root: REPO_ROOT, serial: RASTER_ICONS_FROM_SERIAL - 1 }));
   assert(below.includes("image/svg+xml"), "the gate does not hold: nothing below it is SVG any more, so the catalogue moved at an unchanged serial");
+});
+
+await test("a WebP beside a PNG is the icon inlined from the gate on, and not below it", () => {
+  const icon = (idx, id) => idx.signed.plugins.find((p) => p.id === id).icon_url.slice(0, 15);
+  const at = buildIndex({ root: REPO_ROOT, serial: RASTER_ICONS_FROM_SERIAL });
+  assertEqual(icon(at, "companion-cat"), "data:image/webp", "companion-cat ships both and the WebP was not chosen");
+  const below = buildIndex({ root: REPO_ROOT, serial: RASTER_ICONS_FROM_SERIAL - 1 });
+  assertEqual(icon(below, "companion-cat"), "data:image/png;", "below the gate the catalogue moved");
 });
 
 await test("a committed SVG that cannot be drawn fails the build naming its listing", () => {

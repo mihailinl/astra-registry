@@ -34,8 +34,8 @@ import { Resvg, initWasm } from "./third-party/resvg-wasm/index.mjs";
 
 const VENDOR = new URL("./third-party/resvg-wasm/", import.meta.url);
 
-/** The side, in pixels, the long edge of a rasterized icon has: twice the 64 px the site draws an icon at, at most. */
-export const ICON_RASTER_PX = 128;
+/** The side, in pixels, the long edge of a rasterized icon has: the 64 px the site draws an icon at. */
+export const ICON_RASTER_PX = 64;
 
 /** Why an SVG could not become a PNG. `code` is the bot's finding code. */
 export class RasterError extends Error {
