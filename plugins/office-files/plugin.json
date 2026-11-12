@@ -1,0 +1,25 @@
+{
+  "$comment": "Derived from KnlCE/office-files@v0.2.0 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "schema": "astra.registry.plugin/1",
+  "id": "office-files",
+  "name": "Office Files",
+  "summary": "Read, create and edit Word, Excel and PowerPoint files and PDF pages locally.",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "KnlCE/office-files"
+  },
+  "added_at": "2026-11-12",
+  "description": "Read, create and edit Word, Excel and PowerPoint files and PDF pages locally.",
+  "author": {
+    "name": "KNICE"
+  },
+  "icon": "icon.svg",
+  "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "Office Files",
+      "summary": "Чтение, создание и редактирование файлов Word, Excel и PowerPoint и страниц PDF локально."
+    }
+  }
+}
