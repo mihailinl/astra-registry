@@ -19,7 +19,7 @@
 
 import { createHash } from "node:crypto";
 
-import { ASSET_ICON_MAX_BYTES, ASSET_README_MAX_BYTES, buildAssets } from "../build-index.mjs";
+import { ASSET_ICON_MAX_BYTES, ASSET_README_MAX_BYTES, ASSET_TOTAL_MAX_BYTES, buildAssets } from "../build-index.mjs";
 import { blobRawAt } from "./git.mjs";
 
 /** Where, inside a `signed` commit, the assets live. */
@@ -48,6 +48,14 @@ export function referencedAssets(indexDoc) {
       }
       refs.set(m.path, { sha256: m.sha256, size: m.size, cap, id: entry.id });
     }
+  }
+  // The total is over distinct files (a path is a hash, so the Map already holds
+  // each once) and over the sizes the catalogue declares: collectAssets holds
+  // every file to its declared size, so the two cannot differ in a signed commit.
+  let total = 0;
+  for (const ref of refs.values()) total += Number.isSafeInteger(ref.size) && ref.size > 0 ? ref.size : 0;
+  if (total > ASSET_TOTAL_MAX_BYTES) {
+    problems.push(`the catalogue's ${refs.size} asset files total ${total} bytes, over the ${ASSET_TOTAL_MAX_BYTES} one catalogue may name (BOT-109)`);
   }
   return { refs, problems };
 }

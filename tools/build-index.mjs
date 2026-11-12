@@ -122,6 +122,10 @@ export const ASSET_FILES_FROM_SERIAL = RASTER_ICONS_FROM_SERIAL;
 /** The caps contract 6.28.0 (SERVE-115) puts on an asset file, in bytes. */
 export const ASSET_ICON_MAX_BYTES = 131072;
 export const ASSET_README_MAX_BYTES = 16384;
+// BOT-109 (contract 6.29.0): the distinct asset files one catalogue names may
+// total this much. The service refuses a catalogue over it (SERVE-115) before it
+// reads a file, so the signer refuses first and a signed catalogue never meets it.
+export const ASSET_TOTAL_MAX_BYTES = 33554432;
 const ASSET_EXT_OF_MEDIA = { "image/png": "png", "image/webp": "webp", "image/jpeg": "jpg" };
 
 /**

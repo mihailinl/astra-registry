@@ -13,7 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { ASSET_FILES_FROM_SERIAL, buildAssets, buildIndex, buildIndexAndAssets } from "../../tools/build-index.mjs";
+import { ASSET_FILES_FROM_SERIAL, ASSET_TOTAL_MAX_BYTES, buildAssets, buildIndex, buildIndexAndAssets } from "../../tools/build-index.mjs";
 import { assetProblems } from "../../tools/regenerate-signed.mjs";
 import { validate as validateSchema } from "../../tools/lib/jsonschema.mjs";
 import { cleanEnv } from "../../tools/lib/git-env.mjs";
@@ -164,6 +164,20 @@ await test("the candidate's asset directory must be exactly the derived set", ()
   fs.rmSync(path.join(dir, `assets/${sha(Buffer.from("extra"))}.png`));
   put("assets/not-a-hash.png", Buffer.from("x"));
   assert(assetProblems(dir, at.assets).some((x) => x.includes("not assets/<sha256>")), "a non-hash name passed");
+});
+
+await test("a catalogue whose distinct asset files total one byte over the cap is a problem; at the cap, and a repeated file, are not", () => {
+  const hex = (i) => i.toString(16).padStart(64, "0");
+  const doc = (sizes) => ({ signed: { plugins: sizes.map((size, i) => ({ id: `p${i}`, icon: { path: `assets/${hex(i)}.png`, sha256: hex(i), size } })) } });
+  const n = ASSET_TOTAL_MAX_BYTES / 131072;
+  const full = Array.from({ length: n }, () => 131072);
+  assertEqual(referencedAssets(doc(full)).problems.length, 0, "exactly at the cap");
+  const over = referencedAssets(doc([...full, 1])).problems;
+  assertEqual(over.length, 1, "one byte over");
+  assert(/total 33554433 bytes.*BOT-109/.test(over[0]), `the problem names the total and the rule: ${over[0]}`);
+  const twice = doc(full);
+  twice.signed.plugins.push({ id: "again", icon: { ...twice.signed.plugins[0].icon } });
+  assertEqual(referencedAssets(twice).problems.length, 0, "a file named twice counts once");
 });
 
 await test("buildAssets is the derivation build-index uses", () => {
