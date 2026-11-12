@@ -192,7 +192,16 @@ filter the plugin sends — `speech_recognized`, which carries the user's
 transcripts, is one of the types a grant can withhold
 (`granted_event_allowlist`, `astra-daemon/src/plugins/host_service.rs`). The
 permissions a plugin asks for are shown before it is installed
-(`astra-ui/src/pages/Plugins/InstallConsentSheet.tsx`).
+(`astra-ui/src/pages/Plugins/InstallConsentSheet.tsx`). One more read of the
+user's data is a declared permission of its own:
+
+| Permission | What the daemon hands over | Review signal |
+|---|---|---|
+| `read_ai_settings` (`GetAiSettings`) | The provider, model and endpoint the user's chat uses, and whether that endpoint is on this machine. **Never a key**: a plugin that needs the user's provider asks for this rather than reading Astra's files for it. | No hold and no delay of its own. It is not high-risk (Astra treats it as a read, allowed at tier 2), so it is ruled like `subscribe_events`: on the issue path a first request for it on an existing listing is a widening (`P_DELAY_WIDENED`). A plugin that reads Astra's own files for this instead is what a moderator's review looks for (§8). |
+
+A plugin that sends what it read there off the machine says so on its card,
+like any other data; the endpoint can carry a token in its path when the user's
+relay puts one there.
 
 **Sending it on is gated by nothing, and cannot be.** A plugin is a native
 process with the user's network access; a permission decides what the daemon
@@ -354,9 +363,9 @@ always an update, and nothing there carries a publication delay.
 above is keyed on what a plugin *declares*, and a declaration is now enforced at
 run time. `require_permission` runs at the top of every host RPC that needs one;
 `HOST_RPC_PERMISSIONS` in `astra-daemon/src/plugins/host_service.rs` is the
-table, and it names all ten RPCs — six gated (`SubscribeEvents`,
+table, and it names all eleven RPCs — seven gated (`SubscribeEvents`,
 `SendChatMessage`, `FireTrigger`, `SetVariable`, `SetThemeContribution`,
-`PushToUi`) and four deliberately not (`Register`, `GetPluginSelfConfig`,
+`PushToUi`, `GetAiSettings`) and four deliberately not (`Register`, `GetPluginSelfConfig`,
 `PluginLog`, `GetDaemonInfo`, none of which acts on anything outside the
 plugin). A test reads that table rather than the methods, so a new RPC with no
 gate is a failing test instead of a silent omission. So a plugin that declares

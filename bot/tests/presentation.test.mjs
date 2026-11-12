@@ -100,9 +100,9 @@ await test("every accepted format round-trips through the checker and the data: 
     "icon.svg": SVG,
     "icon.jpg": Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.from("jfif and the rest")]),
     "icon.jpeg": Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.from("jfif and the rest")]),
-    "icon.ico": Buffer.concat([Buffer.from([0x00, 0x00, 0x01, 0x00]), Buffer.from("one image, allegedly")]),
   };
-  assertEqual(Object.keys(samples).length, ICON_NAMES.length,
+  // `icon.ico` is in ICON_NAMES only to be refused; `bot/tests/rasterize.test.mjs` holds that.
+  assertEqual(Object.keys(samples).length, ICON_NAMES.length - 1,
     "a format was added to ICON_FORMATS without a sample here, so nothing tests it");
   const media = { png: "image/png", webp: "image/webp", svg: "image/svg+xml", jpg: "image/jpeg", jpeg: "image/jpeg", ico: "image/x-icon" };
   for (const [name, bytes] of Object.entries(samples)) {

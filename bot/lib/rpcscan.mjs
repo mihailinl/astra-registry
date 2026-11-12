@@ -1,10 +1,11 @@
 // Does the bundle call host RPCs it did not declare?
 //
-// `PluginHostService` is the plugin→daemon direction: ten methods, four of
+// `PluginHostService` is the plugin→daemon direction: eleven methods, four of
 // which every plugin may always call (`Register`, `PluginLog`,
-// `GetPluginSelfConfig`, `GetDaemonInfo` — see `ALWAYS_ALLOWED`) and six of
-// which act on the user's session. The manifest says which of those a plugin is
-// for. This looks in the shipped files for the names of the others.
+// `GetPluginSelfConfig`, `GetDaemonInfo` — see `ALWAYS_ALLOWED`) and seven of
+// which act on the user's session or read the user's settings. The manifest says
+// which of those a plugin is for. This looks in the shipped files for the names
+// of the others.
 //
 // ── say plainly what this is ────────────────────────────────────────────────
 //
@@ -24,7 +25,7 @@
 //
 //   * The Python SDK ships `plugin_pb2.py`, whose serialized descriptor
 //     contains the name of every method of every service in the proto. It is a
-//     source file by extension and it names all ten.
+//     source file by extension and it names all eleven.
 //   * A Rust or Go plugin links a generated client whose stubs carry the
 //     gRPC path string for each method whether or not the author calls it.
 //     Whether the linker drops the unused ones is a build-configuration detail,
@@ -46,7 +47,7 @@
 // a clean scan as "this plugin makes no undeclared calls".
 
 /**
- * The ten methods of `PluginHostService`, from `proto/plugin.proto`.
+ * The eleven methods of `PluginHostService`, from `proto/plugin.proto`.
  *
  * Held against it, rather than remembered: `bot/manifest-probe`'s
  * `the_host_rpc_list_is_the_protos_and_not_a_copy_of_it` reads this array as
@@ -66,6 +67,7 @@ export const HOST_RPCS = [
   "GetPluginSelfConfig",
   "PluginLog",
   "GetDaemonInfo",
+  "GetAiSettings",
   "SetVariable",
   "SetThemeContribution",
   "PushToUi",
@@ -136,6 +138,14 @@ const ALWAYS_ALLOWED = new Set([
  * GetPluginSelfConfig) the daemon refuses that call on the user's machine — a
  * clean scan here for a plugin that cannot do what it was scanned for. Putting
  * the arm back turns `cargo test` red.
+ *
+ * `GetAiSettings` has no `capability` either, for the same reason in reverse
+ * (2026-11-10, Astra `4b8c4ae8e`): hooks.yaml files it under `core`, gated on
+ * `read_ai_settings` alone, and no manifest written before §5.6 could have
+ * called it, so there is no older shape to keep accepting. It is not
+ * `blocking`: it hands the plugin the provider, model and endpoint the user's
+ * chat already uses — never a key — and changes nothing, so it is the
+ * read-only half of the vocabulary, the same rung as `SubscribeEvents`.
  */
 export const RPC_RULES = {
   FireTrigger: { permission: "fire_trigger", capability: "triggers", blocking: true },
@@ -144,6 +154,7 @@ export const RPC_RULES = {
   SetThemeContribution: { permission: "set_theme_contribution", capability: "ui_contributions", blocking: true },
   PushToUi: { permission: "push_to_ui", capability: "ui_contributions", blocking: false },
   SubscribeEvents: { permission: "subscribe_events", capability: "event_handlers", blocking: false },
+  GetAiSettings: { permission: "read_ai_settings", blocking: false },
 };
 
 // ── what "vendored" is allowed to mean ──────────────────────────────────────

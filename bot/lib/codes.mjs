@@ -327,7 +327,7 @@ export const CODES = {
   },
   E_TOML_MANIFEST_DISAGREE: { level: "error", stage: "manifest", fix: "new_tag", title: "`plugin.toml` and `MANIFEST.json` describe different plugins", remedy: "Rebuild from one tree. The daemon installs under the manifest's id and runs what plugin.toml describes." },
   W_ENTRY_COMMAND_DISAGREE: { level: "warn", stage: "manifest", fix: "none", title: "The bundle runs a different command than `plugin.toml` declares", remedy: "The daemon executes the manifest's. Usually a stale `plugin.toml`." },
-  E_PLATFORM_UNSUPPORTED: { level: "error", stage: "manifest", fix: "new_tag", title: "Astra ships no daemon for that platform", remedy: "`linux-x64`, `windows-x64` and `noarch` are the hosts that exist. macOS and arm64 names are reserved and unusable." },
+  E_PLATFORM_UNSUPPORTED: { level: "error", stage: "manifest", fix: "new_tag", title: "Astra ships no daemon for that platform", remedy: "`linux-x64`, `windows-x64`, `macos-arm64` and `noarch` are the hosts that exist. Intel Mac and arm64 Linux and Windows names are reserved and unusable." },
   // Contract 3.14.0 reserves `kind` and `requires` for the item kinds a later
   // version lists, failing closed, because the crate at the pin ignores both
   // and an Astra that ignores them installs any item as a plugin. The probe's
@@ -617,6 +617,30 @@ export const CODES = {
     remedy:
       "Compiled binaries and vendored SDK code are not decidable by string matching. This check " +
       "catches accidents; it does not catch anyone who is trying.",
+  },
+
+  // ── the icon: a format the registry carries ────────────────────────────────
+  // The index carries raster icons only: PNG, JPEG and WebP as they are, an SVG drawn to a PNG.
+  E_ICON_FORMAT: {
+    level: "error", stage: "derive", fix: "new_tag",
+    title: "The icon must be PNG, JPEG, WebP or SVG",
+    remedy:
+      "Export the icon as `icon.png` (128x128 is plenty), `icon.webp`, `icon.jpg` or `icon.svg`, " +
+      "put it in the bundle in place of `icon.ico`, and release again.",
+  },
+  E_SVG_TEXT: {
+    level: "error", stage: "derive", fix: "new_tag",
+    title: "The SVG icon contains text",
+    remedy:
+      "The registry draws an SVG icon to a PNG with no fonts, so text in it would vanish. Convert the " +
+      "text to outlines (paths) in your editor, or export the icon as PNG, and release again.",
+  },
+  E_SVG_RASTERIZE: {
+    level: "error", stage: "derive", fix: "new_tag",
+    title: "The SVG icon could not be drawn",
+    remedy:
+      "The registry draws an SVG icon to a PNG, and this one did not parse as a picture. Check that it " +
+      "opens in a browser, or export the icon as PNG, and release again.",
   },
 
   // ── the bot's own output ───────────────────────────────────────────────────

@@ -82,6 +82,7 @@
 // from "I could not check", and one non-zero code cannot.
 
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -344,7 +345,7 @@ export function scanClosure(work, entry = ENTRY) {
       if (bare) {
         findings.push(
           `${rel}:${line}: imports ${JSON.stringify(spec)}, a package rather than a file in this tree. ` +
-          "The registry vendors nothing, and a dependency resolved at run time is code no reviewer pinned",
+          "A dependency resolved at run time is code no reviewer pinned; the one bundled module sits under bot/lib/third-party and is imported by path",
         );
         continue;
       }
@@ -458,12 +459,15 @@ export async function regenerate({ repo, generator, source, work }) {
       "the output is no longer the one this command computed",
     );
   }
+  // TRUST-49: the asset files the catalogue names, from the same pinned code and the same
+  // committed icons and READMEs. Nothing else is read and nothing is fetched.
+  const assets = typeof gen.buildAssets === "function" ? gen.buildAssets({ root: work, serial }) : new Map();
   const content = gen.indexContent(doc);
   if (content.issued_at !== undefined || content.expires_at !== undefined) {
     throw new Refused("the regenerated content carries a publication stamp, which no generator can reproduce");
   }
   return {
-    ...commits, serial, closure, assembled, content,
+    ...commits, serial, closure, assembled, content, assets,
     text: canonical.stableStringify(content),
     // Handed back rather than re-imported by the caller. A `--candidate` is
     // compared through the PINNED `indexContent` and the PINNED
@@ -481,7 +485,7 @@ export async function regenerate({ repo, generator, source, work }) {
 function parseArgs(argv) {
   const opts = {
     repo: DEFAULT_REPO, generator: null, source: null,
-    candidate: null, out: null, work: null, keep: false, quiet: false,
+    candidate: null, assets: null, out: null, work: null, keep: false, quiet: false,
   };
   const need = (i, name) => {
     if (i >= argv.length) throw new Refused(`${name} needs a value`);
@@ -493,6 +497,7 @@ function parseArgs(argv) {
     else if (a === "--source") opts.source = need(++i, a);
     else if (a === "--repo") opts.repo = path.resolve(need(++i, a));
     else if (a === "--candidate") opts.candidate = path.resolve(need(++i, a));
+    else if (a === "--assets") opts.assets = path.resolve(need(++i, a));
     else if (a === "--out") opts.out = path.resolve(need(++i, a));
     else if (a === "--work") opts.work = path.resolve(need(++i, a));
     else if (a === "--keep") opts.keep = true;
@@ -504,13 +509,15 @@ function parseArgs(argv) {
 }
 
 const USAGE = `usage: node tools/regenerate-signed.mjs --generator <sha> --source <sha>
-                                     [--repo DIR] [--candidate FILE] [--out FILE]
+                                     [--repo DIR] [--candidate FILE] [--assets DIR] [--out FILE]
                                      [--work DIR] [--keep] [--quiet]
 
   --generator <ref>   the reviewed commit the generator code is taken from
   --source <ref>      the Source-Commit the inputs are taken from
   --repo <dir>        the clone to read both out of (default: this file's own)
   --candidate <file>  a carried catalogue to compare the regeneration against
+  --assets <dir>      the directory holding the candidate's assets/ files (TRUST-49):
+                      the set of files, and each one's bytes, must be the derived set
   --out <file>        write the document here instead of to stdout
   --work <dir>        assemble into this directory instead of a fresh temp one
   --keep              leave the assembled tree behind, to be looked at
@@ -530,6 +537,35 @@ function firstDifference(a, b) {
     }
   }
   return "      the two differ in length only";
+}
+
+/**
+ * TRUST-49's file half: the files under `<dir>/assets/` against the derived set.
+ * A name that is not `assets/<64 hex>.<ext>`, a file whose bytes do not digest to
+ * its name, a derived file that is absent and a file nothing derives are each a
+ * disagreement.
+ */
+export function assetProblems(dir, derived) {
+  const problems = [];
+  const have = new Map();
+  const base = path.join(dir, "assets");
+  if (fs.existsSync(base)) {
+    for (const name of fs.readdirSync(base).sort()) {
+      const rel = `assets/${name}`;
+      const full = path.join(base, name);
+      if (!fs.statSync(full).isFile()) { problems.push(`${rel} is not a file`); continue; }
+      have.set(rel, fs.readFileSync(full));
+    }
+  }
+  for (const [rel, bytes] of have) {
+    const m = /^assets\/([0-9a-f]{64})\.(png|webp|jpg|md)$/.exec(rel);
+    if (!m) { problems.push(`${rel} is not assets/<sha256>.<ext>`); continue; }
+    if (createHash("sha256").update(bytes).digest("hex") !== m[1]) problems.push(`${rel} does not digest to its name`);
+    if (!derived.has(rel)) problems.push(`${rel} is extra: no listing derives it`);
+    else if (!derived.get(rel).equals(bytes)) problems.push(`${rel} holds other bytes than the derived file`);
+  }
+  for (const rel of derived.keys()) if (!have.has(rel)) problems.push(`${rel} is missing`);
+  return problems;
 }
 
 async function main(argv) {
@@ -590,6 +626,14 @@ async function run(opts, work, note) {
 
   if (carriedText === result.text) {
     note(`ok    the candidate is the regeneration of ${result.source} under ${result.generator}`);
+    if (opts.assets) {
+      const problems = assetProblems(opts.assets, result.assets);
+      if (problems.length) {
+        process.stderr.write(`FAIL  the candidate's asset files are not the set ${result.source} derives (TRUST-49):\n  ${problems.join("\n  ")}\n`);
+        return 1;
+      }
+      note(`ok    the candidate's ${result.assets.size} asset file(s) are exactly the derived set`);
+    }
     return 0;
   }
   process.stderr.write(

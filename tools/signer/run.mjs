@@ -65,6 +65,7 @@ import { recordStringProblems } from "../validate.mjs";
 import { receiptName, trailersOf } from "../served-set/provenance.mjs";
 import { PAGES_BASE, fetchServed } from "../served-set/served-vs-signed.mjs";
 import { blobAt, blobRawAt, gitMaybe, gitText } from "./git.mjs";
+import { ASSET_DIR, collectAssets } from "./assets.mjs";
 import {
   DOCUMENT_DOMAINS, keyPlan, readDelegationTimes, refusesDroppedKey, retirementRecordAt, trustAtCommit,
 } from "./key-window.mjs";
@@ -406,7 +407,23 @@ export async function signRun({
     if (typeof documents[name]?.bytes === "string") files[rel] = documents[name].bytes;
   }
 
+  // BOT-109: every asset the catalogue in this commit names, and no other. Bytes
+  // are not part of the record (a JSON field is a thing somebody re-serialises);
+  // they travel as `assetBytes`, a Map, and the record carries the list.
+  const assetBytes = new Map();
+  if (documents.index?.doc) {
+    const got = collectAssets({
+      root,
+      indexDoc: documents.index.doc,
+      headRef: head?.present ? head.sha : null,
+    });
+    for (const [rel, bytes] of got.assets) assetBytes.set(`${ASSET_DIR}${rel}`, bytes);
+    for (const problem of got.problems) refusals.push(`BLOCKED asset file: ${problem}`);
+    if (got.problems.length) codes.push(CODES.blocked);
+  }
+
   return {
+    assetBytes,
     schema: "astra.registry.signer-run/1",
     step: "sign",
     now,
@@ -458,8 +475,8 @@ export function commitMessage(record, runUrl) {
  * is a new document whose signature was made over other bytes (git.mjs's
  * header says the same thing about reading them back).
  */
-export function writeTree({ out, files }) {
-  fs.rmSync(out, { recursive: true, force: true });
+export function writeTree({ out, files, keep = false }) {
+  if (!keep) fs.rmSync(out, { recursive: true, force: true });
   for (const [rel, bytes] of Object.entries(files)) {
     const file = path.join(out, rel);
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -705,11 +722,12 @@ async function stepSign(args) {
   }
 
   const record = await signRun({ root, sourceCommit, head, now, available, delegatedAt, resignAfterHours });
-  writeTree({ out: args.out ?? "dist/signed", files: record.files });
+  writeTree({ out: args.out ?? "dist/signed", files: record.files, keep: false });
+  writeTree({ out: args.out ?? "dist/signed", files: Object.fromEntries(record.assetBytes), keep: true });
   // The bytes are on disk; the record is what every step after this one reads,
   // and it never carries them — a document in a JSON field is a document
   // somebody will re-serialise.
-  writeRecord(args.record, { ...record, files: Object.keys(record.files).sort() });
+  writeRecord(args.record, { ...record, assetBytes: undefined, ...(record.assetBytes.size ? { assets: [...record.assetBytes.keys()].sort() } : {}), files: Object.keys(record.files).sort() });
 
   for (const note of record.notes) console.log(`note  ${note}`);
   for (const alert of record.alerts) console.log(`::warning::${alert}`);
@@ -762,6 +780,15 @@ function stepCommit(args) {
       return 1;
     }
     files[rel] = fs.readFileSync(file, "utf8");
+  }
+  // BOT-109: the assets the record names, as bytes, and only those.
+  for (const rel of record.assets ?? []) {
+    const file = path.join(tree, rel);
+    if (!fs.existsSync(file)) {
+      console.error(`::error::${file} is named by the record and is not in the signed tree (BOT-109)`);
+      return 1;
+    }
+    files[rel] = fs.readFileSync(file);
   }
 
   const runUrl = `${process.env.GITHUB_SERVER_URL ?? "https://github.com"}/${process.env.GITHUB_REPOSITORY}` +
