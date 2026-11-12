@@ -185,8 +185,13 @@ const OWED = {
     "FLOW-13 requires one full entry per reason code, and `fix` is a closed list naming what clears the code. " +
     "For an owed code the contract states no `fix`, so a row here would be this repository's answer to a " +
     "contract question.",
-  codes: [],
-  each: {},
+  codes: ["R_DOM_ACCESS_HOLD"],
+  each: {
+    R_DOM_ACCESS_HOLD:
+      "Contract 6.23.0's hold (DEC-19; B.7): the bot does not emit it yet, so there is no title or remedy to " +
+      "write, and a row would be this repository's invention. The row lands with the bot change that emits it, " +
+      "and this entry is deleted then. Recorded here so that the token file at 6.31.0 does not read as dropping it.",
+  },
 };
 
 // B.7's waits that the bot reports: the token file gives each of them the
