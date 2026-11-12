@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "r2ipMcupKuyLirRsBFkf34tbgGd6vnFkitXzKHIBegzKx3jlAN/hF7xj3phxHa8O4KjML18l4uVlaM3K3jkfAQ=="
+      "sig": "7aXo3uy4NiKqyOZLPHrUOiR3zWr0HopWpiXKgUP86UH7evfH6lzYU4l4U1noEHAiwr05vH8a9SiXNc+az2SMCQ=="
     }
   ],
   "signed": {
-    "expires_at": "2026-12-12T04:41:28Z",
-    "issued_at": "2026-11-12T04:41:28Z",
+    "expires_at": "2026-12-12T07:07:23Z",
+    "issued_at": "2026-11-12T07:07:23Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
@@ -1881,7 +1881,7 @@
               "repo": "SpherePrime/PrimeAi",
               "tag": "v0.2.17"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.2.17"
           },
           {
@@ -5962,6 +5962,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 152
+    "serial": 153
   }
 }
