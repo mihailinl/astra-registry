@@ -955,6 +955,11 @@ that harms the people who run it without being malicious: one that spends
 their AI quota, their storage or their accounts' allowances against their
 interest.
 
+The category `put_back` — published as *Restored after a counter-notice* — is
+what a relist or an unrevoke carries when the plugin comes back because its
+author answered a notice about it. It is not a mistake of the registry's, and
+is not published as one.
+
 **A reset binds nothing and publishes nothing.** After it the listing is
 *frozen* — a listing that ever had an identity record is never grandfathered
 again — so the next release needs a binding line, or it is refused

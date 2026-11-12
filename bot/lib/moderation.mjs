@@ -127,6 +127,8 @@ export const ESCALATING_ACTIONS = ["yank", "delist", "deprecate", "revoke"];
  *     `review`, so the category is that row's and no other's;
  *   - "revert" is MOD-52's, and a revert is logged as `relist` or `unrevoke`,
  *     so `error`, `appeal_reversed` and `path_test` reach those two actions.
+ *   - `put_back` (6.31.0; MOD-59; BOT-112) is allowed with RELIST and UNREVOKE only, and
+ *     `compile-decision.mjs` further asks what it reverses.
  *
  * `appeal` is deliberately absent: §7.2 says "one category per `M_*` decision
  * except `M_APPEAL`", and §4.2 says "`category` (none for `M_APPEAL`)". An
@@ -140,10 +142,10 @@ export const CATEGORIES = {
   // is that, and was published as `malicious` because nothing else fitted.
   yank: ["malicious", "harmful_behaviour", "account_compromise", "account_sanction", "privacy", "broken", "security_defect", "author_request"],
   delist: ["malicious", "harmful_behaviour", "account_compromise", "account_sanction", "privacy", "impersonation", "broken", "licence", "naming", "legal", "author_request"],
-  relist: ["error", "appeal_reversed", "path_test"],
+  relist: ["error", "appeal_reversed", "put_back", "path_test"],
   deprecate: ["harmful_behaviour", "privacy", "broken", "security_defect", "licence", "legal", "path_test"],
   revoke: ["malicious", "harmful_behaviour", "account_compromise", "account_sanction", "privacy", "impersonation", "security_defect", "legal"],
-  unrevoke: ["error", "appeal_reversed", "path_test"],
+  unrevoke: ["error", "appeal_reversed", "put_back", "path_test"],
   // §7.2: "identity_reset (OPEN-OWNER-15) | IDENTITY_RESET", and nothing else
   // carries it. `M_IDENTITY_RESET` is the one decision whose log action is
   // `reset` (MOD-47, 2.5.0).
@@ -169,6 +171,9 @@ export const CORRECTABLE_ACTIONS = Object.freeze(["yank", "delist", "deprecate",
  */
 export const CATEGORY_WORDS = Object.freeze({
   harmful_behaviour: "Harms users' accounts, data or resources",
+  // 6.31.0 (MOD-59): a plugin brought back because its author answered a notice,
+  // which is not a mistake of the registry's and must not read as one (`error`).
+  put_back: "Restored after a counter-notice",
 });
 export const categoryWords = (c) => CATEGORY_WORDS[c] ?? (typeof c === "string" ? `${c[0].toUpperCase()}${c.slice(1).replace(/_/g, " ")}` : "");
 
