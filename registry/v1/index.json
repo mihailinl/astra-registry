@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "/c9ihOYiLxoGPNnw/uYyZTYhIOiIvvTCd/FfR3VgdXetx5UGeZ91wjy02DunrCp4Urp3LQ1GEiQNxUyAycfPCw=="
+      "sig": "r2ipMcupKuyLirRsBFkf34tbgGd6vnFkitXzKHIBegzKx3jlAN/hF7xj3phxHa8O4KjML18l4uVlaM3K3jkfAQ=="
     }
   ],
   "signed": {
-    "expires_at": "2026-12-11T21:05:11Z",
-    "issued_at": "2026-11-11T21:05:11Z",
+    "expires_at": "2026-12-12T04:41:28Z",
+    "issued_at": "2026-11-12T04:41:28Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
@@ -3320,6 +3320,67 @@
         "version": "2.5.0"
       },
       {
+        "added_at": "2026-11-12",
+        "author": "KNICE",
+        "capabilities": [
+          "tools"
+        ],
+        "description": "Read, create and edit Word, Excel and PowerPoint files and PDF pages locally.",
+        "download_url": "https://github.com/KnlCE/office-files/releases/download/v0.2.0/office-files-0.2.0-noarch.astraplugin",
+        "downloads": 0,
+        "i18n": {
+          "ru": {
+            "description": "Чтение, создание и редактирование файлов Word, Excel и PowerPoint и страниц PDF локально.",
+            "name": "Office Files"
+          }
+        },
+        "icon_url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA5NiA5NiI+CiAgPHJlY3Qgd2lkdGg9Ijk2IiBoZWlnaHQ9Ijk2IiByeD0iMjIiIGZpbGw9IiMyMjU1OTkiLz4KICA8cmVjdCB4PSIxNiIgeT0iMjMiIHdpZHRoPSIyNSIgaGVpZ2h0PSI1MSIgcng9IjQiIGZpbGw9IiNmZmYiLz4KICA8cGF0aCBkPSJNMjIgMzZoMTNNMjIgNDRoMTNNMjIgNTJoMTAiIHN0cm9rZT0iIzIyNTU5OSIgc3Ryb2tlLXdpZHRoPSIzIi8+CiAgPHJlY3QgeD0iMzYiIHk9IjE2IiB3aWR0aD0iMjYiIGhlaWdodD0iNTciIHJ4PSI0IiBmaWxsPSIjNjFjZGJiIi8+CiAgPHBhdGggZD0iTTQzIDMzaDEyTTQzIDQyaDEyTTQzIDUxaDEyTTQ5IDI3djMyIiBzdHJva2U9IiMyMjU1OTkiIHN0cm9rZS13aWR0aD0iMiIvPgogIDxyZWN0IHg9IjU2IiB5PSIyMyIgd2lkdGg9IjI1IiBoZWlnaHQ9IjUxIiByeD0iNCIgZmlsbD0iI2Y0YzY2YiIvPgogIDxwYXRoIGQ9Ik02MiA1OXYtOU02OSA1OVYzOU03NiA1OVYzMyIgc3Ryb2tlPSIjMjI1NTk5IiBzdHJva2Utd2lkdGg9IjQiLz4KPC9zdmc+Cg==",
+        "id": "office-files",
+        "license": "MIT",
+        "name": "Office Files",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/KnlCE/office-files/releases/download/v0.2.0/office-files-0.2.0-noarch.astraplugin",
+          "noarch": "https://github.com/KnlCE/office-files/releases/download/v0.2.0/office-files-0.2.0-noarch.astraplugin",
+          "windows-x64": "https://github.com/KnlCE/office-files/releases/download/v0.2.0/office-files-0.2.0-noarch.astraplugin"
+        },
+        "publisher": "KnlCE",
+        "readme": "# Office Files — Astra 0.2.0\n\nЛокальное чтение, создание и пакетное редактирование Word `.docx`, Excel `.xlsx` и PowerPoint `.pptx`, а также чтение и постраничная правка `.pdf`. Microsoft Office не требуется. Используются официальный Astra Python SDK, python-docx, openpyxl, python-pptx и PDFium (pypdfium2). Экспорт Office в PDF/PNG, пересчёт формул и старые форматы требуют дополнительного LibreOffice; чтение, правка и рендер PDF работают без него.\n\n## Загрузка в Astra\n\n1. Включите режим разработчика в настройках конфиденциальности Astra. Откройте **Plugins → Разработка → Импорт плагинов**. В секции «Загрузка плагина» нажмите «Обзор...», выберите эту папку, затем «Загрузить». Для готового `office-files-0.2.0-noarch.astraplugin` используйте «Импорт плагина → Выбрать файл...».\n2. Astra создаёт собственное Python-окружение из `requirements.txt`. Для разработки предусмотрена отдельная `.venv`.\n3. В стандартных настройках укажите разрешённые каталоги: один абсолютный путь на строку. Пустое поле разрешает все доступные локальные файлы. При необходимости укажите путь к `soffice.exe` на Windows или `soffice` на Linux.\n4. Попросите ИИ: «Найди Office Files через Tool Search, вызови office_help и создай отчёт Word, книгу Excel или презентацию PowerPoint».\n\nТулсы отложены через штатный Tool Search и проходят подтверждение Astra уровня High. Плагин объявляет только `tools`, исходящих разрешений Astra нет. Windows/Linux x64, Python≥3.10. Автор и лицензия владельцем ещё не назначены; публикация не выполнялась.\n\n## Тулсы\n\n| Тулс | Возможности |\n| --- | --- |\n| `office_help` | Схемы, операции и примеры; `language: \"ru\"` или `\"en\"` |\n| `office_inspect` | Структура, Word ID, slide/shape ID, содержимое, формулы и кеши, поиск, ограничения; PDF — текст по страницам, оглавление, метаданные |\n| `word_create`, `word_edit` | Runs, заголовки, списки, таблицы, картинки, стили, поля, колонтитулы, разрывы, шаблоны |\n| `excel_create`, `excel_edit` | Значения/формулы, оформление, листы, A1-диапазоны, таблицы, фильтры, имена, DV/CF, картинки, диаграммы |\n| `powerpoint_create`, `powerpoint_edit` | Шаблоны/layouts/placeholders, текст, фигуры, картинки, таблицы, диаграммы, заметки, операции со слайдами |\n| `pdf_edit` | Удалить, оставить (извлечь/разделить/переупорядочить), повернуть, переместить страницы, вставить страницы другого PDF (объединение) |\n| `office_export_pdf`, `office_render` | PDF и PNG через LibreOffice; PDF рендерится в PNG напрямую через PDFium; PNG читать существующим `read_image` |\n| `excel_recalculate` | Перенос вычисленных LibreOffice кешей формул в копию исходного XLSX |\n| `office_convert` | DOC→DOCX, XLS→XLSX, PPT→PPTX; XLSX→CSV с явной кодировкой и разделителем |\n\n## Контракт и примеры\n\nСоздание: `output_path`, `spec`. Правка: `input_path`, `output_path`, `revision` из инспекции, `operations[]`. Результат — JSON с путями, SHA-256 ревизией, проверкой и предупреждениями. Индексы начинаются с нуля; Word использует ID из последней инспекции. PowerPoint: дюймы; Word: миллиметры; шрифты: пункты.\n\nPowerPoint 16:9 имеет размер **13,333×7,5 дюйма** (4:3 —10×7,5). Для заголовка используйте `x: 0.8, y: 1.2, width: 11.7, height: 0.8`, а не пиксельные значения `60/170/840/110`. Объекты вне фактических границ шаблона отклоняются до сохранения. `allow_outside_slide: true` разрешает намеренное кадрирование и оставляет предупреждение. Ответ и инспекция содержат `layout_validation` (количество объектов, выходы за границы, пустые слайды); `visual_verification: \"not_performed\"` означает, что проверена геометрия, а не внешний вид. Для визуальной проверки используйте `office_render` и прочитайте полученные PNG.\n\n**Как делать, а не только чем.** `office_help` без `tool` возвращает `workflows` на языке `language`: порядок работы над презентацией, документом и таблицей (план → один вызов `*_create` → `office_render` → `read_image` → правка → снова рендер) и правила оформления слайдов (`slide_design`). Ответ `word_*`/`powerpoint_*` `create`/`edit` несёт `next_step`: что проверить дальше — отрендерить и посмотреть каждую страницу или слайд, а без LibreOffice — честно сказать в отчёте, что проверена только геометрия. Модель читает каждый результат инструмента, поэтому проверка встроена в работу, а не держится на системном промпте (Astra запрещает называть в нём конкретные инструменты).\n\nВызовите `office_help` с `{\"tool\":\"word_edit\",\"operation\":\"replace_text\",\"language\":\"ru\"}` для точной схемы операции. Полные переносимые спецификации находятся в `examples/word.json`, `examples/excel.json`, `examples/powerpoint.json`. Перед вызовом разрешите `mark.png` относительно папки примеров. Готовые файлы: `examples/quarterly.docx`, `.xlsx`, `.pptx`.\n\n```json\n{\"input_path\":\"/work/report.docx\",\"output_path\":\"/work/report-edited.docx\",\"revision\":\"SHA256_FROM_INSPECTION\",\"operations\":[{\"op\":\"replace_text\",\"find\":\"Привет\",\"replace\":\"Здравствуйте\"}]}\n```\n\nЧтение: `offset`, `limit`, `next_offset`; Excel: `sheet`, `range`, `mode: \"overview\"` для больших книг. `query` фильтрует текст. Длинные элементы имеют `truncated`/`content_excerpt`. Ключ `formula` означает формулу; строка `\"=...\"` без него — обычный текст. Формулы и сохранённые результаты показываются отдельно, openpyxl их не вычисляет.\n\n## PDF\n\n`office_inspect` с PDF возвращает по одному элементу на страницу: `page` (с нуля), `text`, размер в пунктах, поворот, метку страницы; в `summary` — число страниц, метаданные, оглавление и `pages_without_text`. Страница без текстового слоя обычно скан: отрендерите её `office_render` и прочитайте PNG через `read_image` (OCR не встроен). Пагинация и `query` работают так же, как для Office.\n\n`pdf_edit` принимает `revision` из инспекции и атомарный пакет операций; индексы относятся к результату предыдущей операции. Объединение — `insert_pdf` без `at`. Страницы копируются в новый документ, поэтому закладки, метаданные и интерактивные поля формы исходника не переносятся — ответ предупреждает об этом. Текст внутри PDF не редактируется: создайте DOCX и экспортируйте его `office_export_pdf`. Зашифрованные PDF отклоняются.\n\n```json\n{\"input_path\":\"/work/a.pdf\",\"output_path\":\"/work/merged.pdf\",\"revision\":\"SHA256_FROM_INSPECTION\",\"operations\":[{\"op\":\"insert_pdf\",\"path\":\"/work/b.pdf\"},{\"op\":\"rotate_pages\",\"pages\":[0],\"angle\":90}]}\n```\n\n## Терпимость к форме аргументов\n\nМодели иногда передают вложенный объект строкой JSON (`\"spec\": \"{\\\"blocks\\\": …}\"`), булево значение строкой (`\"overwrite\": \"true\"`) или называют `input_path` как `path`. Плагин чинит такие значения до проверки схемы — только когда тип не совпадает со схемой, а строка разбирается в нужный тип; обычные текстовые поля не трогаются. Найдено в тестовом чате Astra 2026-10-26.\n\n## Сохранность и ограничения\n\nСуществующий выход требует `overwrite: true` и получает резервную копию. Правки выполняются во временной папке; исходники проверяются повторно перед записью. Результат повторно открывается, OOXML и отношения проверяются, запись происходит атомарно. При ошибке частичный выход не публикуется. Разрешённые каталоги проверяются после разрешения ссылок. Настраиваются размер файла, распакованного ZIP, ответа инспекции и таймаут (максимум120 секунд; бюджет Astra180).\n\nРедактирование отказывает при макросах, ActiveX/вложенных объектах, цифровых подписях, SmartArt, Track Changes, анимациях/переходах, неподдерживаемых Excel shapes/extensions/pivot/slicer/external links и массивных/data-table формулах. Потеря пакетных частей или изменение незатронутого бинарного ресурса блокирует сохранение. Замена текста отказывает для изменяемого Word-run с рисунком, полем или специальным разрывом: сначала разделите run в Word. Обычная замена между текстовыми runs сохраняет оформление.\n\nКопирование листа сохраняет простые DV/CF, freeze и фильтр, но отказывает для листов с диаграммами/картинками/таблицами. Переименование листов с формулами/именами/диаграммами и удаление зависимых листов отказывают: библиотека не гарантирует обновление ссылок. Полное семантическое сохранение всех XML-расширений не гарантируется. Управление открытым Office, исполнение Python, макросы, шифрованные файлы, создание SmartArt/анимаций и полноценный Track Changes не реализованы.\n\nБез LibreOffice основные операции работают, остальные возвращают `UNAVAILABLE`. LibreOffice запускается без shell в отдельном профиле, с отключёнными макросами и обновлением ссылок. Таймаут/закрытие плагина завершают дерево рабочих процессов. Немедленная отмена со стороны Astra не обещается: SDK не передаёт отдельного токена отмены. Рендеринг и функции формул LibreOffice могут отличаться от Microsoft Office.\n\n## Разработка\n\n```powershell\npython -m venv .venv\n.venv/Scripts/python -m pip install -r requirements.txt\n.venv/Scripts/python -m pip install -e \".[dev]\"\n.venv/Scripts/python -m pytest -q\nastra-plugin check . --strict\nastra-plugin test .\nastra-plugin build . --reproducible\n```\n\nДля настоящих LO-тестов задайте `OFFICE_TEST_LIBREOFFICE` путём к движку. Без переменной они явно пропускаются. Примеры: `python -m examples.generate --libreoffice <путь>`; папки превью должны ещё не существовать. Результаты проверок: `VERIFICATION.md`.\n\nSDK выполняет регистрацию, авторизацию, handshake и logging. `src/registry.py` объединяет схемы, описания и справку; вложенные JSON проверяются до исполнения. Модель никогда не передаёт Python-код. Подход: [OpenCode](https://opencode.ai/docs/custom-tools/), [OpenClaw](https://docs.openclaw.ai/plugins/building-plugins), [Hermes productivity skills](https://github.com/NousResearch/hermes-agent/tree/main/skills/productivity).\n",
+        "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "office-files-0.2.0-noarch.astraplugin",
+                "sha256": "55d83f83c7fd75088a000faf33d26654069696a3ae2145db15c3db3adff6c7ff",
+                "size": 52529,
+                "url": "https://github.com/KnlCE/office-files/releases/download/v0.2.0/office-files-0.2.0-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools"
+            ],
+            "permissions": {},
+            "protocol": 1,
+            "published_at": "2026-11-12T04:35:59Z",
+            "release": {
+              "commit": "256b42ae864cc187aa36fce302500ae1196e4362",
+              "kind": "github_release",
+              "repo": "KnlCE/office-files",
+              "tag": "v0.2.0"
+            },
+            "review": "unreviewed",
+            "version": "0.2.0"
+          }
+        ],
+        "repository_url": "https://github.com/KnlCE/office-files",
+        "source": {
+          "kind": "github",
+          "repo": "KnlCE/office-files"
+        },
+        "stars": 0,
+        "updated_at": "2026-11-12T04:35:59Z",
+        "version": "0.2.0"
+      },
+      {
         "added_at": "2026-10-27",
         "author": "Taill",
         "capabilities": [
@@ -5887,6 +5948,12 @@
       }
     ],
     "publishers": {
+      "KnlCE": {
+        "description": "Astra's co-founder and main developer",
+        "display_name": "KNICE",
+        "tier": "astra_team",
+        "verified_at": "2026-08-19"
+      },
       "mihailinl": {
         "description": "Astra's creator and main developer",
         "display_name": "Mihailin",
@@ -5895,6 +5962,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 151
+    "serial": 152
   }
 }
