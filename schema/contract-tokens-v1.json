@@ -1,6 +1,6 @@
 {
-  "contract_version": "6.22.0",
-  "source_commit": "31e5f58013206d30fc456a9cae6d633b21986f4f",
+  "contract_version": "6.31.0",
+  "source_commit": "48aa33d1dac287696399d9e9286b1bb6c5ff9c3c",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -833,7 +833,8 @@
         "notice.stopped",
         "notice.moderated",
         "notice.binding",
-        "notice.sign_in"
+        "notice.sign_in",
+        "notice.sanction"
       ],
       "rows": [
         {
@@ -875,6 +876,11 @@
           "kind": "notice.sign_in",
           "on": "a reported `W_ELIGIBILITY_UNREADABLE` wait for an account whose newest verified reading is aged under ID-7 (past either bound), at most once a day per submission",
           "to": "the account whose reading is aged (ID-7)"
+        },
+        {
+          "kind": "notice.sanction",
+          "on": "a repeat-infringer block takes effect, or is lifted (MOD-17; since 6.31.0)",
+          "to": "the blocked account"
         }
       ],
       "emitter": [
@@ -955,6 +961,26 @@
       "id": "code:R_BINDING_CHANGED",
       "kind": "reason_code",
       "name": "R_BINDING_CHANGED",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "code:R_DOM_ACCESS_HOLD",
+      "kind": "reason_code",
+      "name": "R_DOM_ACCESS_HOLD",
       "emitter": [
         "registry"
       ],
@@ -1868,6 +1894,7 @@
         "author_request",
         "error",
         "appeal_reversed",
+        "put_back",
         "path_test",
         "identity_reset"
       ],
