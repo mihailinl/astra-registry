@@ -31,10 +31,16 @@
 # A cancelled run (the next watchdog run replaces an unfinished one) sends
 # nothing; the replacement says it.
 #
-# **No heartbeat here.** `bot/lib/alert-checks.mjs` (inside TRUST-31's set) has
-# no check for this workflow, so the alert job gives `no-heartbeat-because`
-# and posts the alarm only. Registering a `run-watchdog` check is on the list
-# for the next change that may touch the set.
+# **The heartbeat (fix No. 2).** The alert job posts receiver check
+# `run-watchdog` (bot/lib/alert-checks.mjs) after the alarm, like every other
+# check, so a watchdog that stops running pages on its own silence within a
+# day. Until the owner creates that check and stores
+# `ASTRA_DEADMAN_URL_RUN_WATCHDOG` in environment `alerts`, the step says so
+# in the job summary and stays green (the row's `receiver_pending`).
+#
+# Its stale-run and silent-workflow alarms are owner-class (the row's
+# `owner_codes`): with `ASTRA_ALERT_OWNER_CHAT_ID` set they go to the owner's
+# quiet chat only.
 
 name: Run watchdog
 
@@ -141,7 +147,9 @@ jobs:
       ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
       ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
       ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      ASTRA_ALERT_OWNER_CHAT_ID: ${{ secrets.ASTRA_ALERT_OWNER_CHAT_ID }}
       ASTRA_ALERT_STATE_HMAC_KEY: ${{ secrets.ASTRA_ALERT_STATE_HMAC_KEY }}
+      ASTRA_DEADMAN_URL_RUN_WATCHDOG: ${{ secrets.ASTRA_DEADMAN_URL_RUN_WATCHDOG }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -189,12 +197,7 @@ jobs:
         with:
           state: ${{ needs.alert-state.outputs.state }}
           verdict: verdict.json
-          no-heartbeat-because: >-
-            This workflow's check is not registered in bot/lib/alert-checks.mjs
-            (inside TRUST-31's set, so not edited by the change that added the
-            watchdog), so there is no receiver check to post to. Its own red X
-            and GitHub's failure e-mail are the other two paths, and the
-            verdict job needs no runner from environment `alerts` to turn red.
+          check: run-watchdog
 
   alert-save:
     needs: alert

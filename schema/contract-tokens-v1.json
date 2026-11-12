@@ -1,6 +1,6 @@
 {
-  "contract_version": "6.22.0",
-  "source_commit": "31e5f58013206d30fc456a9cae6d633b21986f4f",
+  "contract_version": "6.23.0",
+  "source_commit": "5ca150a9c4034298ad08c66335b68fbbe82a2dad",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -955,6 +955,26 @@
       "id": "code:R_BINDING_CHANGED",
       "kind": "reason_code",
       "name": "R_BINDING_CHANGED",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "code:R_DOM_ACCESS_HOLD",
+      "kind": "reason_code",
+      "name": "R_DOM_ACCESS_HOLD",
       "emitter": [
         "registry"
       ],
@@ -8001,6 +8021,15 @@
       "remedy": "Held for a human. Write the name in one alphabet. A name that borrows a single Cyrillic or Greek letter for its Latin shape renders as a name it does not contain, and the id charset cannot catch it because the id is not the string on the card."
     },
     {
+      "code": "R_DOM_ACCESS_HOLD",
+      "level": "review",
+      "stage": "policy",
+      "fix": "moderator",
+      "panel_only": false,
+      "title": "This release asks for dom_access, which is held for review for now",
+      "remedy": "Nothing for the author to change: a moderator reviews it. dom_access holds for review until a fixed Astra ships."
+    },
+    {
       "code": "R_FIRST_BINDING",
       "level": "review",
       "stage": "policy",
@@ -8159,7 +8188,7 @@
       "bot/lib/codes.mjs",
       "bot/lib/policy/constants.mjs"
     ],
-    "codes": 152
+    "codes": 153
   },
   "fixed_reasons": {
     "A_YANK": "Yanked at its author's own request, made from the Astra plugins panel.",

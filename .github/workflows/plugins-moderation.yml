@@ -131,23 +131,38 @@ on:
 
 permissions: {}
 
-# One group for the whole workflow, and no group on any job (BOT-5).
+# No workflow-level group (BOT-5 as of fix No. 2). Only `commit` is serialised.
 #
-# `cancel-in-progress: false` matters more here than in the ingest graph: a
-# cancelled run that had already pushed a release commit and not yet posted its
-# result leaves a decision applied on `main` and unsettled at the service, and
-# the next run re-posts it under BOT-82's key — which is fine — but a run
-# cancelled mid-push leaves nothing at all, and the hold it was releasing waits
-# another ten minutes. Never killing a started run is what keeps that to ten
-# minutes rather than to an operator noticing.
-concurrency:
-  # Renamed 2026-10-30 (was `registry-moderation`): after GitHub's 14:31Z incident a run's environment job sat
-  # `waiting` with no reviewer and no timer, and GitHub refused cancel, force-cancel and delete,
-  # so the orphan held this group for good and every later run queued behind it. A new name is
-  # the only way past a run GitHub will not end; BOT-5's rule (one workflow-level group,
-  # cancel-in-progress: false) is unchanged.
-  group: registry-moderation-2
-  cancel-in-progress: false
+# Until fix No. 2 one group held the whole run. On 2026-10-30 a run's
+# environment job sat `waiting` with no runner and no timer, GitHub refused to
+# cancel or delete it, and the group had to be renamed (`registry-moderation`
+# → `registry-moderation-2`) before anything could run again.
+#
+# Now only `commit`, the job with `contents: write`, is in a group, and the
+# group QUEUES (`queue: max`: up to 100 waiting, first in first out), so a
+# third `commit` waits instead of cancelling the second. Nothing that has
+# started is ever cancelled (`cancel-in-progress: false`), which is what the
+# old rule protected: a run cancelled mid-push leaves the hold it was releasing
+# waiting another ten minutes. Everything else runs outside any group, so a
+# job that hangs blocks only its own run.
+#
+# Two runs can now overlap, and both may list the same decision. `commit` is
+# idempotent by `service_decision_id` and by the settled record, and a push
+# that `main` moved under re-runs the compile against the new `main` (the
+# `apply` step), so the second run commits nothing for work the first landed
+# and `report` re-posts under BOT-82's key. What an overlap can cost is a
+# second `alert` for the same decision: MOD-8 alerts before every push that
+# could carry it. In the 200 runs to 2026-11-11, 3 were dispatched while the
+# run before them was still going.
+#
+# Overlapping runs also race the `settled` job's alert state (last saver wins:
+# an occasional duplicate page, or a lost or doubled "resolved").
+#
+# A hung `commit` holds the group, and every later run's `commit` waits behind
+# it; moderation takes no leases, so nothing is parked, but no decision lands
+# until it is cleared. Its name carries `vars.ASTRA_BOT_WRITER_EPOCH`: changing
+# that repository variable moves later runs to a fresh group with no edit to
+# this file (TRUST-31's set). docs/RUNBOOK.md §7.13.
 
 # Committed "false" since B-T5.1 (2026-10-14), as `plugins-ingest.yml`'s was
 # by B-T3.6 the day before. It was "true" through R3 and read by no step, so
@@ -195,7 +210,7 @@ jobs:
       # and in which run — no token and no response body (ops entry 100).
       settled: ${{ steps.history.outputs.settled }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # Every job in this run reads the same tree, which is also the tree
           # whose `job_workflow_sha` the service hashes under TRUST-31.
@@ -204,7 +219,7 @@ jobs:
           # which a shallow clone hides; `holdDeletions` refuses one rather
           # than report fewer.
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -291,12 +306,13 @@ jobs:
       ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
       ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
       ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      ASTRA_ALERT_OWNER_CHAT_ID: ${{ secrets.ASTRA_ALERT_OWNER_CHAT_ID }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -359,6 +375,12 @@ jobs:
     if: always() && !cancelled()
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # The one serialised job of this workflow (BOT-5); the comment above
+    # `env:` says why it is this one and why the group queues.
+    concurrency:
+      group: plugins-moderation-commit-${{ vars.ASTRA_BOT_WRITER_EPOCH || '0' }}
+      cancel-in-progress: false
+      queue: max
     permissions:
       contents: write
       id-token: none
@@ -366,7 +388,7 @@ jobs:
       results: ${{ steps.apply.outputs.results }}
       main_commit: ${{ steps.apply.outputs.main_commit }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # The compile reads git history: MOD-13's next advisory id is "one
           # more than the highest ever ADDED", which a shallow clone cannot
@@ -374,7 +396,7 @@ jobs:
           # `source.repo` of the listing.
           fetch-depth: 0
           ref: ${{ github.sha }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -649,10 +671,10 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -685,7 +707,7 @@ jobs:
     outputs:
       state: ${{ steps.state.outputs.state }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -696,7 +718,7 @@ jobs:
             bot/lib/alert-checks.mjs
             tools/lib/ids.mjs
           sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
       - uses: ./.github/actions/alert-state
@@ -732,16 +754,17 @@ jobs:
       ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
       ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
       ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      ASTRA_ALERT_OWNER_CHAT_ID: ${{ secrets.ASTRA_ALERT_OWNER_CHAT_ID }}
       # R4: signs and verifies the once-per-state memory (review of #480);
       # absent, every red pages and nothing is saved.
       ASTRA_ALERT_STATE_HMAC_KEY: ${{ secrets.ASTRA_ALERT_STATE_HMAC_KEY }}
       ASTRA_DEADMAN_URL_MODERATION_RUN: ${{ secrets.ASTRA_DEADMAN_URL_MODERATION_RUN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -804,7 +827,7 @@ jobs:
       contents: read
       id-token: none
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -815,7 +838,7 @@ jobs:
             bot/lib/alert-checks.mjs
             tools/lib/ids.mjs
           sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
       - uses: ./.github/actions/alert-state

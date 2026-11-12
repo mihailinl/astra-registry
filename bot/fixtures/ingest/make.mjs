@@ -217,9 +217,18 @@ export const FIXTURE_SIGNER_WORKFLOW =
  * would be a fixture in which the one hazard those rules exist for — a
  * repository id past 2^53 losing its last digits in `JSON.parse` — cannot
  * happen. One test below hands the bot a number deliberately.
+ *
+ * A STRANGER's pair, and not a real repository's. Until 2026-11-10 these were
+ * `mihailinl/AstraPlugins`'s own ids, which the policy exempts from
+ * `R_DOM_ACCESS_HOLD` — so every hold test that ran through `ingest` passed by
+ * the exemption and asked nothing. A test about the first-party repository
+ * passes `FIRST_PARTY_REPOSITORY_ID` / `FIRST_PARTY_OWNER_ID` explicitly.
  */
-export const FIXTURE_REPOSITORY_ID = "1203676452";
-export const FIXTURE_OWNER_ID = "193032699";
+export const FIXTURE_REPOSITORY_ID = "900000001";
+export const FIXTURE_OWNER_ID = "900000002";
+/** `mihailinl/AstraPlugins`'s ids, for the tests that are about it. */
+export const FIRST_PARTY_REPOSITORY_ID = "1203676452";
+export const FIRST_PARTY_OWNER_ID = "193032699";
 
 /** ID-28's ten, by the name the contract's table gives each OID. */
 const CERT_KEY_BY_FIELD = {

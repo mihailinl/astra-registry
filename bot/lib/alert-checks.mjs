@@ -55,6 +55,15 @@ export function isArmedAt(value) {
 export const CHECK_NAME_PATTERN = "^[a-z][a-z0-9-]{1,38}[a-z0-9]$";
 const CHECK_NAME_RE = new RegExp(CHECK_NAME_PATTERN);
 
+/**
+ * The alarm-code grammar, for `owner_codes`. bot/lib/alert-verdict.mjs's
+ * `CODE_PATTERN` is the original; this file imports nothing (the header of
+ * `alertsEnvironmentSecrets` says why), so it is spelled again here and
+ * `bot/tests/alert.test.mjs` holds the two equal.
+ */
+export const OWNER_CODE_PATTERN = "^[A-Z][A-Z0-9_]{0,47}$";
+const OWNER_CODE_RE = new RegExp(OWNER_CODE_PATTERN);
+
 /** BOT-85's floor: no bound is shorter than this, whatever the interval. */
 export const MIN_BOUND_MINUTES = 90;
 
@@ -243,6 +252,11 @@ export const CHECKS = [
     created_disarmed: false,
     armed_at: null,
     signals: ["success"],
+    // ROLL-45's runway (tools/served-set/runway.mjs): the trust document or an
+    // index key inside 90 days of running out. The remedy is a root ceremony,
+    // which only the owner runs, so these go to his quiet chat; the three
+    // comparisons beside them stay in the shared one.
+    owner_codes: ["ROLL_45_TRUST_EXPIRES_SOON", "ROLL_45_INDEX_KEY_EXPIRES_SOON"],
   },
   {
     name: "coverage-canary",
@@ -407,6 +421,10 @@ export const CHECKS = [
     created_disarmed: true,
     armed_at: "2026-09-24T11:22:44Z",
     signals: ["success"],
+    // The service answered `claim` in shadow three runs in a row (bot/lib/
+    // poll-run.mjs `SHADOW_RUNS_ALARM`): TRUST-31 is holding every bot call
+    // until the owner acknowledges the tree on the site. Only he can end it.
+    owner_codes: ["BOT_92_SHADOW_RUNS"],
   },
   {
     name: "deadline-watch",
@@ -463,6 +481,42 @@ export const CHECKS = [
     created_disarmed: false,
     armed_at: null,
     signals: ["success"],
+  },
+  {
+    name: "run-watchdog",
+    party: "registry",
+    workflow: "run-watchdog.yml",
+    // Fix No. 1 (#503) added the watchdog — is any run unfinished and older
+    // than 30 minutes, has a frequent workflow gone without a success — with
+    // `no-heartbeat-because`, since this file is inside TRUST-31's set. Fix
+    // No. 2 registers it. The watchdog is the one check whose own silence
+    // nothing else would notice: a stale run in ingest pages through it, and a
+    // watchdog that stopped looks exactly like an estate with nothing stale.
+    //
+    // 600 s is its cron, `*/10 * * * *`; its `workflow_run` wakers make it run
+    // more often, never less. GitHub feeds the schedule, so the bound is the
+    // day floor (`boundMinutes`). Created ARMED: the poster runs on a live
+    // schedule today (the rule above `CHECKS`).
+    source: "registry fix No. 2, .github/workflows/run-watchdog.yml, the `alert` job",
+    interval_seconds: 600,
+    created_disarmed: false,
+    armed_at: null,
+    signals: ["success"],
+    // `receiver_pending`: the owner's act that creates this check, stated
+    // while it may still be undone. While the ping secret is absent the
+    // heartbeat step says so in the job's summary and stays green, instead of
+    // turning the watchdog's alert job red every ten minutes for an act nobody
+    // has had time to perform. Safe after the act too: once the check exists on
+    // the receiver, a lost secret is silence, and the receiver pages on
+    // silence. Delete the member in any later change to this file after the
+    // secret exists, and a missing secret is red again like every other row's.
+    receiver_pending:
+      "create check run-watchdog on healthchecks.io (timeout 1439 minutes, grace 1 minute: its 1440-minute " +
+      "bound, as astra-plugins-ops tools/deadman-setup.mjs builds every check) and store its ping URL as " +
+      "secret ASTRA_DEADMAN_URL_RUN_WATCHDOG in environment `alerts`",
+    // The alarms only the owner can act on (bot/alert.mjs `ownerCodes`): a run
+    // GitHub will not end, a bot workflow that stopped succeeding.
+    owner_codes: ["A_RUN_STALE", "A_WORKFLOW_SILENT"],
   },
   // ── the four the plugins service posts to ──────────────────────────────────
   //
@@ -620,6 +674,25 @@ export function findCheck(name) {
 }
 
 /**
+ * Which of a verdict's codes need the OWNER, and nobody else: the codes its
+ * check's row lists in `owner_codes`. This is the one place that class is
+ * decided (registry fix No. 2); `bot/alert.mjs` routes by it and names no
+ * check. A check with no row, or a row with no `owner_codes`, has none.
+ *
+ * The class: an alarm whose remedy is an act only the owner can perform — a
+ * run GitHub will not end (`run-watchdog`), the trust document or an index
+ * key running out (`served-set`'s ROLL-45 runway: a root ceremony), and the
+ * plugins service answering in shadow run after run (`poll-and-sweep`'s
+ * BOT-92 streak: an acknowledgement on the site).
+ *
+ * @returns {Set<string>}
+ */
+export function ownerCodes(checkName, checks = CHECKS) {
+  const row = checks.find((c) => c.name === checkName);
+  return new Set(Array.isArray(row?.owner_codes) ? row.owner_codes : []);
+}
+
+/**
  * The secret in `alerts` that carries this check's WHOLE ping URL for this
  * signal. A name, never a URL, and never a base plus a name: `_START` is a
  * second secret rather than a path appended to the first. The receiver is
@@ -663,12 +736,13 @@ export function alertsEnvironmentSecrets() {
 
 /**
  * Secrets environment `alerts` MAY hold and every alert job reads when it
- * does: `bot/alert.mjs`'s `OPTIONAL_SECRETS`, held to that export by
+ * does — the copy chat, and since registry fix No. 2 the owner's quiet chat:
+ * `bot/alert.mjs`'s `OPTIONAL_SECRETS`, held to that export by
  * `bot/tests/alert.test.mjs`. Absent is a correct environment; present is one
  * too. A name here is never in `alertsEnvironmentSecrets()`.
  */
 export function optionalAlertsSecrets() {
-  return ["ASTRA_ALERT_COPY_CHAT_ID"];
+  return ["ASTRA_ALERT_COPY_CHAT_ID", "ASTRA_ALERT_OWNER_CHAT_ID"];
 }
 
 /**
@@ -713,6 +787,21 @@ export function tableProblems(checks = CHECKS) {
     }
     if (check.armed_at !== null && !check.created_disarmed) {
       problems.push(`${where}: armed_at is recorded for a check that was never disarmed`);
+    }
+    if (check.receiver_pending !== undefined) {
+      if (typeof check.receiver_pending !== "string" || check.receiver_pending.trim() === "") {
+        problems.push(`${where}: receiver_pending is not a sentence naming the owner's act`);
+      }
+      if (check.party !== "registry") problems.push(`${where}: receiver_pending on a check this repository does not post to`);
+    }
+    if (check.owner_codes !== undefined) {
+      if (!Array.isArray(check.owner_codes) || check.owner_codes.length === 0 ||
+        !check.owner_codes.every((c) => typeof c === "string" && OWNER_CODE_RE.test(c))) {
+        problems.push(`${where}: owner_codes is not a non-empty list of alarm codes (${OWNER_CODE_PATTERN})`);
+      } else if (new Set(check.owner_codes).size !== check.owner_codes.length) {
+        problems.push(`${where}: owner_codes lists a code twice`);
+      }
+      if (check.party !== "registry") problems.push(`${where}: owner_codes on a check whose alarms this repository does not send`);
     }
   }
   return problems;

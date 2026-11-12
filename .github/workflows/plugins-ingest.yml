@@ -145,22 +145,60 @@ on:
 # later is a visible edit and not an omission.
 permissions: {}
 
-# One group for the whole workflow, and no group on any job (BOT-5).
+# No workflow-level group (BOT-5 as of fix No. 2). Only `publish` is serialised.
 #
-# GitHub keeps exactly one PENDING run per group: queue a third and the middle
-# one is cancelled. With `cancel-in-progress: false` a run that has already
-# started is never killed, which is what matters here — a cancelled run that
-# had already claimed leaves those submissions leased to nobody until the lease
-# expires. Replacing a run that has not started yet is harmless, because it has
-# claimed nothing.
-concurrency:
-  # Renamed 2026-10-30 (was `plugins-ingest`): after GitHub's 14:31Z incident a run's environment job sat
-  # `waiting` with no reviewer and no timer, and GitHub refused cancel, force-cancel and delete,
-  # so the orphan held this group for good and every later run queued behind it. A new name is
-  # the only way past a run GitHub will not end; BOT-5's rule (one workflow-level group,
-  # cancel-in-progress: false) is unchanged.
-  group: plugins-ingest-2
-  cancel-in-progress: false
+# Until fix No. 2 one group held the whole run, from `roots` to `report`. A run
+# whose job never got a runner therefore held every later run for ever:
+# `timeout-minutes` counts only once a job is on a runner, and on 2026-10-30
+# GitHub refused cancel, force-cancel and delete for such a run, so the group
+# had to be renamed (`plugins-ingest` → `plugins-ingest-2`) to get past it. On
+# 2026-11-05 the same shape held `Moderation coverage` for five days.
+#
+# Now only the job that WRITES shared state, `publish` (`contents: write`, the
+# one push to `main`), is in a group, and that group QUEUES (`queue: max`: up to
+# 100 waiting, first in first out) rather than keeping one pending job and
+# cancelling the one before it. Everything else in this file runs outside any
+# group, so a job that hangs blocks only its own run, and the next run's jobs
+# go past it. Why nothing else needs the lock:
+#
+#   * `claim` cannot hand two runs the same submission: BOT-12 makes the service
+#     hold at most one live lease per submission, under concurrent claims too;
+#   * `report` posts a result the service keys and settles itself (BOT-17,
+#     BOT-18), and BOT-6 orders it after its own run's `publish`, not after
+#     anybody else's;
+#   * `remember` saves the poll memory under this run's own cache key. Two
+#     overlapping runs can each load the same memory, and the later save then
+#     drops the earlier run's registered tags; the next poll offers them again
+#     and the service answers a repeated `register` as the same tag (BOT-11).
+#     A lock on `remember` alone would not close that, since it is `load` to
+#     `remember` that races, and it would make one hung `remember` stop every
+#     publication;
+#   * the alert jobs only send messages.
+#
+# **What overlap does cost** (review of #506, S6). Two overlapping runs race
+# two small read-modify-write states, and the last saver wins: the poll memory
+# (above, and the BOT-92 shadow streak in it, which can then undercount, so
+# the owner's shadow alarm comes a run late, never falsely), and the alert
+# state of `poll-alert` (an occasional duplicate page, or a lost or doubled
+# "resolved").
+#
+# **What a hang costs, live** (S2). A run that hangs after `claim` holds its
+# leases only until they expire (60 minutes); the service then returns each
+# submission to the state it was claimed from and leases it again (FLOW-19).
+# But a hung `publish`, or a hung `alert` that `publish` needs, makes every
+# later run claim, wait behind it and expire too, and after 3 counted lease
+# ends a submission is PARKED (BOT-15: 6 hours, `W_LEASE_EXPIRED` shown to its
+# author). The run watchdog pages at 30 minutes, long before three lease
+# periods; docs/RUNBOOK.md §7.13 says what to do: bump the writer epoch, then
+# unpark. No guard in `claim` stops claiming while a writer is stuck: it would
+# need `actions: read` in a job that holds the bot token, or a new job in
+# front of it, and neither is a few lines.
+#
+# A hung `publish` holds the publish group, so the group's name carries
+# `vars.ASTRA_BOT_WRITER_EPOCH`:
+# changing that repository variable moves every later run to a fresh group with
+# no edit to this file, which is inside TRUST-31's set. A name is all it
+# changes; `publish-apply.mjs` still refuses a racing push it cannot prove safe.
 
 # Committed as `"true"` through R3's shadow, and read by every job that could
 # write or post. B-T3.6's commit (2026-10-13) turns it off, and the job_workflow_sha
@@ -201,7 +239,7 @@ jobs:
       status: ${{ steps.check.outputs.status }}
       verdict: ${{ steps.check.outputs.verdict }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # Every job in this run reads the same tree.
           ref: ${{ github.sha }}
@@ -214,7 +252,7 @@ jobs:
             tools/lib/ids.mjs
             registry/v1/root.json
           sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -259,14 +297,14 @@ jobs:
       # one and not whatever was saved under the prefix in between.
       cache_key: ${{ steps.restore.outputs.cache-matched-key }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           # `bot/lib/listing-state.mjs` walks `git log` for ID-25's "ever had
           # an identity record", and refuses a shallow clone rather than guess.
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -275,7 +313,7 @@ jobs:
       # what matches. Whatever comes back is bytes any workflow on `main`
       # could have saved under the prefix, which is why the next step verifies
       # the signature before it trusts a byte, and discards what fails.
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         id: restore
         with:
           path: .poll-memory
@@ -307,11 +345,11 @@ jobs:
       polled: ${{ steps.poll.outputs.polled }}
       tags: ${{ steps.poll.outputs.tags }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -346,11 +384,11 @@ jobs:
       # No credential in the checkout's config: `git ls-remote` runs in this
       # directory, and a persisted token would ride along to every repository
       # it asks.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -406,11 +444,15 @@ jobs:
       # The claim answer's `shadow` (BOT-92). `"true"` whenever the answer was
       # shadow or could not be read, never defaulted the other way.
       shadow: ${{ steps.claim.outputs.shadow }}
+      # What the claim answer said: `shadow`, `live`, or `none` when there was
+      # no answer to read. `remember` counts the shadow runs in a row, and the
+      # third pages the owner (BOT_92_SHADOW_RUNS, bot/lib/poll-run.mjs).
+      answered: ${{ steps.claim.outputs.answered }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -458,18 +500,18 @@ jobs:
     outputs:
       verdict: ${{ steps.remember.outputs.verdict }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
       # The entry `load` verified and no other. A miss is a failure, not a
       # fresh start: an entry that vanished between the two jobs is something
       # to look at, and a fresh memory would re-seed over it.
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         if: needs.load.outputs.cache_key != ''
         with:
           path: .poll-memory
@@ -486,11 +528,12 @@ jobs:
           ASTRA_SWEPT: ${{ needs.sweep.outputs.remote }}
           ASTRA_SWEEP_DUE: ${{ needs.load.outputs.sweep_due }}
           ASTRA_SWEEP_RESULT: ${{ needs.sweep.result }}
+          ASTRA_CLAIM_ANSWERED: ${{ needs.claim.outputs.answered }}
         run: node bot/lib/poll-run.mjs remember
 
       # Under this run's own key: a cache entry cannot be overwritten, and the
       # next `load` takes the newest under the prefix.
-      - uses: actions/cache/save@v4
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         if: steps.remember.outputs.changed == 'true'
         with:
           path: .poll-memory
@@ -513,7 +556,7 @@ jobs:
     outputs:
       state: ${{ steps.state.outputs.state }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -524,7 +567,7 @@ jobs:
             bot/lib/alert-checks.mjs
             tools/lib/ids.mjs
           sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
       - uses: ./.github/actions/alert-state
@@ -563,12 +606,13 @@ jobs:
       ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
       ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
       ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      ASTRA_ALERT_OWNER_CHAT_ID: ${{ secrets.ASTRA_ALERT_OWNER_CHAT_ID }}
       # R4: signs and verifies the once-per-state memory (review of #480);
       # absent, every red pages and nothing is saved.
       ASTRA_ALERT_STATE_HMAC_KEY: ${{ secrets.ASTRA_ALERT_STATE_HMAC_KEY }}
       ASTRA_DEADMAN_URL_POLL_AND_SWEEP: ${{ secrets.ASTRA_DEADMAN_URL_POLL_AND_SWEEP }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -581,7 +625,7 @@ jobs:
             bot/lib/alert-checks.mjs
             tools/lib/ids.mjs
           sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -610,7 +654,7 @@ jobs:
       contents: read
       id-token: none
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -621,7 +665,7 @@ jobs:
             bot/lib/alert-checks.mjs
             tools/lib/ids.mjs
           sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
       - uses: ./.github/actions/alert-state
@@ -666,10 +710,10 @@ jobs:
       # file a stranger's archive was near.
       verified: ${{ steps.verify.outputs.verified }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -697,19 +741,19 @@ jobs:
       # and stayed green would leave `check` downloading an artifact that does
       # not exist, and the reader of THAT failure is two jobs away from the
       # step that actually went wrong.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: fromJSON(needs.claim.outputs.count || '0') > 0
         with:
           name: assets-${{ fromJSON(needs.claim.outputs.submissions)[0] }}
           path: assets/${{ fromJSON(needs.claim.outputs.submissions)[0] }}
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: fromJSON(needs.claim.outputs.count || '0') > 1
         with:
           name: assets-${{ fromJSON(needs.claim.outputs.submissions)[1] }}
           path: assets/${{ fromJSON(needs.claim.outputs.submissions)[1] }}
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: fromJSON(needs.claim.outputs.count || '0') > 2
         with:
           name: assets-${{ fromJSON(needs.claim.outputs.submissions)[2] }}
@@ -745,10 +789,10 @@ jobs:
       contents: read
       id-token: none
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -790,7 +834,7 @@ jobs:
       # neither, and it is already the job that opens a stranger's archive, so
       # a poisoned probe build reaches nothing a poisoned archive would not.
       - name: Cache the probe build
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry
@@ -810,7 +854,7 @@ jobs:
           set -euo pipefail
           test -x bot/manifest-probe/target/release/astra-manifest-probe
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           # By name, never by pattern — and not because this job is a write
           # job (it is not), but because a pattern here would let this job pull
@@ -834,12 +878,12 @@ jobs:
       # names are `facts-<submission_id>` and `listing-<submission_id>`, and
       # `bot/tests/workflows.test.mjs` asserts this job uploads those two and
       # no third: a third name would be a channel nothing downstream validates.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: facts-${{ matrix.submission_id }}
           path: out/facts.json
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: listing-${{ matrix.submission_id }}
           path: out/listing
@@ -878,10 +922,10 @@ jobs:
     env:
       ASTRA_ASK_OUTCOMES: pass B_BINDING_UNUSABLE W_ELIGIBILITY_UNREADABLE shadow
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -931,11 +975,11 @@ jobs:
       alerts: ${{ steps.decide.outputs.alerts }}
       publish: ${{ steps.decide.outputs.publish }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -943,11 +987,11 @@ jobs:
       # listings that publication would write. A pattern is allowed HERE and
       # nowhere downstream: this job holds nothing an exploited upload could
       # spend.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: facts-*
           path: facts
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: listing-*
           path: listings
@@ -976,7 +1020,7 @@ jobs:
       # rather than in `publish` because this job holds nothing: it is the one
       # place in the graph where globbing over what other jobs uploaded costs
       # nothing.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: decisions
           path: decisions
@@ -1026,8 +1070,9 @@ jobs:
       ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
       ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
       ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      ASTRA_ALERT_OWNER_CHAT_ID: ${{ secrets.ASTRA_ALERT_OWNER_CHAT_ID }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -1044,7 +1089,7 @@ jobs:
             tools/lib/canonical.mjs
             tools/lib/ids.mjs
           sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -1108,6 +1153,13 @@ jobs:
       needs.decide.result == 'success' && needs.decide.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # The one serialised job of this workflow (BOT-5): two pushes to `main`
+    # never run at once, and a third waits in line instead of cancelling the
+    # second, whose run has already claimed. The comment above `env:` says why.
+    concurrency:
+      group: plugins-ingest-publish-${{ vars.ASTRA_BOT_WRITER_EPOCH || '0' }}
+      cancel-in-progress: false
+      queue: max
     permissions:
       contents: write
       id-token: none
@@ -1116,33 +1168,33 @@ jobs:
       queued: ${{ steps.apply.outputs.queued }}
       refused: ${{ steps.apply.outputs.refused }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           # `publish-apply` takes this commit as its base: what it compares
           # against, when a push is refused, to decide whether the other commit
           # is a conflict or somebody else's plugin.
           ref: ${{ github.sha }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: decisions
           path: decisions
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         if: fromJSON(needs.claim.outputs.count || '0') > 0
         with:
           name: listing-${{ fromJSON(needs.claim.outputs.submissions)[0] }}
           path: listings
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         if: fromJSON(needs.claim.outputs.count || '0') > 1
         with:
           name: listing-${{ fromJSON(needs.claim.outputs.submissions)[1] }}
           path: listings
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         if: fromJSON(needs.claim.outputs.count || '0') > 2
         with:
           name: listing-${{ fromJSON(needs.claim.outputs.submissions)[2] }}
@@ -1192,7 +1244,7 @@ jobs:
       # `decision_id` and `main_commit` — are facts about the commit this job
       # just made. `report` downloads this by name; it holds a bot token and
       # may not glob (BOT-56).
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: results
           path: results
@@ -1221,14 +1273,14 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: results
           path: results
