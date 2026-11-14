@@ -584,10 +584,9 @@ export const CODES = {
     level: "error", stage: "rpc-scan", fix: "new_tag",
     title: "Source in the bundle calls a high-risk host RPC the manifest does not declare",
     remedy:
-      "Declare the capability the call needs, or remove the call. The six that block are " +
-      "`FireTrigger`, `SendChatMessage`, `SetVariable`, `SetThemeContribution`, `Speak` and " +
-      "`ProposeCommand` — each of them acts on the user's session, in Astra's voice or with " +
-      "Astra's authority, rather than inside your plugin.",
+      "Declare the capability the call needs, or remove the call. The four that block are " +
+      "`FireTrigger`, `SendChatMessage`, `SetVariable` and `SetThemeContribution` — each of them " +
+      "acts on the user's session rather than inside your plugin.",
   },
   W_HOST_RPC_UNDECLARED: { level: "warn", stage: "rpc-scan", fix: "none", title: "Source in the bundle names a host RPC the manifest does not declare", remedy: "Not blocking. Declare the capability if the call is real; ignore this if the string is a comment or a log line." },
   W_HOST_RPC_IN_OPAQUE_FILE: {

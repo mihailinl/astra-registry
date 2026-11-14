@@ -7161,7 +7161,7 @@
       "fix": "new_tag",
       "panel_only": false,
       "title": "Source in the bundle calls a high-risk host RPC the manifest does not declare",
-      "remedy": "Declare the capability the call needs, or remove the call. The six that block are `FireTrigger`, `SendChatMessage`, `SetVariable`, `SetThemeContribution`, `Speak` and `ProposeCommand` — each of them acts on the user's session, in Astra's voice or with Astra's authority, rather than inside your plugin."
+      "remedy": "Declare the capability the call needs, or remove the call. The four that block are `FireTrigger`, `SendChatMessage`, `SetVariable` and `SetThemeContribution` — each of them acts on the user's session rather than inside your plugin."
     },
     {
       "code": "E_ID_CHARSET",
