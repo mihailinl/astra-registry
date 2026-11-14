@@ -29,7 +29,12 @@ export const HIGH_RISK = ["client", "dom_access", "send_chat_message", "set_them
 
 /**
  * The Phase 4 consent sheet's high-risk set (§5.6), which is the one above plus
- * `push_to_ui`.
+ * `push_to_ui`, and the three the daemon marked high-risk after it — `speak`
+ * (a plugin's words heard in Astra's voice), `receive_attachments` (a person's
+ * photos in a plugin's hands) and `propose_commands` (a command that, once kept,
+ * runs with Astra's authority), all AstraPlugins 23134b8. None of the three is
+ * refused at Tier 2 upstream, so none joins `HIGH_RISK`: the checkbox is the
+ * decision, and the review hold stays at four.
  *
  * It is NOT the auto-ingest trigger set, and the difference is intentional: a
  * consent checkbox costs the user one read, while blocking review costs the
@@ -37,7 +42,9 @@ export const HIGH_RISK = ["client", "dom_access", "send_chat_message", "set_them
  * above reach outside it. A newly requested `push_to_ui` is therefore a
  * widening — 24 h and a notification — not a review.
  */
-export const CONSENT_HIGH_RISK = [...HIGH_RISK, "push_to_ui"].sort();
+export const CONSENT_HIGH_RISK = [
+  ...HIGH_RISK, "push_to_ui", "speak", "receive_attachments", "propose_commands",
+].sort();
 
 /** Hours a widened or high-risk release waits before it publishes itself. */
 export const DELAY_HOURS = 24;
@@ -674,9 +681,14 @@ export function policyCodeDef(code, opts = {}) {
  */
 export const KNOWN_AUTHORITY = [
   // [capabilities]
-  "tools", "tts", "stt", "wakeword", "ai_provider", "client", "actions",
-  "triggers", "ui_contributions", "event_handlers", "dom_access",
-  // [permissions] (§5.6)
+  "tools", "tts", "stt", "wakeword", "ai_provider", "web_search", "image_provider",
+  "music_provider", "client", "actions", "triggers", "ui_contributions",
+  "event_handlers", "dom_access",
+  // [permissions] (§5.6, and the ids the daemon added after it: read_ai_settings,
+  // then speak, read_user_identity, receive_attachments, request_settings_change
+  // and propose_commands — AstraPlugins 23134b8)
   "fire_trigger", "subscribe_events", "set_variable", "get_config",
   "send_chat_message", "push_to_ui", "set_theme_contribution",
+  "read_ai_settings", "speak", "read_user_identity", "receive_attachments",
+  "request_settings_change", "propose_commands",
 ].sort();
