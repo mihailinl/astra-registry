@@ -1,0 +1,15 @@
+{
+  "actor": "author",
+  "decided_at": "2026-11-14T03:23:44Z",
+  "decision_id": "2715f36c01226ce29ce0a672e1ca7192",
+  "reasons": [
+    "A_WITHDRAW"
+  ],
+  "repo": "SpherePrime/PrimeAi",
+  "repository_id": "1368572489",
+  "schema": "astra.registry.decision/1",
+  "state": "stopped",
+  "submission_id": "12a010e4-8f5b-49f6-9060-42e15531e052",
+  "tag": "0.2.19",
+  "trigger": "stop"
+}
