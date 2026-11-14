@@ -98,7 +98,7 @@ const FLOOR = {
   tier2: 4, // TIER2_REFUSED_PERMISSIONS
   highRisk: 5, // HIGH_RISK_PERMISSIONS
   botHighRisk: 4, // this repository's HIGH_RISK
-  botConsent: 5, // this repository's CONSENT_HIGH_RISK
+  botConsent: 8, // this repository's CONSENT_HIGH_RISK
 };
 
 /** The comparison could not be made. Never a pass, never a skip. */
@@ -508,7 +508,10 @@ test("the bot's CONSENT_HIGH_RISK is the crate's HIGH_RISK_PERMISSIONS, name for
   );
 });
 
-test("the two tiers differ by push_to_ui, and by nothing else", () => {
+/** What the consent sheet holds beyond the Tier-2 refusals, as a named set: push_to_ui since 2026-09-20, the other three since AstraPlugins 23134b8. */
+const CONSENT_ONLY = ["propose_commands", "push_to_ui", "receive_attachments", "speak"];
+
+test("the two tiers differ by push_to_ui and the three checkbox-only ids, and by nothing else", () => {
   // The difference between the lists is the whole reason there are two of them,
   // and both repositories say so in prose: §5.5 refuses four outright, §5.6
   // gives five a checkbox, and `push_to_ui` is the one that is worth a click
@@ -521,9 +524,9 @@ test("the two tiers differ by push_to_ui, and by nothing else", () => {
   const consentOnly = differences(CONSENT_HIGH_RISK, HIGH_RISK).onlyOurs;
   assert.deepEqual(
     consentOnly,
-    ["push_to_ui"],
+    CONSENT_ONLY,
     `CONSENT_HIGH_RISK minus HIGH_RISK is [${consentOnly.join(", ")}] and it is supposed to be exactly ` +
-    "[push_to_ui]. §5.6 gives push_to_ui a checkbox; §5.5 does not refuse it to a Tier-2 import. Collapsing the " +
+    `[${CONSENT_ONLY.join(", ")}]. §5.6 gives each a checkbox; §5.5 does not refuse any of them to a Tier-2 import. Collapsing the ` +
     "two lists into one either silently refuses an imported plugin that draws in its own panel, or silently drops " +
     "a consent checkbox — and a version of this suite that only compared each list to its counterpart would stay " +
     "green while both sides were tidied together.",
@@ -534,9 +537,9 @@ test("the two tiers differ by push_to_ui, and by nothing else", () => {
   ).onlyOurs;
   assert.deepEqual(
     theirConsentOnly,
-    ["push_to_ui"],
+    CONSENT_ONLY,
     `HIGH_RISK_PERMISSIONS minus TIER2_REFUSED_PERMISSIONS at ${c.ref} is [${theirConsentOnly.join(", ")}] and was ` +
-    "[push_to_ui] on 2026-09-20. The crate's own tests hold this too; if it went red there first, the pin is what " +
+    "[push_to_ui] on 2026-09-20, with propose_commands, receive_attachments and speak added by AstraPlugins 23134b8. The crate's own tests hold this too; if it went red there first, the pin is what " +
     "moves.",
   );
 });

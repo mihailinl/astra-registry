@@ -357,9 +357,9 @@ fn probe(request: &Request) -> Response {
 ///     empty after trimming passes; anything else is refused;
 ///   * both keys are top-level keys, and `kind` is asked first.
 ///
-/// It is a copy only until the pin reaches a crate that has the function:
-/// `the_reservation_is_a_copy_only_until_the_pinned_crate_has_its_own` goes red
-/// on that bump. A file that is not TOML is not judged here; the crate names
+/// The crate has the function itself since AstraPlugins 23134b8; the probe keeps
+/// only the registry's sentences, and `the_probes_reservation_agrees_with_the_crates_own`
+/// holds the two to one verdict. A file that is not TOML is not judged here; the crate names
 /// that below, exactly as it did before the reservation.
 fn reserved_item_keys(plugin_toml: &str) -> Option<Finding> {
     let top = plugin_toml.parse::<toml::Table>().ok()?;
@@ -656,10 +656,9 @@ arch = ["x86_64"]
     #[test]
     fn a_kind_other_than_plugin_is_refused_by_name() {
         let toml = top(r#"kind = "game-integration""#);
-        assert!(
-            PluginManifest::from_str(&toml).is_ok(),
-            "the crate at the pin accepts this, which is why the probe has to ask: {toml}"
-        );
+        // The crate at the pin refuses this too now, in the client's words; the
+        // probe asks first so that the registry's words are the ones an author reads.
+        assert!(PluginManifest::from_str(&toml).is_err(), "the crate refuses a kind: {toml}");
         assert_eq!(refusal(&toml), KIND_REFUSED);
         for kind in ["Plugin", "plugin ", "", "plugins"] {
             assert_eq!(
@@ -765,28 +764,29 @@ game = { steam_appid = 3527290, product = "PEAK" }
         assert_eq!(codes(&probe(&req(&broken))), vec!["E_MANIFEST_INVALID"]);
     }
 
-    /// The copy above is a copy of a function the pinned crate does not have
-    /// yet. The bump that brings it (Astra's `check_reserved_keys`, re-vendored
-    /// by AstraPlugins) is the moment to stop copying: call the crate's
-    /// function over the cases above and assert it agrees, then delete this
-    /// test. Until then a copy that outlived its reason would go on judging
-    /// manifests next to the definition it was copied from, unnoticed.
+    /// The probe keeps its own sentences ("this registry lists plugins only for
+    /// now") but the crate at the pin now has the rule itself, `check_reserved_keys`
+    /// (AstraPlugins 23134b8). So the two are held to one verdict: over every case
+    /// above, the crate refuses exactly when the probe does. A copy that drifted
+    /// from the definition it was copied from would judge manifests by a second rule.
     #[test]
-    fn the_reservation_is_a_copy_only_until_the_pinned_crate_has_its_own() {
-        let (pin, text) = pinned_file(
-            "astra-plugin-cli/vendor/astra-plugin-manifest/src/manifest.rs",
-            "the probe's reserved-key copy and the crate's own check",
-        );
-        assert!(
-            text.contains("pub struct PluginManifest"),
-            "{pin}'s manifest.rs does not define PluginManifest, so this read the wrong file"
-        );
-        assert!(
-            !text.contains("fn check_reserved_keys"),
-            "the crate at {pin} has its own `check_reserved_keys`. Make the probe's copy agree with it \
-             by calling it over the reserved-key cases, keep only the registry's sentences here, and \
-             delete this test."
-        );
+    fn the_probes_reservation_agrees_with_the_crates_own() {
+        use astra_plugin_manifest::check_reserved_keys;
+        let cases: Vec<String> = [
+            "", r#"kind = "plugin""#, r#"kind = "game-integration""#, r#"kind = "Plugin""#, r#"kind = """#,
+            "kind = 5", r#"kind = ["plugin"]"#, "requires = []", "requires = {}", r#"requires = """#,
+            r#"requires = "  ""#, r#"requires = [{ id = "x", range = "^1" }]"#, r#"requires = "x""#,
+            "requires = 1", "requires = false",
+        ]
+        .iter()
+        .map(|c| top(c))
+        .collect();
+        for toml in &cases {
+            let raw: toml::Table = toml.parse().expect("the case is TOML");
+            let crate_refuses = check_reserved_keys(raw.get("kind"), raw.get("requires")).is_err();
+            let probe_refuses = reserved_item_keys(toml).is_some();
+            assert_eq!(crate_refuses, probe_refuses, "the crate and the probe disagree about:\n{toml}");
+        }
     }
 
     /// The sections the CLI's fork silently dropped. If any of them stops
