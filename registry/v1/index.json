@@ -1832,7 +1832,7 @@
           "ui_contributions"
         ],
         "description": "AI chat, web search, and image and video generation. Automatic model routing, manual model selection, and connection checks in the plugin settings.",
-        "download_url": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.19/dwertyfa-prime-ai-0.2.19-noarch.astraplugin",
+        "download_url": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.20/dwertyfa-prime-ai-0.2.20-noarch.astraplugin",
         "downloads": 0,
         "i18n": {
           "ru": {
@@ -1845,12 +1845,38 @@
         "license": "MIT",
         "name": "PrimeAI",
         "platform_downloads": {
-          "linux-x64": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.19/dwertyfa-prime-ai-0.2.19-noarch.astraplugin",
-          "noarch": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.19/dwertyfa-prime-ai-0.2.19-noarch.astraplugin",
-          "windows-x64": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.19/dwertyfa-prime-ai-0.2.19-noarch.astraplugin"
+          "linux-x64": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.20/dwertyfa-prime-ai-0.2.20-noarch.astraplugin",
+          "noarch": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.20/dwertyfa-prime-ai-0.2.20-noarch.astraplugin",
+          "windows-x64": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.20/dwertyfa-prime-ai-0.2.20-noarch.astraplugin"
         },
         "readme": "# PrimeAI for Astra\n\nPrimeAI gives Astra free access to AI models. Install the plugin, pick PrimeAI as the AI provider, and chat without your own API keys or paid subscriptions.\n\nWhat you get:\n\n- **Free AI chat** — text models with automatic route selection, or a model you pick yourself.\n- **Screenshots and images in chat** — attach or paste a screenshot in Astra's chat and the model sees it (vision models).\n- **Web search** — answers with fresh results from the internet.\n- **Image and video generation** — on request, right in the chat.\n- **Task instructions** — a server library of guides the assistant reads when a task needs them.\n\n## ⚠️ Changed on install: Tool Search is turned off\n\nOn its first start after installation, PrimeAI switches off Astra's **Tool Search** setting (`Enable Tool Search`, `tool_search.enabled = false`). With Tool Search on, Astra hides most tools behind a search step and models call them with guessed arguments; with it off, the model receives every tool with its schema.\n\nThis happens once per installation. If you turn Tool Search back on in Astra's settings, PrimeAI leaves your choice alone. If Astra does not accept the change live, the plugin writes it to Astra's `settings.json`, and it applies after Astra restarts.\n\n## How screenshots reach the model\n\nAstra's plugin protocol passes only text to an AI provider plugin, so chat attachments are normally lost. PrimeAI reads them from Astra's own chat event stream on the local daemon, the same one Astra's window uses, and re-attaches them to the matching message before sending the request. Images stay in memory only while the plugin runs and are not saved to disk.\n\n## Settings\n\nThe plugin page lets you choose the text, image and video models, check the connection, and toggle **Краткие ответы** (short answers, on by default).\n\nThe plugin connects to `https://sphereprime.online` automatically using short-lived sessions. No shared server key is included in the source or bundle. To use a different deployment, create `deployment.json` in the installed plugin directory:\n\n```json\n{\n  \"serverUrl\": \"https://<host>/\",\n  \"pluginToken\": \"\"\n}\n```\n\n## Tools\n\n- `primeai_web_search` — `query` and an optional `limit` from 1 to 10. Built-in Astra `web_search` calls are redirected when PrimeAI provides the model.\n- `primeai_generate_image`, `primeai_generate_video` — generated files are available for 24 hours.\n- `primeai_search_instructions`, `primeai_read_instruction` — search the instruction library and read a module by `id` (`offset`/`limit` up to 16000 characters; follow `nextOffset`).\n\n## Build\n\n```sh\nbun install\nbun run typecheck\nbun run test\nbun run bundle\n```\n\nOutput: `dwertyfa-prime-ai-<version>-noarch.astraplugin`.\n\n## Releases\n\nSet the version with `astra-plugin version <version>`, commit, and push the matching `v<version>` tag. GitHub Actions calls Astra's pinned release workflow to build, attest, and publish the bundle. Local bundles are for manual installation.\n",
         "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "dwertyfa-prime-ai-0.2.20-noarch.astraplugin",
+                "sha256": "4b4f8e14ad0e5f8efb3372bc3f404334f5a8d202144db0795b5a068a528073d6",
+                "size": 256962,
+                "url": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.20/dwertyfa-prime-ai-0.2.20-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "ai_provider",
+              "tools",
+              "ui_contributions"
+            ],
+            "permissions": {},
+            "protocol": 1,
+            "published_at": "2026-11-14T06:55:51Z",
+            "release": {
+              "commit": "bd14a38abd0881cb133b24a011e2c2dbe1e6c108",
+              "kind": "github_release",
+              "repo": "SpherePrime/PrimeAi",
+              "tag": "v0.2.20"
+            },
+            "review": "unreviewed",
+            "version": "0.2.20"
+          },
           {
             "artifacts": {
               "noarch": {
@@ -2222,8 +2248,8 @@
           "repo": "SpherePrime/PrimeAi"
         },
         "stars": 0,
-        "updated_at": "2026-11-14T03:17:43Z",
-        "version": "0.2.19"
+        "updated_at": "2026-11-14T06:55:51Z",
+        "version": "0.2.20"
       },
       {
         "added_at": "2026-10-25",
@@ -6041,6 +6067,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 156
+    "serial": 157
   }
 }
