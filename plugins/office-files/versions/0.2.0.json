@@ -1,0 +1,27 @@
+{
+  "$comment": "Derived from KnlCE/office-files@v0.2.0. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "office-files",
+  "version": "0.2.0",
+  "published_at": "2026-11-12T04:35:59Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "KnlCE/office-files",
+    "tag": "v0.2.0",
+    "commit": "256b42ae864cc187aa36fce302500ae1196e4362"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/KnlCE/office-files/releases/download/v0.2.0/office-files-0.2.0-noarch.astraplugin",
+      "filename": "office-files-0.2.0-noarch.astraplugin",
+      "sha256": "55d83f83c7fd75088a000faf33d26654069696a3ae2145db15c3db3adff6c7ff",
+      "size": 52529
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "tools"
+  ],
+  "permissions": {}
+}

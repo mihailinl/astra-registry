@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:55d83f83c7fd75088a000faf33d26654069696a3ae2145db15c3db3adff6c7ff"
+  ],
+  "commit": "256b42ae864cc187aa36fce302500ae1196e4362",
+  "decided_at": "2026-11-12T04:38:17Z",
+  "decision_id": "f965b841a42db514e6a645a8c207d17f",
+  "fingerprint": "d5d1e5966a0f4f42",
+  "plugin_id": "office-files",
+  "reasons": [
+    "P_PUBLISHED",
+    "P_REVIEW_PRIORITY"
+  ],
+  "repo": "KnlCE/office-files",
+  "repository_id": "1454409322",
+  "repository_owner_id": "114572819",
+  "run": "43155878103/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "fe5eabdf-97de-4d0e-8235-0f94f28710e8",
+  "tag": "v0.2.0",
+  "trigger": "ci",
+  "version": "0.2.0"
+}

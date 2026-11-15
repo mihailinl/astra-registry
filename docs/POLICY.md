@@ -307,9 +307,10 @@ a review.
 **What a declaration is worth now that Phase 4 has landed.** A declaration is
 enforced at run time. `require_permission` runs at the top of every host RPC
 that needs one: `HOST_RPC_PERMISSIONS` in
-`astra-daemon/src/plugins/host_service.rs` is the table, and it names all ten
-RPCs — six gated (`SubscribeEvents`, `SendChatMessage`, `FireTrigger`,
-`SetVariable`, `SetThemeContribution`, `PushToUi`) and four deliberately not
+`astra-daemon/src/plugins/host_service.rs` is the table, and it names all sixteen
+RPCs — twelve gated (`SubscribeEvents`, `SendChatMessage`, `FireTrigger`,
+`SetVariable`, `SetThemeContribution`, `PushToUi`, `GetAiSettings`, `Speak`,
+`StopSpeaking`, `GetUserIdentity`, `RequestSettingsChange`, `ProposeCommand`) and four deliberately not
 (`Register`, `GetPluginSelfConfig`, `PluginLog`, `GetDaemonInfo`, none of which
 acts on anything outside the plugin). A canary reads that table rather than the
 methods, so a new RPC with no gate is a failing test instead of a silent
@@ -966,6 +967,11 @@ published as *Harms users' accounts, data or resources* — exists for a plugin
 that harms the people who run it without being malicious: one that spends
 their AI quota, their storage or their accounts' allowances against their
 interest.
+
+The category `put_back` — published as *Restored after a counter-notice* — is
+what a relist or an unrevoke carries when the plugin comes back because its
+author answered a notice about it. It is not a mistake of the registry's, and
+is not published as one.
 
 **A reset binds nothing and publishes nothing.** After it the listing is
 *frozen* — a listing that ever had an identity record is never grandfathered
