@@ -1,8 +1,8 @@
 // Does the bundle call host RPCs it did not declare?
 //
-// `PluginHostService` is the plugin→daemon direction: ten methods, four of
+// `PluginHostService` is the plugin→daemon direction: sixteen methods, four of
 // which every plugin may always call (`Register`, `PluginLog`,
-// `GetPluginSelfConfig`, `GetDaemonInfo` — see `ALWAYS_ALLOWED`) and six of
+// `GetPluginSelfConfig`, `GetDaemonInfo` — see `ALWAYS_ALLOWED`) and twelve of
 // which act on the user's session. The manifest says which of those a plugin is
 // for. This looks in the shipped files for the names of the others.
 //
@@ -24,7 +24,7 @@
 //
 //   * The Python SDK ships `plugin_pb2.py`, whose serialized descriptor
 //     contains the name of every method of every service in the proto. It is a
-//     source file by extension and it names all ten.
+//     source file by extension and it names all sixteen.
 //   * A Rust or Go plugin links a generated client whose stubs carry the
 //     gRPC path string for each method whether or not the author calls it.
 //     Whether the linker drops the unused ones is a build-configuration detail,
@@ -33,8 +33,8 @@
 // So the scan classifies each file and grades the evidence:
 //
 //   AUTHOR SOURCE      a text file that is not vendored and not generated.
-//                      A hit here is what the check is for -> block on the four
-//                      high-risk methods, warn on the rest.
+//                      A hit here is what the check is for -> block on the six
+//                      methods that act outside the plugin, warn on the rest.
 //   VENDORED/GENERATED site-packages, node_modules, *_pb2.py, *.pb.go, dist/…
 //                      Skipped entirely. Its contents are the SDK's, not the
 //                      author's.
@@ -46,7 +46,7 @@
 // a clean scan as "this plugin makes no undeclared calls".
 
 /**
- * The ten methods of `PluginHostService`, from `proto/plugin.proto`.
+ * The sixteen methods of `PluginHostService`, from `proto/plugin.proto`.
  *
  * Held against it, rather than remembered: `bot/manifest-probe`'s
  * `the_host_rpc_list_is_the_protos_and_not_a_copy_of_it` reads this array as
@@ -69,6 +69,12 @@ export const HOST_RPCS = [
   "SetVariable",
   "SetThemeContribution",
   "PushToUi",
+  "GetAiSettings",
+  "Speak",
+  "StopSpeaking",
+  "GetUserIdentity",
+  "RequestSettingsChange",
+  "ProposeCommand",
 ];
 
 /**
@@ -109,9 +115,15 @@ const ALWAYS_ALLOWED = new Set([
  * daemon's own `decide_grants` is the thing that decides, and this is a lint
  * over shipped source, not a gate.
  *
- * `blocking` is the plan's list, verbatim: these four act outside the plugin —
+ * `blocking` is the plan's list, plus two: these six act outside the plugin —
  * they fire the user's automations, speak as the user in their chat, write the
- * daemon's variables, and restyle the whole application.
+ * daemon's variables, restyle the whole application, say words aloud in Astra's
+ * voice (`Speak`), and offer a command that, once the person keeps it, runs on
+ * its triggers with Astra's authority (`ProposeCommand`, a high-risk permission).
+ * `RequestSettingsChange` is NOT blocking: it only asks, each request is a card
+ * the person answers, and nothing changes without their Allow. The reads
+ * (`GetAiSettings`, `GetUserIdentity`) and `StopSpeaking` (cutting your own
+ * speech, gated by `speak` like `Speak`) warn.
  *
  * Every `permission` below must be a real id in
  * `astra-plugin-manifest::PERMISSION_NAMES`. That is pinned from Rust, where
@@ -144,6 +156,12 @@ export const RPC_RULES = {
   SetThemeContribution: { permission: "set_theme_contribution", capability: "ui_contributions", blocking: true },
   PushToUi: { permission: "push_to_ui", capability: "ui_contributions", blocking: false },
   SubscribeEvents: { permission: "subscribe_events", capability: "event_handlers", blocking: false },
+  GetAiSettings: { permission: "read_ai_settings", blocking: false },
+  Speak: { permission: "speak", blocking: true },
+  StopSpeaking: { permission: "speak", blocking: false },
+  GetUserIdentity: { permission: "read_user_identity", blocking: false },
+  RequestSettingsChange: { permission: "request_settings_change", blocking: false },
+  ProposeCommand: { permission: "propose_commands", blocking: true },
 };
 
 // ── what "vendored" is allowed to mean ──────────────────────────────────────
@@ -369,7 +387,7 @@ export function scanHostRpcs(files, declared) {
       });
     }
     if (where.weak.length) {
-      // **`review` for the four that act outside the plugin, `warn` for the
+      // **`review` for the six that act outside the plugin, `warn` for the
       // rest.** A silent skip meant renaming one directory turned the check off
       // entirely; downgrading it to a `warn` would leave the same bypass in
       // place, because `warn` does not hold anything — `bot/lib/policy.mjs`

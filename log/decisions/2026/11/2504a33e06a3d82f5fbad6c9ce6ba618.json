@@ -1,0 +1,13 @@
+{
+  "actor": "bot",
+  "decided_at": "2026-11-12T13:23:00Z",
+  "decision_id": "2504a33e06a3d82f5fbad6c9ce6ba618",
+  "reasons": [
+    "E_RELEASE_NOT_FOUND"
+  ],
+  "run": "43226469122/1",
+  "schema": "astra.registry.decision/1",
+  "state": "refused",
+  "submission_id": "963ffec9-b341-4d0f-9a1c-615f88971119",
+  "trigger": "panel"
+}

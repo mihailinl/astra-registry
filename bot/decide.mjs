@@ -322,6 +322,7 @@ export async function decideRelease(opts, deps = {}) {
     queued: result.derived
       ? readQueueEntry(opts.root, result.derived.plugin.id, result.derived.version.version)
       : null,
+    sourceIds: result.identity ?? null,
     approval: opts.approvedBy
       ? { by: opts.approvedBy, at: opts.approvedAt ?? now, for: opts.approvedFor ?? null, publishNow: opts.publishNow === true }
       : null,

@@ -502,7 +502,10 @@ export async function ingest(opts, deps = {}) {
   );
   if (f.errors.length) return finish(f, null, opts);
 
-  const facts = first.facts;
+  // What the release asks for is every bundle's ask, not the first one's.
+  const authority = releaseAuthority(perBundle);
+  const facts = { ...first.facts, capabilities: authority.capabilities };
+  const manifest = { ...first.manifest, permissions: authority.permissions };
   if (!parseSemver(facts.version)) {
     f.error("E_VERSION_INCONSISTENT", "version", `${JSON.stringify(facts.version)} is not a semver version`);
     return finish(f, null, opts);
@@ -591,7 +594,7 @@ export async function ingest(opts, deps = {}) {
   // ── write the listing, then hold it to this repository's own rules ────────
   const derived = deriveListing({
     facts,
-    manifest: first.manifest,
+    manifest,
     repo: opts.repo,
     tag: opts.tag,
     commit,
@@ -757,6 +760,34 @@ function spill(bytes) {
 }
 
 /** The registry's one timestamp spelling: seconds precision, UTC, no offset. */
+/**
+ * The authority a RELEASE asks for: the union over every bundle of it.
+ *
+ * The record and the decision used to read the first bundle alone, so a
+ * release whose Linux bundle declared nothing and whose Windows bundle asked
+ * for `dom_access` was decided — and listed — as asking for nothing, while
+ * every Windows install ran a bundle whose own `MANIFEST.json` asked for it.
+ * Each platform installs its own bundle, so what the release asks for is
+ * what ANY of its bundles asks for: `[capabilities]` by name, and
+ * `MANIFEST.permissions` by key, each key's block taken from the first
+ * bundle (in asset order) that declares it. Bundles that agree, which is
+ * every live multi-platform listing today, derive exactly what they did.
+ *
+ * @param {{facts: {capabilities?: string[]}, manifest: {permissions?: object}}[]} bundles
+ * @returns {{capabilities: string[], permissions: object|undefined}}
+ */
+function releaseAuthority(bundles) {
+  const capabilities = [...new Set(bundles.flatMap((b) => (Array.isArray(b.facts?.capabilities) ? b.facts.capabilities : []).map(String)))].sort();
+  let permissions;
+  for (const b of bundles) {
+    const block = b.manifest?.permissions;
+    if (!block || typeof block !== "object" || Array.isArray(block)) continue;
+    permissions ??= {};
+    for (const [name, value] of Object.entries(block)) if (!Object.hasOwn(permissions, name)) permissions[name] = value;
+  }
+  return { capabilities, permissions };
+}
+
 function normaliseTime(value) {
   const d = new Date(value ?? Date.now());
   return `${(Number.isNaN(d.getTime()) ? new Date() : d).toISOString().slice(0, 19)}Z`;
@@ -1413,7 +1444,10 @@ export async function checkFacts(opts, deps = {}) {
   }
   if (f.errors.length) return write(null);
 
-  const facts = first.facts;
+  // What the release asks for is every bundle's ask (`releaseAuthority`).
+  const authority = releaseAuthority(perBundle);
+  const facts = { ...first.facts, capabilities: authority.capabilities };
+  const manifest = { ...first.manifest, permissions: authority.permissions };
   const { plugins } = loadSources(root);
   const existing = plugins.find((p) => p.doc?.id === facts.id) ?? null;
   const catalogue = plugins.filter((p) => p.doc?.id).map((p) => ({ id: p.doc.id, name: p.doc.name ?? "", i18n: p.doc.i18n }));
@@ -1432,7 +1466,7 @@ export async function checkFacts(opts, deps = {}) {
     f.absorb(scanHostRpcs(b.files, { capabilities: b.facts.capabilities, permissions: b.manifest.permissions }), b.where);
   }
   const derived = deriveListing({
-    facts, manifest: first.manifest, repo: repo ?? "unknown/unknown", tag: v.tag ?? null, commit: v.commit ?? null,
+    facts, manifest, repo: repo ?? "unknown/unknown", tag: v.tag ?? null, commit: v.commit ?? null,
     publishedAt: typeof v.published_at === "string" ? v.published_at : normaliseTime(null),
     artifacts, files: first.files, ownershipMethod: null, existingPlugin: existing?.doc ?? null, policy,
   });
