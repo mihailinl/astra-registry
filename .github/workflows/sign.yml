@@ -161,12 +161,12 @@ jobs:
       # `ref: main` and not `github.sha`, because on a `workflow_run` event
       # `github.sha` is the head the TRIGGERING run saw. The signer signs what
       # `main` says now — including the commit that triggering run just made.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: main
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -232,7 +232,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist/receipt
           : > "dist/receipt/${{ steps.commit.outputs.signed_sha }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         id: receipt-upload
         if: steps.commit.outputs.committed == 'true'
         continue-on-error: true
@@ -241,7 +241,7 @@ jobs:
           path: dist/receipt
           if-no-files-found: error
           retention-days: 90
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         id: receipt-retry
         if: steps.commit.outputs.committed == 'true' && steps.receipt-upload.outcome == 'failure'
         with:
@@ -306,13 +306,13 @@ jobs:
       # Source-Commit ADDED policy/pages-withdrawal-list.json", and a shallow
       # clone answers that with a shrug — which reads as "not armed", which
       # puts an unsigned list in front of clients that have already armed.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: main
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -386,7 +386,7 @@ jobs:
         run: node tools/signer/run.mjs --step pages --out dist/pages --site dist/site --record pages.json
 
       # 90 days, so the fallback above has something to find.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: steps.site.outcome == 'success'
         with:
           name: pages-site
@@ -394,14 +394,14 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         if: steps.assemble.outputs.deploy == 'true'
         with:
           path: dist/pages
 
       - id: deployment
         if: steps.assemble.outputs.deploy == 'true'
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
 
   # ── alert-state: R4's memory for `alert`, restored without the alarm credential ──
   #
@@ -419,7 +419,7 @@ jobs:
     outputs:
       state: ${{ steps.state.outputs.state }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -430,7 +430,7 @@ jobs:
             bot/lib/alert-checks.mjs
             tools/lib/ids.mjs
           sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
       - uses: ./.github/actions/alert-state
@@ -474,7 +474,7 @@ jobs:
       # Only what this job runs, at this commit. A job holding the alarm
       # channel's credential reads no author code and checks out no more of
       # this repository than the scripts it executes (BOT-46).
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -489,7 +489,7 @@ jobs:
             tools/signer/verdict.mjs
           sparse-checkout-cone-mode: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
@@ -530,7 +530,7 @@ jobs:
       contents: read
       id-token: none
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -541,7 +541,7 @@ jobs:
             bot/lib/alert-checks.mjs
             tools/lib/ids.mjs
           sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
       - uses: ./.github/actions/alert-state

@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:db5f6835fb499623d5b247663f59065ded724005f34ecf7acc9d293311b208a3"
+  ],
+  "commit": "3e0b317fd8b83c83c7340e068904b58e4035399c",
+  "decided_at": "2026-11-12T07:29:28Z",
+  "decision_id": "91bd769c0b862847afb7df23204f495c",
+  "fingerprint": "6ebb1937b8036acf",
+  "plugin_id": "astra-chess",
+  "reasons": [
+    "R_IDENTITY_CHANGED",
+    "R_FIRST_BINDING"
+  ],
+  "repo": "MINICE-AI/astra-chess",
+  "repository_id": "1343092393",
+  "repository_owner_id": "280318216",
+  "run": "43175391624/1",
+  "schema": "astra.registry.decision/1",
+  "state": "held",
+  "submission_id": "f88b45c2-c56c-436f-ad7a-82d5cd2738c7",
+  "tag": "v0.1.19",
+  "trigger": "ci",
+  "version": "0.1.19"
+}

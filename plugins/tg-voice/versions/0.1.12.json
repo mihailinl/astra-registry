@@ -1,0 +1,50 @@
+{
+  "$comment": "Derived from YaniChap/astra-telegram-assistant@v0.1.12. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "tg-voice",
+  "version": "0.1.12",
+  "published_at": "2026-11-11T20:13:31Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "YaniChap/astra-telegram-assistant",
+    "tag": "v0.1.12",
+    "commit": "03d8c31029e6b26bfe1577a0838202db278d480c"
+  },
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://github.com/YaniChap/astra-telegram-assistant/releases/download/v0.1.12/tg-voice-0.1.12-linux-x64.astraplugin",
+      "filename": "tg-voice-0.1.12-linux-x64.astraplugin",
+      "sha256": "82c61d95c861ba9926be3d07a8d7d728cfb2d6252c394b120293a9ae322a10ae",
+      "size": 7880258
+    },
+    "windows-x64": {
+      "url": "https://github.com/YaniChap/astra-telegram-assistant/releases/download/v0.1.12/tg-voice-0.1.12-windows-x64.astraplugin",
+      "filename": "tg-voice-0.1.12-windows-x64.astraplugin",
+      "sha256": "7bc3eb8d08567242dfd6cb287d24c5e977fa2277bfec4c6bd005e72a7294635f",
+      "size": 7664329
+    }
+  },
+  "protocol": 1,
+  "min_astra_version": "0.2.7",
+  "capabilities": [
+    "client",
+    "event_handlers",
+    "tools",
+    "ui_contributions"
+  ],
+  "permissions": {
+    "client": {
+      "reason": "Requests speech through Astra’s configured voice engine when the daemon permits plugin client access"
+    },
+    "push_to_ui": {
+      "reason": "Displays plugin status and controls"
+    },
+    "send_chat_message": {
+      "reason": "Sends recent Telegram message context to Astra AI to generate reply drafts"
+    },
+    "subscribe_events": {
+      "reason": "Receives Astra events required for plugin operation"
+    }
+  }
+}

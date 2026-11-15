@@ -1,0 +1,25 @@
+{
+  "$comment": "Derived from YaniChap/astra-telegram-assistant@v0.1.12 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "schema": "astra.registry.plugin/1",
+  "id": "tg-voice",
+  "name": "Voice Message Assistant",
+  "summary": "Telegram integration for the Astra local AI assistant. Receives messages, checks user access by Telegram @username, forwards messages to Astra, and automatically sends replies back to Telegram.…",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "YaniChap/astra-telegram-assistant"
+  },
+  "added_at": "2026-11-11",
+  "description": "Telegram integration for the Astra local AI assistant. Receives messages, checks user access by Telegram @username, forwards messages to Astra, and automatically sends replies back to Telegram. Supports voice playback of assistant replies.",
+  "author": {
+    "name": "YaniChap"
+  },
+  "icon": "icon.svg",
+  "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "Голосовой помощник",
+      "summary": "Голосовой помощник для локального ИИ-ассистента Astra. Принимает сообщения, проверяет доступ пользователей по Telegram @username, передаёт сообщения Astra и автоматически отправляет ответы обратно в…"
+    }
+  }
+}

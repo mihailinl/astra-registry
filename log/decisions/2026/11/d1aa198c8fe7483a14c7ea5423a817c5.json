@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:6d6e0b5bdf65a9e418374d2cd5b69221348af8e7d1ad433ed4ea2a5e804f06a4"
+  ],
+  "commit": "259df61c9f7318600711d49582901fc33ac11c23",
+  "decided_at": "2026-11-11T04:54:18Z",
+  "decision_id": "d1aa198c8fe7483a14c7ea5423a817c5",
+  "fingerprint": "d0c66288da824ec8",
+  "plugin_id": "vrm-workshop",
+  "reasons": [
+    "P_PUBLISHED",
+    "P_REVIEW_PRIORITY"
+  ],
+  "repo": "megapunk04/vrm-workshop",
+  "repository_id": "1453497204",
+  "repository_owner_id": "256235971",
+  "run": "42962034166/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "d1608ff9-7c9d-43af-8d05-f1617b2bd11d",
+  "tag": "v1.0.0",
+  "trigger": "ci",
+  "version": "1.0.0"
+}

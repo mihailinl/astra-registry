@@ -1,0 +1,26 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "linux-x64:c0dac7d76b06ec05a3579d17f534e2541cf3f12420bd2db5a5a4477813ce4c77",
+    "windows-x64:b880be2ccd38197771b9a78164db65ffbb5eed2995aeee3552f9266912ca87a4"
+  ],
+  "commit": "c16b36e831cc3cef6ab3733445cec456ca8cf432",
+  "decided_at": "2026-11-12T09:22:32Z",
+  "decision_id": "2f7c24a9da37f406cfef8a27c6398e66",
+  "fingerprint": "c49797f473ef1e48",
+  "plugin_id": "web-stt",
+  "reasons": [
+    "P_PUBLISHED",
+    "P_REVIEW_PRIORITY"
+  ],
+  "repo": "LilKALINOV/Astra-Google-STT",
+  "repository_id": "1357861685",
+  "repository_owner_id": "150132236",
+  "run": "43190553931/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "5dfe0ef4-808c-42da-88e0-f9455fe3ea33",
+  "tag": "v0.6.1",
+  "trigger": "poll",
+  "version": "0.6.1"
+}
