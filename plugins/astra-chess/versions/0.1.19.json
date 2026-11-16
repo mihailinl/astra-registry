@@ -1,0 +1,32 @@
+{
+  "$comment": "Derived from MINICE-AI/astra-chess@v0.1.19. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "astra-chess",
+  "version": "0.1.19",
+  "published_at": "2026-11-12T06:16:05Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "MINICE-AI/astra-chess",
+    "tag": "v0.1.19",
+    "commit": "3e0b317fd8b83c83c7340e068904b58e4035399c"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/MINICE-AI/astra-chess/releases/download/v0.1.19/astra-chess-0.1.19-noarch.astraplugin",
+      "filename": "astra-chess-0.1.19-noarch.astraplugin",
+      "sha256": "db5f6835fb499623d5b247663f59065ded724005f34ecf7acc9d293311b208a3",
+      "size": 322830
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "tools",
+    "ui_contributions"
+  ],
+  "permissions": {
+    "send_chat_message": {
+      "reason": "Sends the position and in-game chat messages to the selected model so it can make moves and reply to the player."
+    }
+  }
+}
