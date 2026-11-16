@@ -116,6 +116,14 @@ export async function run() {
   // listing rather than a made-up one, so that this is the tree the approval
   // will actually meet: a fixture that had never contained the case would prove
   // nothing about it.
+  //
+  // PRE-MOVE versions are the ones whose release.repo is not MOVED_TO. Once the
+  // re-release is ingested the listing also holds versions built from MINICE-AI
+  // (the publish path runs this suite on the DERIVED tree, with the new version
+  // file in it): those are not pre-move, the yank cases leave them as they are,
+  // and they are never refused. Counting every file as pre-move made this test
+  // refuse the very publish it exists to allow (2026-11-16, astra-chess 0.1.19:
+  // "4 of 5 pre-move versions refused").
   await test("a listing that moves repository keeps its yanked history, and no live version of the old one", async () => {
     const MOVED_TO = "MINICE-AI/astra-chess";
     const src = path.join(REPO_ROOT, "plugins", "astra-chess");
@@ -129,20 +137,21 @@ export async function run() {
       fs.writeFileSync(pf, stableStringify(p));
       const vdir = path.join(dir, "plugins", "astra-chess", "versions");
       const names = fs.readdirSync(vdir).filter((n) => n.endsWith(".json")).sort();
-      names.forEach((n, i) => {
+      const pre = names.filter((n) => JSON.parse(fs.readFileSync(path.join(vdir, n), "utf8")).release?.repo !== MOVED_TO);
+      pre.forEach((n, i) => {
         const vf = path.join(vdir, n);
         const v = JSON.parse(fs.readFileSync(vf, "utf8"));
-        if (yank(i, names.length)) v.yanked = true; else delete v.yanked;
+        if (yank(i, pre.length)) v.yanked = true; else delete v.yanked;
         fs.writeFileSync(vf, stableStringify(v));
       });
-      return { dir, versions: names.length };
+      return { dir, versions: pre.length, after: names.length - pre.length };
     };
     const mismatches = async (dir) => errorsMatching((await validateTree(dir)).report, "is not the listing's source repo");
 
     // Every old version still live: each one is refused. This is the rule doing
     // its job, and the reason the re-release cannot publish without step 1.
     const live = moved("moved-live", () => false);
-    assert(live.versions >= 4, `astra-chess has ${live.versions} version file(s); it had 4 when this was written`);
+    assert(live.versions >= 4, `astra-chess has ${live.versions} pre-move version(s); it had 4 when this was written`);
     const liveHits = await mismatches(live.dir);
     assertEqual(liveHits.length, live.versions,
       `${liveHits.length} of ${live.versions} pre-move versions refused; every live version from the old repository must be`);
