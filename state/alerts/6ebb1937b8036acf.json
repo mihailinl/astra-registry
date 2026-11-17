@@ -1,0 +1,11 @@
+{
+  "approval_decided_at": "2026-11-16T04:04:19Z",
+  "delivered_at": "2026-11-16T04:07:36Z",
+  "digest": "6ebb1937b8036acffd3f1271b7ae64dc40fe50aac87c69e65c3b6733fd75b91f",
+  "event": "approval",
+  "fingerprint": "6ebb1937b8036acf",
+  "held_decision_id": "91bd769c0b862847afb7df23204f495c",
+  "run": "43801833798/1",
+  "schema": "astra.registry.alert/1",
+  "token_hash": "e6ebdf9405fbe3c2"
+}
