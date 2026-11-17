@@ -354,9 +354,10 @@ always an update, and nothing there carries a publication delay.
 above is keyed on what a plugin *declares*, and a declaration is now enforced at
 run time. `require_permission` runs at the top of every host RPC that needs one;
 `HOST_RPC_PERMISSIONS` in `astra-daemon/src/plugins/host_service.rs` is the
-table, and it names all ten RPCs — six gated (`SubscribeEvents`,
+table, and it names all sixteen RPCs — twelve gated (`SubscribeEvents`,
 `SendChatMessage`, `FireTrigger`, `SetVariable`, `SetThemeContribution`,
-`PushToUi`) and four deliberately not (`Register`, `GetPluginSelfConfig`,
+`PushToUi`, `GetAiSettings`, `Speak`, `StopSpeaking`, `GetUserIdentity`,
+`RequestSettingsChange`, `ProposeCommand`) and four deliberately not (`Register`, `GetPluginSelfConfig`,
 `PluginLog`, `GetDaemonInfo`, none of which acts on anything outside the
 plugin). A test reads that table rather than the methods, so a new RPC with no
 gate is a failing test instead of a silent omission. So a plugin that declares

@@ -129,7 +129,7 @@
           "enum": [
             "review_passed", "malicious", "harmful_behaviour", "account_compromise", "account_sanction",
             "privacy", "impersonation", "broken", "security_defect", "licence",
-            "naming", "legal", "author_request", "error", "appeal_reversed", "path_test",
+            "naming", "legal", "author_request", "error", "appeal_reversed", "put_back", "path_test",
             "identity_reset"
           ]
         },

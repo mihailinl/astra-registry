@@ -35,6 +35,7 @@
 // whole argument is that it composes none. So each signal is its own whole
 // URL, in its own secret, and an absent one fails closed with the name.
 
+import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -161,6 +162,23 @@ export async function postHeartbeat({
 
   const name = secretName(check, signal);
   const url = env[name];
+  if ((typeof url !== "string" || url.trim() === "") && known.receiver_pending) {
+    // A check the owner has not created yet (its row's `receiver_pending`):
+    // said where a person reads it — the log and the job's summary — and not
+    // red, because nothing can page for a check that does not exist, and once
+    // it exists a lost secret is silence the receiver pages on.
+    const line = `${name} is not set in this job, so no heartbeat was posted for receiver check ${check}. ` +
+      `It waits on the owner: ${known.receiver_pending}.`;
+    log.log(`::warning title=Receiver check ${check} is not created yet::${line}`);
+    if (env.GITHUB_STEP_SUMMARY) {
+      try {
+        fs.appendFileSync(env.GITHUB_STEP_SUMMARY, `## No heartbeat: receiver check ${check} is not created yet\n\n${line}\n`);
+      } catch (e) {
+        log.error(`::warning::the job summary could not be written: ${String(e?.message ?? e)}`);
+      }
+    }
+    return { code: 0, url: null, pending: true, problems: [] };
+  }
   if (typeof url !== "string" || url.trim() === "") {
     return fail([
       `${name} is not set in this job. It carries the WHOLE ping URL of receiver check ${check}, and it is a ` +

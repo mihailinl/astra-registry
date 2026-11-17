@@ -82,6 +82,7 @@ jobs:
       ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
       ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
       ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      ASTRA_ALERT_OWNER_CHAT_ID: ${{ secrets.ASTRA_ALERT_OWNER_CHAT_ID }}
       # R4: signs and verifies the once-per-state memory (review of #480);
       # absent, every red pages and nothing is saved.
       ASTRA_ALERT_STATE_HMAC_KEY: ${{ secrets.ASTRA_ALERT_STATE_HMAC_KEY }}
@@ -110,6 +111,7 @@ jobs:
           ASTRA_DEADMAN_URL_DETECTORS: ${{ secrets.ASTRA_DEADMAN_URL_DETECTORS }}
           ASTRA_DEADMAN_URL_MODERATION_RUN: ${{ secrets.ASTRA_DEADMAN_URL_MODERATION_RUN }}
           ASTRA_DEADMAN_URL_SIGNER: ${{ secrets.ASTRA_DEADMAN_URL_SIGNER }}
+          ASTRA_DEADMAN_URL_RUN_WATCHDOG: ${{ secrets.ASTRA_DEADMAN_URL_RUN_WATCHDOG }}
           ASTRA_DEADMAN_URL_SERVED_SET: ${{ secrets.ASTRA_DEADMAN_URL_SERVED_SET }}
           ASTRA_DEADMAN_URL_COVERAGE_CANARY: ${{ secrets.ASTRA_DEADMAN_URL_COVERAGE_CANARY }}
           ASTRA_DEADMAN_URL_KEEPALIVE: ${{ secrets.ASTRA_DEADMAN_URL_KEEPALIVE }}

@@ -262,6 +262,16 @@ the one a user is least likely to read. So each still waits for a moderator's
 approval, and then for every window in §3.2. `P_APPROVAL_STALE` can stand
 beside them. The approved release still publishes marked `unreviewed` (§2.1).
 
+**For now, a second kind waits, on both paths: a release that asks for
+`dom_access`** (`R_DOM_ACCESS_HOLD`). Every such release — a first listing or a
+new version, whether or not the listed version already had it, declared under
+`[capabilities]` or `[permissions]` — waits for a moderator's approval, which
+clears it exactly as it clears a change of hands. Releases built in the
+first-party SDK repository (`mihailinl/AstraPlugins`, matched by its repository
+and owner ids, never its name) are not held for it. There is nothing for the
+author to change. dom_access holds for review until a fixed Astra ships, and
+this paragraph goes when the hold does.
+
 Everything else that used to wait for a person on this path publishes at once,
 with `P_REVIEW_PRIORITY`: a first listing, a newly requested high-risk
 permission, and a check's own flag — a name one edit away from a listed plugin,
@@ -297,9 +307,10 @@ a review.
 **What a declaration is worth now that Phase 4 has landed.** A declaration is
 enforced at run time. `require_permission` runs at the top of every host RPC
 that needs one: `HOST_RPC_PERMISSIONS` in
-`astra-daemon/src/plugins/host_service.rs` is the table, and it names all ten
-RPCs — six gated (`SubscribeEvents`, `SendChatMessage`, `FireTrigger`,
-`SetVariable`, `SetThemeContribution`, `PushToUi`) and four deliberately not
+`astra-daemon/src/plugins/host_service.rs` is the table, and it names all sixteen
+RPCs — twelve gated (`SubscribeEvents`, `SendChatMessage`, `FireTrigger`,
+`SetVariable`, `SetThemeContribution`, `PushToUi`, `GetAiSettings`, `Speak`,
+`StopSpeaking`, `GetUserIdentity`, `RequestSettingsChange`, `ProposeCommand`) and four deliberately not
 (`Register`, `GetPluginSelfConfig`, `PluginLog`, `GetDaemonInfo`, none of which
 acts on anything outside the plugin). A canary reads that table rather than the
 methods, so a new RPC with no gate is a failing test instead of a silent
@@ -712,6 +723,7 @@ exists first; nothing downstream changes when it arrives.
 | `B_REPOSITORY_RECYCLED` | The repository was re-created by another owner. Permanent, until a moderator resets the listing's identity. |
 | `R_FIRST_LISTING` | First listing, on the issue path — a person reads it, once, ever. On the service path a first listing publishes at once instead, with `P_REVIEW_PRIORITY`. |
 | `R_NEW_HIGH_RISK` | A high-risk permission this plugin did not have before. |
+| `R_DOM_ACCESS_HOLD` | This release asks for `dom_access`, which is held for review for now, on both paths. Nothing for the author to change: a moderator reviews it. dom_access holds for review until a fixed Astra ships. |
 | `R_IDENTITY_CHANGED` | The repository this plugin is listed from changed. |
 | `R_FIRST_BINDING` | The first release of an already published listing to carry a binding line, unless the repository's owner (or an admin or maintainer) built it with a live token. A moderator approves it once; later releases under that binding are not held for it again (since contract 6.7.0). |
 | `R_BINDING_CHANGED` | The binding line carries a different token from the one the listing was bound with. The previously bound account is told, and a moderator can approve it only after that account's objection window. |
@@ -733,7 +745,8 @@ exists first; nothing downstream changes when it arrives.
 Since contract 3.0.0, `R_FIRST_LISTING`, `R_NEW_HIGH_RISK`, `R_CHECK_HELD`,
 `P_FIRST_LISTING_APPROVED`, `P_TRUSTED_AUTHOR` and every `P_DELAY_` code arise
 on the issue path alone, until the cutover removes it. The service path holds
-only a change of hands (§3) and delays nothing.
+only a change of hands and, for now, `R_DOM_ACCESS_HOLD` (§3), and delays
+nothing.
 
 ### Codes the plugins panel shows
 
@@ -954,6 +967,11 @@ published as *Harms users' accounts, data or resources* — exists for a plugin
 that harms the people who run it without being malicious: one that spends
 their AI quota, their storage or their accounts' allowances against their
 interest.
+
+The category `put_back` — published as *Restored after a counter-notice* — is
+what a relist or an unrevoke carries when the plugin comes back because its
+author answered a notice about it. It is not a mistake of the registry's, and
+is not published as one.
 
 **A reset binds nothing and publishes nothing.** After it the listing is
 *frozen* — a listing that ever had an identity record is never grandfathered

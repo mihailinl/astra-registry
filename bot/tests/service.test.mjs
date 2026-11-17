@@ -3137,9 +3137,10 @@ test("DEC-8 and TRUST-33: never before `publish_after`, and a deny record refuse
 test("DEC-19: each of 2.22.0's four triggers publishes at once with `P_REVIEW_PRIORITY`, and its message says which", () => {
   const withCaps = (capabilities) => listing({ version: { ...listing().version, capabilities } });
   const cases = [
-    ["a first listing holding a high-risk permission", { listing: withCaps(["dom_access"]) }, [/a first listing/, /a high-risk permission held \(dom_access\)/]],
-    ["an update adding a high-risk permission", { listing: withCaps(["tools", "dom_access"]), git: git({ existing: existing(), records: [baseline()] }) },
-      [/a high-risk permission held \(dom_access\)/, /a widened permission set \(dom_access, which 0\.1\.0/]],
+    // `client`, not `dom_access`, which holds on this path for now (R_DOM_ACCESS_HOLD, below).
+    ["a first listing holding a high-risk permission", { listing: withCaps(["client"]) }, [/a first listing/, /a high-risk permission held \(client\)/]],
+    ["an update adding a high-risk permission", { listing: withCaps(["tools", "client"]), git: git({ existing: existing(), records: [baseline()] }) },
+      [/a high-risk permission held \(client\)/, /a widened permission set \(client, which 0\.1\.0/]],
     ["an update widening outside the high-risk set", { listing: withCaps(["tools", "tts"]), git: git({ existing: existing(), records: [baseline()] }) },
       [/a widened permission set \(tts, which 0\.1\.0/]],
     ["a check's flag for a person", { facts: facts({ findings: [{ code: "E_DERIVED_LISTING_INVALID", level: "pass" }, { code: "R_TYPOSQUAT_NEAR", level: "review" }] }), git: git({ existing: existing(), records: [baseline()] }) },
@@ -3159,6 +3160,86 @@ test("DEC-19: each of 2.22.0's four triggers publishes at once with `P_REVIEW_PR
   // A routine update meets none of them: no hint, and nothing for moderators to put first.
   const routine = decideWith({ git: git({ existing: existing(), records: [baseline()] }) });
   assert.deepEqual(codes(routine), ["P_PUBLISHED"]);
+});
+
+// ── R_DOM_ACCESS_HOLD: dom_access holds for review until a fixed Astra ships ──
+//
+// The service path's half of the hold `decide()` raises (`DOM_ACCESS_HOLD` in
+// bot/lib/policy/decision.mjs), asked through `decideSubmission`, which is the
+// one place the certificate's ids are handed to it. This file's fixture
+// certificate is `mihailinl/AstraPlugins`'s ids (P.rid, P.oid), which are the
+// exempt ones, so a stranger's ids are given explicitly.
+//
+// Watched failing: with `sourceIds: identity` dropped from `decideSubmission`'s
+// call, the first-party row is held; with the exemption compared by name, the
+// stranger rows publish (`P.repo` is not the SDK repository's name, and the
+// exemption must not care).
+const DOM_STRANGER = { repository_id: "1343092393", repository_owner_id: "280318216" };
+const domRun = ({ ids = DOM_STRANGER, previous = null, over = {} } = {}) => decideWith({
+  lease: { service_repository_id: ids.repository_id, ...(over.lease ?? {}) },
+  verified: verified(ids),
+  listing: listing({ version: { ...listing().version, capabilities: ["tools", "dom_access"] } }),
+  git: git({
+    ...(previous ? { existing: { ...existing(), versions: [{ doc: versionDoc("0.1.0", { capabilities: previous }) }] }, records: [baseline(ids)] } : {}),
+    ...(over.git ?? {}),
+  }),
+  ...(over.ask ? { ask: over.ask } : {}),
+  ...(over.now ? { now: over.now } : {}),
+});
+
+test("R_DOM_ACCESS_HOLD: a release asking for dom_access is held on the service path — a first listing, a new version, newly or already", () => {
+  for (const [what, previous] of [["a first listing", null], ["an update that already held it", ["tools", "dom_access"]], ["an update that newly asks for it", ["tools"]]]) {
+    const plan = domRun({ previous });
+    assert.equal(plan.kind, "state", what);
+    assert.equal(plan.state, "held", `${what}: ${plan.state} ${JSON.stringify(plan.reasons.map((r) => r.code))}`);
+    assert.deepEqual(codes(plan), ["R_DOM_ACCESS_HOLD"], `${what}: the record is held by something else`);
+    const shown = plan.reasons.find((r) => r.code === "R_DOM_ACCESS_HOLD");
+    assert.ok(shown, `${what}: the result does not carry the hold's code`);
+    assert.equal(shown.stage, "policy");
+    assert.match(shown.message, /until a fixed Astra ships/);
+    assert.equal(plan.listing ?? null, null, `${what}: a held release composed a listing`);
+  }
+});
+
+test("R_DOM_ACCESS_HOLD: the first-party SDK repository's ids are exempt on the service path, and a stranger's release without dom_access is untouched", () => {
+  const firstParty = domRun({ ids: { repository_id: P.rid, repository_owner_id: P.oid } });
+  assert.equal(firstParty.state, "published", `first-party: ${firstParty.state} ${JSON.stringify(firstParty.reasons.map((r) => r.code))}`);
+  assert.ok(!firstParty.reasons.some((r) => r.code === "R_DOM_ACCESS_HOLD"));
+  assert.match(firstParty.reasons.find((r) => r.code === "P_REVIEW_PRIORITY").message, /a high-risk permission held \(dom_access\)/);
+  const sameOwnerOtherRepo = domRun({ ids: { repository_id: "1331417619", repository_owner_id: P.oid } });
+  assert.equal(sameOwnerOtherRepo.state, "held", "another repository of the SDK repository's owner was exempted");
+  const plain = decideWith({ lease: { service_repository_id: DOM_STRANGER.repository_id }, verified: verified(DOM_STRANGER) });
+  assert.equal(plain.state, "published", `a stranger's release without dom_access: ${JSON.stringify(plain.reasons.map((r) => r.code))}`);
+  assert.ok(!plain.reasons.some((r) => r.code === "R_DOM_ACCESS_HOLD"));
+});
+
+// An approval clears it exactly as it clears a change of hands, and every
+// window an approval waits on this path still applies after it: BOT-28's
+// notice and TRUST-14's operator alert and window. No `P_DELAY_*` (DEC-19).
+test("R_DOM_ACCESS_HOLD: a moderator's approval clears it on the service path, after the windows every approval waits", () => {
+  const held = domRun({ previous: ["tools", "dom_access"] });
+  assert.equal(held.state, "held");
+  const rec = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: approval().decided_at, delivered_at: "2026-09-26T11:00:00Z", run: "1/1" };
+  const approvedRunOf = ({ alerts = new Map(), notice = { kind: "approved", status: "sent", accepted_at: "2026-09-20T00:00:00Z" }, now } = {}) => domRun({
+    previous: ["tools", "dom_access"],
+    over: {
+      lease: { claimed_from: "approved" },
+      ask: ask({ gates: { stop_status: "no_stop", decisions: [approval()] }, notice }),
+      git: { records: [baseline(DOM_STRANGER), heldRecord({ ...DOM_STRANGER, reasons: ["R_DOM_ACCESS_HOLD"] })], alerts },
+      now,
+    },
+  });
+  assert.equal(approvedRunOf({ notice: null }).wait?.code, "W_NOTICE_PENDING", "an approved dom_access release skipped BOT-28's notice");
+  const first = approvedRunOf();
+  assert.equal(first.kind, "wait", `run 1 names the operator alert and publishes nothing: ${first.kind} ${first.state ?? ""}`);
+  assert.equal(first.alert?.event, "approval");
+  assert.equal(approvedRunOf({ alerts: new Map([[FP, rec]]) }).wait?.code, "W_OPERATOR_WINDOW");
+  const approved = approvedRunOf({ alerts: new Map([[FP, rec]]), now: "2026-09-26T17:00:01Z" });
+  assert.equal(approved.state, "published", `approved: ${approved.kind} ${approved.state ?? ""} ${JSON.stringify(approved.reasons.map((r) => r.code))} ${approved.wait?.code ?? ""}`);
+  assert.ok(codes(approved).includes("P_APPROVED"), JSON.stringify(codes(approved)));
+  assert.ok(!codes(approved).some((c) => /^P_DELAY_/.test(c)), "an approved dom_access release was delayed on the service path");
+  assert.equal(approved.record.trigger, "approval");
+  assert.equal(approved.listing.version.review, "unreviewed");
 });
 
 // ── BOT-92: shadow ──────────────────────────────────────────────────────────
@@ -3436,6 +3517,27 @@ test("claim: at most three leases, each held to §4.3's grammar; the answer's sh
     await assert.rejects(claimJob({ client: client(four), log: { log: () => {}, error: () => {} } }), /BOT-59/);
   } finally {
     await four.close();
+  }
+});
+
+test("claim: `answered` says what the service SAID — shadow, live, or none when there was no answer (registry fix No. 2)", async () => {
+  // poll-run.mjs counts `shadow` runs in a row and pages the owner at three;
+  // `none` must not count, because "no answer" pages through its own wait code
+  // and is nothing the owner's acknowledgement could end.
+  const cases = [
+    [() => ok({ schema: "astra.plugins.bot-leases/1", shadow: true, leases: [lease()] }), "shadow"],
+    [() => ok({ schema: "astra.plugins.bot-leases/1", shadow: false, leases: [lease()] }), "live"],
+    [() => ok({ schema: "astra.plugins.bot-leases/1", shadow: false, leases: [] }), "live"],
+    [() => refusal("unavailable"), "none"],
+  ];
+  for (const [answer, want] of cases) {
+    const s = await stub(answer);
+    try {
+      const out = await claimJob({ client: client(s), log: { log: () => {}, error: () => {} } });
+      assert.equal(out.answered, want);
+    } finally {
+      await s.close();
+    }
   }
 });
 
