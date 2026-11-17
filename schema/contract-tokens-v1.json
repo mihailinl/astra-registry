@@ -1,6 +1,6 @@
 {
-  "contract_version": "6.22.0",
-  "source_commit": "31e5f58013206d30fc456a9cae6d633b21986f4f",
+  "contract_version": "6.25.0",
+  "source_commit": "00f0adcbe93cfa6bd1d2a062d6d8435e0197bac6",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -955,6 +955,26 @@
       "id": "code:R_BINDING_CHANGED",
       "kind": "reason_code",
       "name": "R_BINDING_CHANGED",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "code:R_DOM_ACCESS_HOLD",
+      "kind": "reason_code",
+      "name": "R_DOM_ACCESS_HOLD",
       "emitter": [
         "registry"
       ],
@@ -7566,7 +7586,7 @@
       "fix": "new_tag",
       "panel_only": false,
       "title": "Astra ships no daemon for that platform",
-      "remedy": "`linux-x64`, `windows-x64` and `noarch` are the hosts that exist. macOS and arm64 names are reserved and unusable."
+      "remedy": "`linux-x64`, `windows-x64`, `macos-arm64` and `noarch` are the hosts that exist. Intel Mac and arm64 Linux and Windows names are reserved and unusable."
     },
     {
       "code": "E_PLUGIN_TOML_MISSING",

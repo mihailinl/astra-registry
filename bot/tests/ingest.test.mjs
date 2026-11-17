@@ -2574,6 +2574,25 @@ await test("W_HOST_RPC_UNDECLARED — the rest warn instead of blocking", async 
   assert(codes(r).includes("W_HOST_RPC_UNDECLARED"), JSON.stringify(codes(r)));
 });
 
+await test("GetAiSettings is governed by `read_ai_settings`, and an undeclared call warns rather than blocks", () => {
+  // Astra 4b8c4ae8e (2026-11-10). Before the RPC_RULES row this name was in no
+  // list at all, so a plugin calling it undeclared passed the scan silently and
+  // was refused on the user's machine. Not blocking: it reads the chat's
+  // provider, model and endpoint, never a key, and acts on nothing.
+  for (const spelling of ["host.GetAiSettings()", "host.get_ai_settings()", "ctx.host.getAiSettings()"]) {
+    const file = [{ name: "src/plugin.py", bytes: Buffer.from(spelling) }];
+    const bare = scanHostRpcs(file, { capabilities: ["tools"], permissions: {} });
+    for (const i of bare) emitted.add(i.code);
+    const hit = bare.find((i) => i.code === "W_HOST_RPC_UNDECLARED");
+    assert(hit, `${spelling}: ${JSON.stringify(bare)}`);
+    assert(hit.message.includes("`[permissions] read_ai_settings = { reason = \"…\" }`") && !hit.message.includes("[capabilities]"),
+      `the remedy names the permission and no capability: ${hit.message}`);
+    assert(!bare.some((i) => i.level === "error"), JSON.stringify(bare));
+    const declared = scanHostRpcs(file, { capabilities: ["tools"], permissions: { read_ai_settings: { reason: "use the user's model" } } });
+    assert(!declared.some((i) => /HOST_RPC_UNDECLARED/.test(i.code)), JSON.stringify(declared));
+  }
+});
+
 await test("a vendored SDK stub is not evidence of anything", () => {
   const findings = scanHostRpcs(
     [{ name: "site-packages/astra_plugin_sdk/plugin_pb2.py", bytes: Buffer.from("FireTrigger SetVariable SendChatMessage") }],

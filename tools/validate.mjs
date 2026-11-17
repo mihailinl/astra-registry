@@ -71,6 +71,7 @@ import { fixedReason } from "../bot/lib/compile-decision.mjs";
 import {
   ALLOWED_IMAGE_HOSTS, ICON_NAMES, MAX_README_BYTES, checkIcon, grandfatheredIcons, iconCapFor, rawHtmlOutsideCode, sha256Hex,
 } from "../bot/lib/assets.mjs";
+import { RasterError, rasterizeSvg } from "../bot/lib/rasterize.mjs";
 import {
   CUTOVER_FILE,
   CUTOVER_SCHEMA,
@@ -342,7 +343,7 @@ function checkPresentationFiles(plugin, ctx) {
       "The signed catalogue takes a committed icon or nothing (BOT-79): an https icon is fetched from the " +
       "author's host once per listing every time a store card is drawn, and it puts unauthenticated bytes " +
       "beside authenticated ones inside a signed document. Commit the picture beside plugin.json as icon.png, " +
-      ".webp, .svg, .jpg, .jpeg or .ico and name it in `icon`.");
+      ".webp, .svg, .jpg or .jpeg and name it in `icon`.");
   }
 
   const icon = plugin.doc.icon;
@@ -364,6 +365,17 @@ function checkPresentationFiles(plugin, ctx) {
           "An icon is rendered before the user has agreed to anything, and every byte of it is inlined into " +
           "the one catalogue every install fetches whole. See bot/lib/assets.mjs and policy/limits.json " +
           "max_icon_bytes_note.");
+      }
+      // The index draws an SVG to a PNG, so one that cannot be drawn is refused here, where the
+      // author is, and not by a generator run that has no one to tell.
+      if (icon === "icon.svg") {
+        try {
+          rasterizeSvg(bytes);
+        } catch (e) {
+          if (!(e instanceof RasterError)) throw e;
+          report.error(`plugins/${plugin.dir}/${icon}`, `${e.code}: ${e.message}`,
+            "The signed catalogue carries raster icons only; see bot/lib/rasterize.mjs.");
+        }
       }
     }
   }

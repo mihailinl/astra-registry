@@ -674,9 +674,11 @@ export function policyCodeDef(code, opts = {}) {
  */
 export const KNOWN_AUTHORITY = [
   // [capabilities]
-  "tools", "tts", "stt", "wakeword", "ai_provider", "client", "actions",
-  "triggers", "ui_contributions", "event_handlers", "dom_access",
+  "tools", "tts", "stt", "wakeword", "ai_provider", "web_search",
+  "music_provider", "client", "actions", "triggers", "ui_contributions",
+  "event_handlers", "dom_access",
   // [permissions] (§5.6)
   "fire_trigger", "subscribe_events", "set_variable", "get_config",
   "send_chat_message", "push_to_ui", "set_theme_contribution",
+  "read_ai_settings",
 ].sort();

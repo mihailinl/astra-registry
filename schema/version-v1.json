@@ -65,11 +65,12 @@
     "capabilities": {
       "type": "array",
       "uniqueItems": true,
-      "description": "The daemon's vocabulary, verbatim: `CAPABILITY_NAMES` in the `astra-plugin-manifest` crate, which Astra's astra-daemon/src/plugins/manifest.rs re-exports, at the AstraPlugins commit bot/manifest-probe/astra-plugins.pin names. Eleven names, no synonyms — `ui_panels` is not one of them. bot/manifest-probe's `the_registrys_two_capability_lists_are_the_daemons` holds this enum to that list in both directions.",
+      "description": "The daemon's vocabulary, verbatim: `CAPABILITY_NAMES` in the `astra-plugin-manifest` crate, which Astra's astra-daemon/src/plugins/manifest.rs re-exports, at the AstraPlugins commit bot/manifest-probe/astra-plugins.pin names. Thirteen names, no synonyms — `ui_panels` is not one of them. bot/manifest-probe's `the_registrys_two_capability_lists_are_the_daemons` holds this enum to that list in both directions.",
       "items": {
         "enum": [
           "actions", "ai_provider", "client", "dom_access", "event_handlers",
-          "stt", "tools", "triggers", "tts", "ui_contributions", "wakeword"
+          "music_provider", "stt", "tools", "triggers", "tts", "ui_contributions",
+          "wakeword", "web_search"
         ]
       }
     },
@@ -120,11 +121,11 @@
       "type": "object",
       "minProperties": 1,
       "maxProperties": 8,
-      "description": "Platform key -> artifact. The keys are byte-identical to the CLI's --target strings (AstraPlugins astra-plugin-cli, task 2.1) and to the daemon's platform key (Astra registry_client.rs), so nothing has to agree twice. macos-* and *-arm64 are reserved names: Astra ships no daemon for them, so an artifact under those keys would have no host.",
+      "description": "Platform key -> artifact. The keys are byte-identical to the CLI's --target strings (AstraPlugins astra-plugin-cli, task 2.1) and to the daemon's platform key (Astra registry_client.rs), so nothing has to agree twice. linux-arm64, windows-arm64 and macos-x64 are reserved names: Astra ships no daemon for them, so an artifact under those keys would have no host. macos-arm64 is a host since 2026-11-10.",
       "propertyNames": {
         "enum": [
-          "linux-x64", "windows-x64", "noarch",
-          "linux-arm64", "windows-arm64", "macos-x64", "macos-arm64"
+          "linux-x64", "windows-x64", "macos-arm64", "noarch",
+          "linux-arm64", "windows-arm64", "macos-x64"
         ]
       },
       "additionalProperties": { "$ref": "#/$defs/artifact" }

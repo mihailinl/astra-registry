@@ -63,8 +63,9 @@ import { ijsonProblems, stableStringify } from "./lib/canonical.mjs";
 import { compareSemver } from "./lib/semver.mjs";
 import { loadIdentities, loadPublishers, loadSources, REPO_ROOT } from "./lib/sources.mjs";
 import { INDEX_SCHEMA } from "../bot/lib/sign.mjs";
-import { MAX_README_BYTES, iconDataUri } from "../bot/lib/assets.mjs";
-import { SUPPORTED_KEYS } from "./lib/platform.mjs";
+import { MAX_README_BYTES, iconDataUri, sha256Hex } from "../bot/lib/assets.mjs";
+import { RasterError, rasterizeSvg } from "../bot/lib/rasterize.mjs";
+import { FLAT_PROJECTION_KEYS } from "./lib/platform.mjs";
 
 const BANNER =
   "GENERATED FILE — DO NOT EDIT. Source of truth: plugins/<id>/plugin.json and " +
@@ -74,13 +75,58 @@ const BANNER =
   "Only the `signed` member is covered by the signatures below; nothing outside it is " +
   "authenticated and nothing may be read out of it.";
 
-// Every supported key but `noarch` itself: `flatDownloads` writes a `noarch`
-// artifact under each of them "so no client has to learn the word", and
-// `schema/index-v1.json` describes `platform_downloads` the same way. Derived
-// rather than typed, so a key `tools/lib/platform.mjs` starts supporting is a
-// key a noarch plugin is downloadable under; `tools/selftest/validation.mjs`
-// asks the built index which keys it wrote.
-const PLATFORM_KEYS_FOR_NOARCH = SUPPORTED_KEYS.filter((k) => k !== "noarch");
+// The keys `flatDownloads` writes a `noarch` artifact under "so no client has
+// to learn the word": FLAT_PROJECTION_KEYS (tools/lib/platform.mjs), the hosts
+// a flat-field daemon runs on. Not every supported key: a host added since
+// (`macos-arm64`) has only daemons that read `releases[]` and fall back to
+// `noarch` themselves, so writing it here would only move the catalogue at an
+// unchanged serial (TRUST-28). `tools/selftest/validation.mjs` asks the built
+// index which keys it wrote.
+const PLATFORM_KEYS_FOR_NOARCH = FLAT_PROJECTION_KEYS;
+
+/**
+ * The first serial at which an SVG icon is carried as a PNG drawn from it.
+ *
+ * The index carries raster icons only: PNG, WebP and JPEG as committed (a WebP
+ * beside a PNG wins), an SVG
+ * drawn by `bot/lib/rasterize.mjs`. Taught first, rendered later — the same
+ * rule as the review mark (B.4, `releaseRecord` above). DEC-9 counts only
+ * commits under `plugins/`, so a generator that drew the 19 committed SVGs the
+ * moment it learned to would change `signed.plugins` at an unchanged serial:
+ * TRUST-28 would carry the served catalogue in the signer until some listing
+ * commit, and `tools/selftest/catalogue.mjs`'s "an equal serial means an equal
+ * catalogue" would be red on `main`, and so in every bot job that runs the
+ * selftest over a tree with no `plugins/` change. Gated, the commit that adds
+ * this renders exactly `main`'s catalogue, and the first commit under
+ * `plugins/` after it raises the serial and brings the PNGs with it.
+ *
+ * The value is `main`'s serial when this lands, plus one (2026-11-11: main's
+ * catalogue is serial 150). If a listing commit lands first, the equal-serial
+ * check goes red on the pull request again and the number moves up; it is never
+ * lowered below a serial already served.
+ */
+export const RASTER_ICONS_FROM_SERIAL = 151;
+
+/**
+ * The first serial at which a listing carries its icon and README as asset files
+ * as well as inline (`icon` and `readme_file`, contract 6.28.0).
+ *
+ * The same gate as the drawing, for the same reason (TRUST-28): the members are
+ * new bytes in the catalogue, and the serial counts only commits under
+ * `plugins/`. It is never below RASTER_ICONS_FROM_SERIAL, because the file's
+ * bytes are the inlined icon's, which from that serial on are the drawn PNG.
+ * Inline `icon_url` and `readme` stay, unchanged, beside the pair.
+ */
+export const ASSET_FILES_FROM_SERIAL = RASTER_ICONS_FROM_SERIAL;
+
+/** The caps contract 6.28.0 (SERVE-115) puts on an asset file, in bytes. */
+export const ASSET_ICON_MAX_BYTES = 131072;
+export const ASSET_README_MAX_BYTES = 16384;
+// BOT-109 (contract 6.29.0): the distinct asset files one catalogue names may
+// total this much. The service refuses a catalogue over it (SERVE-115) before it
+// reads a file, so the signer refuses first and a signed catalogue never meets it.
+export const ASSET_TOTAL_MAX_BYTES = 33554432;
+const ASSET_EXT_OF_MEDIA = { "image/png": "png", "image/webp": "webp", "image/jpeg": "jpg" };
 
 /**
  * The pathspec the catalogue's serial is counted over — `git rev-list --count
@@ -263,10 +309,11 @@ function flatDownloads(latest) {
  * which it already did for every JSON document here; it stays deterministic
  * because the same tree yields the same bytes. No clock, no network.
  */
-function presentation(root, plugin) {
+function presentation(root, plugin, serial) {
   const dir = path.join(root, "plugins", plugin.dir);
   const p = plugin.doc;
   const out = {};
+  const files = {};
   const errors = [];
   const bad = (file, message) => errors.push({ file, message });
 
@@ -287,7 +334,7 @@ function presentation(root, plugin) {
     bad(
       `plugins/${plugin.dir}/plugin.json`,
       `carries icon_url ${JSON.stringify(p.icon_url)}, and the signed catalogue takes a committed icon or ` +
-        "nothing (BOT-79). Commit the picture beside plugin.json — icon.png, .webp, .svg, .jpg, .jpeg or .ico " +
+        "nothing (BOT-79). Commit the picture beside plugin.json — icon.png, .webp, .svg, .jpg or .jpeg " +
         "— and name it in `icon`: the generator inlines those bytes as a data: URI, inside the signature.",
     );
   }
@@ -297,7 +344,38 @@ function presentation(root, plugin) {
     if (!fs.existsSync(file)) {
       bad(`plugins/${plugin.dir}/plugin.json`, `names icon ${JSON.stringify(p.icon)}, which is not in the directory`);
     } else {
-      out.icon_url = iconDataUri({ name: p.icon, bytes: fs.readFileSync(file) });
+      // From the same serial, a WebP committed beside a PNG is the one inlined: the author's own
+      // bytes, the smaller of two pictures they shipped for the one slot (a choice of file, not a
+      // re-encode). `plugin.json` still names the PNG; the record is not edited.
+      const webp = path.join(dir, "icon.webp");
+      const useWebp = serial >= RASTER_ICONS_FROM_SERIAL && p.icon === "icon.png" && fs.existsSync(webp);
+      const icon = useWebp
+        ? { name: "icon.webp", bytes: fs.readFileSync(webp) }
+        : { name: p.icon, bytes: fs.readFileSync(file) };
+      try {
+        // The exact bytes that are inlined: the drawn PNG for an SVG, otherwise the file.
+        const inlined =
+          serial >= RASTER_ICONS_FROM_SERIAL && icon.name === "icon.svg"
+            ? { name: "icon.png", bytes: rasterizeSvg(icon.bytes) }
+            : icon;
+        out.icon_url = iconDataUri(inlined);
+        if (serial >= ASSET_FILES_FROM_SERIAL) {
+          if (inlined.bytes.length > ASSET_ICON_MAX_BYTES) {
+            bad(`plugins/${plugin.dir}/${p.icon}`, `is ${inlined.bytes.length} bytes as an icon, over the ${ASSET_ICON_MAX_BYTES} an asset file may be`);
+          } else {
+            const media = /^data:([^;]+);/.exec(out.icon_url)[1];
+            const sha256 = sha256Hex(inlined.bytes);
+            const asset = `assets/${sha256}.${ASSET_EXT_OF_MEDIA[media]}`;
+            out.icon = { path: asset, sha256, size: inlined.bytes.length, media_type: media };
+            files[asset] = inlined.bytes;
+          }
+        }
+      } catch (e) {
+        // A picture that cannot be drawn is a build error naming the listing, never an icon
+        // quietly missing from the catalogue.
+        if (!(e instanceof RasterError)) throw e;
+        bad(`plugins/${plugin.dir}/${p.icon}`, `${e.code}: ${e.message}`);
+      }
     }
   } else {
     out.icon_url = "";
@@ -318,11 +396,17 @@ function presentation(root, plugin) {
         bad(`plugins/${plugin.dir}/${p.readme}`, `is ${bytes} bytes, over the ${MAX_README_BYTES} the index allows`);
       } else {
         out.readme = text;
+        if (serial >= ASSET_FILES_FROM_SERIAL) {
+          const buf = Buffer.from(text, "utf8");
+          const sha256 = sha256Hex(buf);
+          out.readme_file = { path: `assets/${sha256}.md`, sha256, size: buf.length };
+          files[out.readme_file.path] = buf;
+        }
       }
     }
   }
 
-  return { out, errors };
+  return { out, errors, files };
 }
 
 /**
@@ -436,6 +520,24 @@ export function publisherKeyProblems(doc, publishers) {
 }
 
 export function buildIndex({ root = REPO_ROOT, serial } = {}) {
+  return buildIndexAndAssets({ root, serial }).doc;
+}
+
+/**
+ * The asset files the catalogue at this serial names, path -> bytes: nothing
+ * else, and nothing below ASSET_FILES_FROM_SERIAL. The signer writes these beside
+ * the four documents (BOT-109) and TRUST-4's regeneration compares them
+ * (TRUST-49); both ask this, so there is one derivation.
+ */
+export function buildAssets(opts = {}) {
+  return buildIndexAndAssets(opts).assets;
+}
+
+export function buildIndexAndAssets({ root = REPO_ROOT, serial } = {}) {
+  const assets = new Map();
+  // Resolved once: what the icons render as (`RASTER_ICONS_FROM_SERIAL`) and the
+  // document's own `serial` must be one number.
+  const theSerial = resolveSerial({ explicit: serial, root });
   const { errors, plugins } = loadSources(root);
   const { errors: pubErrors, publishers } = loadPublishers(root);
   errors.push(...pubErrors);
@@ -488,11 +590,12 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
     const { download_url, platform_downloads } = flatDownloads(latest);
     const p = plugin.doc;
 
-    const pres = presentation(root, plugin);
+    const pres = presentation(root, plugin, theSerial);
     if (pres.errors.length) {
       entryErrors.push(...pres.errors);
       continue;
     }
+    for (const [rel, bytes] of Object.entries(pres.files)) assets.set(rel, bytes);
     const badge = publisherFor({ plugin, publishers, identity: identityOf.get(plugin.dir) ?? null });
 
     entries.push({
@@ -570,7 +673,7 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
     signatures: [],
     signed: {
       schema: INDEX_SCHEMA,
-      serial: resolveSerial({ explicit: serial, root }),
+      serial: theSerial,
       plugins: entries,
       // One record per publisher, and only for publishers something in this
       // catalogue actually points at — a record for an owner with no listing
@@ -609,7 +712,7 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
       `meets one refuses the whole catalogue (contract §0.7):\n${unholdable.join("\n")}`,
     );
   }
-  return doc;
+  return { doc, assets };
 }
 
 /**

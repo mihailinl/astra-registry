@@ -335,7 +335,7 @@ Not by a second implementation. See `bot/manifest-probe/`.
 | `E_CAPABILITY_UNKNOWN` | error | `[capabilities]` names something the daemon has never had | Use the exact name — `ui_contributions`, not `ui_panels`. An unknown key used to be dropped silently, which is how three shipped examples declared nothing at all. |
 | `E_TOML_MANIFEST_DISAGREE` | error | `plugin.toml` and `MANIFEST.json` describe different plugins | Rebuild from one tree. The daemon installs under the manifest's id and runs what plugin.toml describes. |
 | `W_ENTRY_COMMAND_DISAGREE` | warn | The bundle runs a different command than `plugin.toml` declares | The daemon executes the manifest's. Usually a stale `plugin.toml`. |
-| `E_PLATFORM_UNSUPPORTED` | error | Astra ships no daemon for that platform | `linux-x64`, `windows-x64` and `noarch` are the hosts that exist. macOS and arm64 names are reserved and unusable. |
+| `E_PLATFORM_UNSUPPORTED` | error | Astra ships no daemon for that platform | `linux-x64`, `windows-x64`, `macos-arm64` and `noarch` are the hosts that exist. Intel Mac and arm64 Linux and Windows names are reserved and unusable. |
 | `E_KIND_UNSUPPORTED` | error | This item is not a plugin, or it requires other items | This registry lists plugins only for now, and cannot list dependencies yet: `kind` and `requires` are reserved for a later version. Until then `kind` must be absent or `"plugin"`, and `requires` must be absent or empty. If this item is a plugin, remove both keys (or write `kind = "plugin"`) and publish a new tag. If it is another kind of item, or it needs other items, it cannot be listed here yet. |
 | `E_PROBE_INPUT` | error | The manifest probe rejected the bot's own request | A bug in this registry, not in your plugin. There is nothing further for you to do here. If you reported this on an issue, leave it open. |
 | `E_PROBE_UNAVAILABLE` | error | The manifest probe could not be run | A bug in this registry, not in your plugin. `plugin.toml` was not validated by anything, so the run fails closed. |
@@ -417,6 +417,9 @@ Held to the same rules a hand-written listing is held to.
 
 | Code | Level | Meaning | What to do |
 |---|---|---|---|
+| `E_ICON_FORMAT` | error | The icon must be PNG, JPEG, WebP or SVG | Export the icon as `icon.png` (128x128 is plenty), `icon.webp`, `icon.jpg` or `icon.svg`, put it in the bundle in place of `icon.ico`, and release again. |
+| `E_SVG_TEXT` | error | The SVG icon contains text | The registry draws an SVG icon to a PNG with no fonts, so text in it would vanish. Convert the text to outlines (paths) in your editor, or export the icon as PNG, and release again. |
+| `E_SVG_RASTERIZE` | error | The SVG icon could not be drawn | The registry draws an SVG icon to a PNG, and this one did not parse as a picture. Check that it opens in a browser, or export the icon as PNG, and release again. |
 | `E_DERIVED_LISTING_INVALID` | error | The listing the bot derived does not pass this repository's own validator | A bug in this registry, not in your plugin. There is nothing further for you to do here. If you reported this on an issue, leave it open. |
 ## Where each check lives
 

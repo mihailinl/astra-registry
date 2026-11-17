@@ -231,6 +231,29 @@
           "description": "The store card's picture: a `data:image/<subtype>;base64,…` URI inlined by tools/build-index.mjs from the icon committed beside the listing, or the empty string when the listing has none. NOT an `https://` URL (BOT-79). An https icon is a request to a host the plugin author chose, made once per listing every time a store card is rendered, and it puts unauthenticated bytes beside authenticated ones inside a signed document with nothing marking the difference. The subtype is left open on purpose rather than enumerated here: bot/lib/assets.mjs' ICON_FORMATS is the vocabulary and checkIcon enforces it against the bytes, and a second copy of that list in this file is a list with one stale half.",
           "$comment": "The three places BOT-79 names are this pattern, tools/validate.mjs (which refuses an `icon_url` in a listing's plugin.json) and tools/build-index.mjs (which refuses instead of passing one through). tools/selftest/catalogue.mjs watches all three refuse one fixture."
         },
+        "icon": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "size", "media_type"],
+          "properties": {
+            "path": { "type": "string", "pattern": "^assets/[0-9a-f]{64}\\.(png|webp|jpg)$" },
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "size": { "type": "integer", "minimum": 1, "maximum": 131072 },
+            "media_type": { "enum": ["image/png", "image/webp", "image/jpeg"] }
+          },
+          "description": "The store card's picture as a content-addressed file beside this index, in addition to the inline `icon_url`, whose bytes it is (contract 6.28.0). `path` is relative, resolved against the URL the index was fetched from, and its hex is `sha256`; the file is `registry/v1/<path>`. Optional: absent where the generator does not yet carry it, and an empty `icon_url` with no `icon` still means no icon."
+        },
+        "readme_file": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "size"],
+          "properties": {
+            "path": { "type": "string", "pattern": "^assets/[0-9a-f]{64}\\.md$" },
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "size": { "type": "integer", "minimum": 1, "maximum": 16384 }
+          },
+          "description": "The README as a content-addressed UTF-8 file beside this index, in addition to the inline `readme`, whose bytes it is (contract 6.28.0)."
+        },
         "source": {
           "$ref": "#/$defs/source"
         },
@@ -262,7 +285,7 @@
         },
         "platform_downloads": {
           "type": "object",
-          "description": "Compatibility projection: platform key -> URL for the latest listed release. A `noarch` artifact is written under every supported platform key (PRODUCTION_PLAN §5.2), so no client needs to learn the word. Digest-free (staging) releases are omitted entirely.",
+          "description": "Compatibility projection: platform key -> URL for the latest listed release. A `noarch` artifact is written under `noarch` and under every host a flat-field client runs on, `linux-x64` and `windows-x64` (PRODUCTION_PLAN §5.2; FLAT_PROJECTION_KEYS in tools/lib/platform.mjs), so no such client needs to learn the word. A host added later (`macos-arm64`) has only clients that resolve `releases[].artifacts`, falling back to `noarch` themselves. Digest-free (staging) releases are omitted entirely.",
           "propertyNames": {
             "$ref": "#/$defs/platformKey"
           },

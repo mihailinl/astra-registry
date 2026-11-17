@@ -294,12 +294,17 @@ the issue path, costs an author days. `push_to_ui` draws inside a panel the
 plugin already owns, so a first request for it is a widening — see below — not
 a review.
 
+`read_ai_settings` (`GetAiSettings`, 2026-11-10) is not in the set either, and
+is not high-risk anywhere: it reads the provider, model and endpoint the user's
+chat already uses, never a key, and acts on nothing. A first request for it is a
+widening like any other.
+
 **What a declaration is worth now that Phase 4 has landed.** A declaration is
 enforced at run time. `require_permission` runs at the top of every host RPC
 that needs one: `HOST_RPC_PERMISSIONS` in
-`astra-daemon/src/plugins/host_service.rs` is the table, and it names all ten
-RPCs — six gated (`SubscribeEvents`, `SendChatMessage`, `FireTrigger`,
-`SetVariable`, `SetThemeContribution`, `PushToUi`) and four deliberately not
+`astra-daemon/src/plugins/host_service.rs` is the table, and it names all eleven
+RPCs — seven gated (`SubscribeEvents`, `SendChatMessage`, `FireTrigger`,
+`SetVariable`, `SetThemeContribution`, `PushToUi`, `GetAiSettings`) and four deliberately not
 (`Register`, `GetPluginSelfConfig`, `PluginLog`, `GetDaemonInfo`, none of which
 acts on anything outside the plugin). A canary reads that table rather than the
 methods, so a new RPC with no gate is a failing test instead of a silent

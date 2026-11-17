@@ -20,7 +20,8 @@
 
 import { unsafeDisplayText } from "../../tools/lib/ids.mjs";
 import { reservedPrefixViolation, stagingListingId } from "../../tools/lib/reserved.mjs";
-import { README_NAME, checkIcon, pickIcon, rewriteReadme } from "./assets.mjs";
+import { ICON_FORMATS, ICON_FORMAT_MESSAGE, README_NAME, checkIcon, pickIcon, rewriteReadme } from "./assets.mjs";
+import { RasterError, rasterizeSvg } from "./rasterize.mjs";
 import { deriveLocaleText, isLanguageExempt } from "./locales.mjs";
 
 /**
@@ -102,8 +103,10 @@ export function checkMetadata(fields, limits) {
  * The two files a plugin ships for a person to look at.
  *
  * Both are optional and neither can fail a submission on its own: an author who
- * ships no icon gets the letter avatar, and one whose SVG is refused gets the
- * same. What they must never do is reach the store unchecked — see
+ * ships no icon gets the letter avatar, and one whose icon fails a content check
+ * gets the same. The exceptions are about FORMAT, not content: an ICO, and an SVG
+ * that cannot be drawn to a PNG, are refused (`E_ICON_FORMAT`, `E_SVG_RASTERIZE`,
+ * `E_SVG_TEXT`), because the index carries raster icons only. What they must never do is reach the store unchecked — see
  * `bot/lib/assets.mjs` for why this content is treated differently from the
  * rest of the bundle.
  *
@@ -135,7 +138,26 @@ function derivePresentation(files, { repo, commit, limits }) {
     // its next release like every other (policy/limits.json
     // max_icon_bytes_grandfathered, which only tools/validate.mjs reads).
     const problems = checkIcon(found, { maxBytes: maxIconBytes });
-    if (problems.length === 0) {
+    // The two refusals. Everything else about an icon is dropped with a warning, because a picture
+    // is not worth gating software on; these two are not about the picture's quality but about its
+    // FORMAT, and silently dropping them would leave an author wondering why a file they committed
+    // is never shown. ICO is a format the registry does not take; an SVG that cannot be drawn
+    // would make the index generator fail later, so it is found here, where the author is.
+    const format = ICON_FORMATS.find((f) => f.name === found.name);
+    let refusal = null;
+    if (format?.refused) {
+      refusal = { code: "E_ICON_FORMAT", message: `${found.name}: ${ICON_FORMAT_MESSAGE}` };
+    } else if (problems.length === 0 && found.name === "icon.svg") {
+      try {
+        rasterizeSvg(found.bytes);
+      } catch (e) {
+        if (!(e instanceof RasterError)) throw e;
+        refusal = { code: e.code, message: `${found.name}: ${e.message}` };
+      }
+    }
+    if (refusal) {
+      findings.push({ level: "error", ...refusal });
+    } else if (problems.length === 0) {
       assets.push({ path: found.name, bytes: found.bytes });
       icon = found.name;
     } else {

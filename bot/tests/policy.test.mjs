@@ -812,6 +812,25 @@ await test("no identity verdict changes nothing — the legacy path still decide
 
 section("the decision function on its own");
 
+await test("`read_ai_settings` is a name the registry knows, and a first request for it is a widening, not a hold", () => {
+  // GetAiSettings (Astra 4b8c4ae8e). Without it in KNOWN_AUTHORITY an honest
+  // plugin was told its permission "grants nothing until it is one".
+  const d = decide({
+    findings: [],
+    derived: {
+      plugin: { id: "x" },
+      version: { version: "1.0.0", capabilities: ["tools"], permissions: { read_ai_settings: { reason: "use the user's model" } } },
+    },
+    existing: { versions: [{ doc: { version: "0.9.0", capabilities: ["tools"] } }] },
+    repo: REPO,
+    now: NOW,
+  });
+  assert(!d.reasons.some((r) => r.code === "P_UNKNOWN_PERMISSION"), JSON.stringify(d.reasons));
+  assert(!d.reasons.some((r) => r.code === "R_NEW_HIGH_RISK" || r.code === "P_DELAY_HIGH_RISK"), JSON.stringify(d.reasons));
+  assert(d.reasons.some((r) => r.code === "P_DELAY_WIDENED"), JSON.stringify(d.reasons));
+  assertEqual(d.outcome, "delay", "a widening waits, and nothing more");
+});
+
 await test("an unknown permission is reported and not blocked", () => {
   const d = decide({
     findings: [],

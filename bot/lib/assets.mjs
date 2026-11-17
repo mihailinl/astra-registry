@@ -36,10 +36,13 @@ import { createHash } from "node:crypto";
  * PNG first because it is lossless and has an alpha channel, which is what a
  * card icon wants; WebP next for the same reasons; SVG after those because it
  * scales best but is the one format that is also a document; JPEG below them
- * because it has no transparency and puts ringing artefacts around flat art;
- * ICO last. ICO is a Windows multi-resolution container — Chromium renders it,
- * so it works, but it is a favicon format and nothing about a store card wants
- * one. It is accepted so that an author who has one is not stuck.
+ * because it has no transparency and puts ringing artefacts around flat art.
+ * ICO stays in the list only to be refused (`refused`, `ICON_FORMAT_MESSAGE`): it is a favicon
+ * container, and the registry carries one raster format family.
+ *
+ * What the signed index carries is raster only. PNG, WebP and JPEG are inlined
+ * as they are; an SVG is drawn to a PNG by `bot/lib/rasterize.mjs` first, so the
+ * client and the site never receive a document.
  *
  * `magic` is `null` for SVG alone, which is text and is checked by parsing
  * rather than by a prefix.
@@ -50,8 +53,13 @@ export const ICON_FORMATS = [
   { name: "icon.svg", media: "image/svg+xml", magic: null },
   { name: "icon.jpg", media: "image/jpeg", magic: [0xff, 0xd8, 0xff] },
   { name: "icon.jpeg", media: "image/jpeg", magic: [0xff, 0xd8, 0xff] },
-  { name: "icon.ico", media: "image/x-icon", magic: [0x00, 0x00, 0x01, 0x00] },
+  // Listed so the order and the names still match `AstraPlugins/spec/icon-formats.yaml` (which still
+  // packs it), and `refused` so that every use of the name ends in ICON_FORMAT_MESSAGE.
+  { name: "icon.ico", media: "image/x-icon", magic: null, refused: true },
 ];
+
+/** The one sentence an author is told when the icon is in a format the registry does not take. */
+export const ICON_FORMAT_MESSAGE = "the icon must be PNG, JPEG, WebP or SVG";
 
 /** Icon filenames the packer ships, in the order they are preferred. */
 export const ICON_NAMES = ICON_FORMATS.map((f) => f.name);
@@ -202,8 +210,8 @@ export function checkIcon(icon, { maxBytes = MAX_ICON_BYTES } = {}) {
   }
 
   const format = formatOf(icon.name);
-  if (!format) {
-    err(`${icon.name} is not one of ${ICON_NAMES.join(", ")}`);
+  if (!format || format.refused) {
+    err(`${icon.name}: ${ICON_FORMAT_MESSAGE}`);
     return findings;
   }
 
@@ -286,7 +294,7 @@ export function sha256Hex(bytes) {
  */
 export function iconDataUri(icon) {
   const format = formatOf(icon.name);
-  if (!format) throw new Error(`${icon.name} is not an icon filename`);
+  if (!format || format.refused) throw new Error(`${icon.name} is not an icon filename (${ICON_FORMAT_MESSAGE})`);
   return `data:${format.media};base64,${icon.bytes.toString("base64")}`;
 }
 

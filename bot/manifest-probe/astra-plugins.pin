@@ -264,6 +264,39 @@ env:
 # `_unmirrored` cap whose copy is already there.
 #
 # `d15c896` is a merge commit on AstraPlugins master. R3 still has not exited.
+#
+# 2026-11-10: `d15c896` -> `5286768`, for two facts this registry now acts on.
+# `GetAiSettings` is the eleventh `PluginHostService` rpc, gated on
+# `read_ai_settings` (Astra `4b8c4ae8e`, AstraPlugins PR #171), and the manifest
+# crate maps `macos`/`aarch64` to `macos-arm64` (Astra main; AstraPlugins PR
+# #166, merged as `76126647f`, which `5286768` contains). Both had to arrive
+# with the registry's halves: at `d15c896` the probe's proto and hooks.yaml
+# comparisons have no `GetAiSettings` and `PERMISSION_NAMES` has no
+# `read_ai_settings`, so `rpcscan.mjs` could not name it, a plugin calling it
+# was scanned as making an undeclared call, and `P_UNKNOWN_PERMISSION` told its
+# author the key granted nothing.
+#
+# The change in judgement, measured on the paths read here
+# (`git diff d15c896 5286768`): the manifest crate gains `read_ai_settings` in
+# `PERMISSION_NAMES` (not high-risk, not refused at tier 2), `macos-arm64` in
+# `platform_key_for`, two capabilities (`web_search`, `music_provider`) and its
+# own `check_reserved_keys`, which `PluginManifest::from_str` now runs.
+# `proto/plugin.proto`'s `PluginHostService` gains `GetAiSettings` (11 rpcs);
+# `spec/hooks.yaml` gains its row (`core`, `read_ai_settings`), the two
+# capabilities in its vocabulary line and their `PluginCapabilityService` rows;
+# `spec/limits.yaml` gains four `music_*` numbers this registry mirrors none of.
+# `spec/listing-limits.yaml`, `spec/icon-formats.yaml`, `spec/locales.yaml`,
+# `spec/reserved-ids.yaml` and `testdata/locales/` are byte-identical, and
+# `tools/validate.mjs --allow-staging` prints byte-identical output against the
+# two trees. `plugin-release.yml` moves too, and reaches this registry through
+# an author's bundle, never through this pin. The readers move in the same
+# commit as the pin, because the probe is red at this pin without them: the two
+# capability lists (schema/version-v1.json, KNOWN_AUTHORITY), and the probe's
+# reserved-key copy, which now calls the crate's function as its own test
+# demanded on this bump.
+#
+# `5286768` is the head of #171, NOT a master commit: this line moves to #171's
+# merge commit before the registry PR that carries it merges.
 
-ASTRA_PLUGINS_REF=d15c8960a90a961fd5c83ead6f3d01e89f5f60f6
+ASTRA_PLUGINS_REF=5286768bbe039f80bca4e03c0c4f362011a667b7
 ASTRA_PLUGINS_URL=https://github.com/mihailinl/AstraPlugins.git
