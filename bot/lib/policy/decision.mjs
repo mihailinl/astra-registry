@@ -43,6 +43,29 @@ import { HOUR_MS, iso } from "./time.mjs";
  */
 const CHANGE_OF_HANDS = new Set(["R_IDENTITY_CHANGED", "R_BINDING_CHANGED", "R_FIRST_BINDING"]);
 
+/**
+ * `R_DOM_ACCESS_HOLD`: dom_access holds for review until a fixed Astra ships.
+ *
+ * Every release whose manifest asks for `dom_access` — under `[capabilities]`
+ * or `[permissions]`, a first listing or a new version, newly requested or
+ * already held — waits for a person, on the service path as well as the
+ * legacy one. An approval clears it exactly as it clears a change of hands.
+ *
+ * The one exemption is the first-party SDK repository, `mihailinl/AstraPlugins`,
+ * named by GitHub's immutable ids as the build certificate states them (`.15`
+ * and `.17`) — never by its name: a name can be renamed away and re-registered,
+ * and a repository transferred to another owner keeps its id but not its owner
+ * id. A run that cannot state both ids is not exempt.
+ *
+ * Remove when a fixed Astra ships: set this to `null`. That one edit lifts the
+ * hold on both paths; the code's row in `constants.mjs` and the tests that pin
+ * the hold go with it.
+ */
+const DOM_ACCESS_HOLD = Object.freeze({
+  authority: "dom_access",
+  exempt: Object.freeze({ repository_id: "1203676452", repository_owner_id: "193032699" }),
+});
+
 
 /**
  * Decide what happens to one ingested release.
@@ -61,6 +84,7 @@ const CHANGE_OF_HANDS = new Set(["R_IDENTITY_CHANGED", "R_BINDING_CHANGED", "R_F
  *   track?: object,
  *   queued?: object|null,
  *   approval?: {by: string, at: string}|null,
+ *   sourceIds?: {repository_id: string|null, repository_owner_id: string|null}|null,
  *   now?: Date,
  * }} input
  */
@@ -355,6 +379,7 @@ export function decide(input) {
   // carries `P_REVIEW_PRIORITY`, whose message says which of those it met so
   // that moderators read it first. The legacy issue path is untouched and
   // keeps every hold and delay until R6 removes it (decision D1).
+  // One more hold on both paths, for now: `R_DOM_ACCESS_HOLD` (`DOM_ACCESS_HOLD`).
   const onService = path === "service";
   const priority = [];
   const held = levelled.filter((f) => f.level === "review");
@@ -376,6 +401,14 @@ export function decide(input) {
     // A first listing already blocks, and saying "and also it wants dom_access"
     // twice does not make the human read it twice.
     add("R_NEW_HIGH_RISK", `this release adds ${newHighRisk.join(", ")}, which the listed ${previous?.version ?? "previous version"} did not have`);
+  }
+  // Both paths, every release that asks for it (see `DOM_ACCESS_HOLD`).
+  const source = input.sourceIds ?? null;
+  const firstParty = Boolean(DOM_ACCESS_HOLD) &&
+    source?.repository_id === DOM_ACCESS_HOLD.exempt.repository_id &&
+    source?.repository_owner_id === DOM_ACCESS_HOLD.exempt.repository_owner_id;
+  if (DOM_ACCESS_HOLD && requested.includes(DOM_ACCESS_HOLD.authority) && !firstParty) {
+    add("R_DOM_ACCESS_HOLD", `this release asks for ${DOM_ACCESS_HOLD.authority}, which holds for review until a fixed Astra ships`);
   }
   if (reasons.some((r) => r.level === "review")) {
     if (!approval) {

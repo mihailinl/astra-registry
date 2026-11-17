@@ -54,7 +54,7 @@ import {
 } from "../lib/compile-decision.mjs";
 import { decisionId, recordPath, RECORD_SCHEMA, writeDecisionRecord } from "../lib/decisions.mjs";
 import { HOLD_KINDS, holdKindFor, isTakedown } from "../lib/holds.mjs";
-import { checkEntry } from "../lib/moderation.mjs";
+import { CATEGORIES, categoryWords, checkEntry } from "../lib/moderation.mjs";
 import { headListing, withdrawnBy } from "../lib/takedown-bound.mjs";
 import { KINDS } from "../../tools/lib/revocations.mjs";
 import { REPO_ROOT, loadRecords, loadSchemas, loadSources } from "../../tools/lib/sources.mjs";
@@ -1295,4 +1295,105 @@ test("a grandfathered or frozen listing's version is reviewable, and an `unliste
   const unlisted = reviewEstate({ bound: false, extra: { "plugins/widgets/plugin.json": plugin("widgets", { unlisted: true }) } });
   const u = compileDecision(review({ versions: ["1.1.0"] }), { root: unlisted });
   assert.equal(u.refusal, "target_changed", "an `unlisted` listing's version was marked reviewed");
+});
+
+// ── `put_back` (contract 6.31.0; MOD-59; BOT-112) ───────────────────────────
+//
+// Before 6.31.0 a plugin brought back because its author answered a notice
+// could only be relisted under `error`, which publishes a mistake nobody found.
+// A put-back is accepted only on RELIST and UNREVOKE, and only when what it
+// reverses is a `delist` (or a `revoke`) of the same plugin whose category now
+// is `legal` or `account_sanction`. Watched failing: with `refusePutBackTarget`
+// made to return null, the "malicious", "other plugin" and "no entry" refusals
+// are red; with `put_back` taken out of `CATEGORIES.relist`, the accepted
+// relist is red.
+
+const PB_DELIST = "0192f3a4-5b6c-7d8e-9f01-2345678930a1";
+const PB_REVOKE = "0192f3a4-5b6c-7d8e-9f01-2345678930a2";
+const PB_CORRECT = "0192f3a4-5b6c-7d8e-9f01-2345678930a3";
+const PB_ADVISORY = {
+  id: "ASTRA-2026-0001", published: "2026-09-01", severity: "high", action: "block_install",
+  reason: MODERATOR_REASON, entries: [{ kind: "id", value: "widgets" }],
+};
+
+// A revoke leaves a signed advisory covering the plugin, and a relist is refused under one (MOD-10), so the two
+// kinds of fixture are two trees.
+function putBackEstate({ category = "legal", plugin: who = "widgets", correct = null, unlisted = true, revoke = false } = {}) {
+  const extra = {
+    "plugins/widgets/plugin.json": plugin("widgets", unlisted ? { unlisted: true } : {}),
+    "bot/moderation/2026-09-20-widgets-delist.json": {
+      date: "2026-09-20", action: "delist", plugin: who, reason: MODERATOR_REASON, category, service_decision_id: PB_DELIST,
+    },
+  };
+  if (revoke) {
+    extra["bot/moderation/2026-09-21-widgets-revoke.json"] = {
+      date: "2026-09-21", action: "revoke", plugin: who, advisory: PB_ADVISORY.id, reason: MODERATOR_REASON,
+      category, service_decision_id: PB_REVOKE,
+    };
+    extra["tools/revocations/ASTRA-2026-0001.json"] = PB_ADVISORY;
+  }
+  if (correct) {
+    extra["bot/moderation/2026-09-22-widgets-correct.json"] = {
+      date: "2026-09-22", action: "correct", plugin: who, reason: MODERATOR_REASON, category: correct,
+      previous_category: category, corrects: PB_DELIST, service_decision_id: PB_CORRECT,
+    };
+  }
+  return estate({ extra });
+}
+
+const putBack = (code, over = {}) => entry({
+  code, category: "put_back", moderator: "knice", reverses: code === "M_RELIST" ? PB_DELIST : PB_REVOKE, ...over,
+});
+
+test("put_back: a RELIST reversing a legal delist, and an UNREVOKE reversing a legal revoke, compile and log `put_back` with `reverses`", () => {
+  const root = putBackEstate();
+  const relist = compileDecision(putBack("M_RELIST"), { root });
+  const withRevoke = putBackEstate({ revoke: true, unlisted: false });
+  assert.equal(relist.outcome, "compiled", `${relist.refusal}: ${relist.detail ?? ""}`);
+  assert.deepEqual([relist.log[0].doc.action, relist.log[0].doc.category, relist.log[0].doc.reverses], ["relist", "put_back", PB_DELIST]);
+  const unrevoke = compileDecision(putBack("M_UNREVOKE", { service_decision_id: SDI2 }), { root: withRevoke });
+  assert.equal(unrevoke.outcome, "compiled", `${unrevoke.refusal}: ${unrevoke.detail ?? ""}`);
+  assert.deepEqual([unrevoke.log[0].doc.action, unrevoke.log[0].doc.category, unrevoke.log[0].doc.reverses], ["unrevoke", "put_back", PB_REVOKE]);
+  assert.equal(compileDecision(putBack("M_RELIST"), { root: putBackEstate({ category: "account_sanction" }) }).outcome, "compiled");
+});
+
+test("put_back: on any other action it is refused kind_refused, as §7.2's table does every category", () => {
+  const root = putBackEstate({ revoke: true });
+  for (const code of ["M_YANK", "M_DELIST", "M_DEPRECATE", "M_REVOKE"]) {
+    const r = compileDecision(entry({ code, category: "put_back", moderator: "knice", severity: "high", action: "block_install", versions: ["1.0.0"] }), { root });
+    assert.equal(r.refusal, "kind_refused", `${code} with put_back was ${r.outcome} ${r.refusal ?? ""}`);
+  }
+});
+
+test("put_back: reversing a takedown that is not legal or an account sanction, another plugin's, none, or not a delist is target_changed", () => {
+  assert.equal(compileDecision(putBack("M_RELIST"), { root: putBackEstate({ category: "malicious" }) }).refusal, "target_changed", "a malicious delist");
+  assert.equal(compileDecision(putBack("M_UNREVOKE"), { root: putBackEstate({ category: "privacy", revoke: true }) }).refusal, "target_changed", "a privacy revoke");
+  assert.equal(compileDecision(putBack("M_RELIST"), { root: putBackEstate({ plugin: "gadgets" }) }).refusal, "target_changed", "another plugin's entry");
+  assert.equal(compileDecision(putBack("M_RELIST", { reverses: SDI2 }), { root: putBackEstate() }).refusal, "target_changed", "no such entry");
+  assert.equal(compileDecision(putBack("M_RELIST", { reverses: undefined }), { root: putBackEstate() }).refusal, "target_changed", "no reverses");
+  assert.equal(compileDecision(putBack("M_UNREVOKE", { reverses: PB_DELIST }), { root: putBackEstate({ revoke: true }) }).refusal, "target_changed", "a delist, for an unrevoke");
+});
+
+test("put_back: the category NOW decides (MOD-57), both ways", () => {
+  assert.equal(compileDecision(putBack("M_RELIST"), { root: putBackEstate({ category: "legal", correct: "licence" }) }).refusal,
+    "target_changed", "a legal delist corrected to licence is no longer one a put-back may reverse");
+  assert.equal(compileDecision(putBack("M_RELIST"), { root: putBackEstate({ category: "naming", correct: "legal" }) }).outcome,
+    "compiled", "a delist corrected to legal is");
+});
+
+test("put_back: an old category set still refuses it, and the other categories are unchanged", () => {
+  const old = (list) => list.filter((c) => c !== "put_back");
+  assert.deepEqual(old(CATEGORIES.relist), ["error", "appeal_reversed", "path_test"]);
+  assert.deepEqual(old(CATEGORIES.unrevoke), ["error", "appeal_reversed", "path_test"]);
+  for (const action of ["yank", "delist", "deprecate", "revoke", "reset", "review", "appeal", "correct"]) {
+    assert.ok(!CATEGORIES[action].includes("put_back"), `${action} must not allow put_back`);
+  }
+  assert.ok(checkEntry({ date: "2026-09-20", action: "relist", plugin: "widgets", reason: MODERATOR_REASON, category: "put_back", reverses: PB_DELIST, service_decision_id: SDI }).length === 0);
+  assert.ok(checkEntry({ date: "2026-09-20", action: "delist", plugin: "widgets", reason: MODERATOR_REASON, category: "put_back", service_decision_id: SDI }).length > 0);
+});
+
+test("put_back: its public words are §7.2's, in the code and in docs/POLICY.md", () => {
+  assert.equal(categoryWords("put_back"), "Restored after a counter-notice");
+  const policy = fs.readFileSync(path.join(REPO_ROOT, "docs/POLICY.md"), "utf8");
+  assert.ok(policy.includes("*Restored after a counter-notice*"), "docs/POLICY.md must publish the words the log shows");
 });

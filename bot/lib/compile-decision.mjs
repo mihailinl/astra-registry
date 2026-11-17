@@ -1411,6 +1411,40 @@ function compileDelist(root, d, listing, { decidedAt, date, reason, batch = null
 }
 
 /**
+ * BOT-112 (contract 6.31.0): what a `put_back` may reverse. Only a takedown that
+ * could have been one: a `delist` (for `M_RELIST`) or a `revoke` (for
+ * `M_UNREVOKE`) on `main` for this very plugin whose category NOW (MOD-57) is
+ * `legal` or `account_sanction`. Anything else, or no `reverses`, is
+ * `target_changed`. The bot is told nothing else about a put-back: no
+ * counter-notice, no date, and it decides nothing by the clock.
+ *
+ * @returns {object|null} the refusal, or null when the category is not `put_back`
+ *   or what it reverses qualifies.
+ */
+const PUT_BACK_REVERSES = { M_RELIST: "delist", M_UNREVOKE: "revoke" };
+const PUT_BACK_REVERSIBLE = Object.freeze(["legal", "account_sanction"]);
+function refusePutBackTarget(root, d, listing) {
+  if (d.category !== "put_back") return null;
+  const wanted = PUT_BACK_REVERSES[d.code];
+  const { entries } = loadEntries({ root });
+  const target = typeof d.reverses === "string" && d.reverses !== ""
+    ? entries.find((e) => e.service_decision_id === d.reverses && e.action === wanted)
+    : undefined;
+  if (!target || target.plugin !== listing.id) {
+    return refuse(d, "target_changed",
+      `a put_back reverses a ${wanted} of ${listing.id} on this tree, and ${JSON.stringify(d.reverses ?? null)} is ` +
+      "not one (BOT-112), so there is nothing here a put-back can be said to give back");
+  }
+  const current = effectiveCategories(entries).get(target.service_decision_id)?.category ?? target.category;
+  if (!PUT_BACK_REVERSIBLE.includes(current)) {
+    return refuse(d, "target_changed",
+      `the ${wanted} it reverses is now published under ${JSON.stringify(current)}, and a put_back reverses only ` +
+      `${PUT_BACK_REVERSIBLE.join(" or ")} takedowns (BOT-112)`);
+  }
+  return null;
+}
+
+/**
  * An `M_RELIST` (§7.2; MOD-9; MOD-47): `unlisted` removed from the listing and
  * the log entry `relist`, naming the decision it `reverses`.
  *
@@ -1422,6 +1456,8 @@ function compileDelist(root, d, listing, { decidedAt, date, reason, batch = null
  * again would log a relist that changed nothing.
  */
 function compileRelist(root, d, listing, { decidedAt, date, reason, batch = null }) {
+  const notPutBack = refusePutBackTarget(root, d, listing);
+  if (notPutBack) return notPutBack;
   if (listing.listed) {
     return refuse(d, "target_changed",
       `${listing.id} is already listed on this tree, so there is nothing for this relist to give back`);
@@ -1468,6 +1504,8 @@ function compileRelist(root, d, listing, { decidedAt, date, reason, batch = null
  * already gone, or one an earlier unrevoke already lifted.
  */
 function compileUnrevoke(root, d, listing, { decidedAt, date, reason, batch = null }) {
+  const notPutBack = refusePutBackTarget(root, d, listing);
+  if (notPutBack) return notPutBack;
   if (typeof d.reverses !== "string" || d.reverses === "") {
     return refuse(d, "target_changed",
       "an M_UNREVOKE names the revoke or deprecate it reverses (`reverses`), and this one names none, so there is " +

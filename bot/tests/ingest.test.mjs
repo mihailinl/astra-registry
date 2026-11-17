@@ -3267,6 +3267,64 @@ await test("check: the facts file carries codes and levels and nothing that name
   assertEqual(plugin.source.repo, REPO, "the card is derived under verify's name");
 });
 
+// ── review of #505, B1: a release asks for what ANY of its bundles asks for ──
+//
+// Every platform installs its own bundle and grants from that bundle's own
+// `MANIFEST.json`, so the authority a release requests is the union over its
+// bundles — `[capabilities]` by name, `MANIFEST.permissions` by key — and the
+// listing and the decision both read the union. Until this, both paths read
+// the first bundle alone: a Linux bundle declaring nothing beside a Windows
+// bundle asking for `dom_access` was listed, and decided, as asking for
+// nothing. The fixture certificate is a stranger's, so the hold is asked.
+//
+// Watched failing: with `releaseAuthority` answering the first bundle's set
+// (either path), the derived record loses `dom_access` and both decisions
+// publish or delay instead of holding.
+const { decide: decideOf } = await import("../lib/policy/decision.mjs");
+const DOM_ONLY_ON_WINDOWS = () => [
+  conformingAsset({ os: "linux" }),
+  conformingAsset({ os: "windows", capabilities: ["tools", "dom_access"], permissions: { dom_access: { reason: "Draws over the window" } } }),
+];
+const heldForDom = (derived, sourceIds, pathName) => decideOf({
+  path: pathName, findings: [], derived, existing: null, repo: REPO, tag: TAG, sourceIds, now: new Date("2026-11-10T00:00:00Z"),
+});
+
+await test("B1 — the issue path lists and decides the union of every bundle's authority, not the first bundle's", async () => {
+  for (const assets of [DOM_ONLY_ON_WINDOWS(), DOM_ONLY_ON_WINDOWS().reverse()]) {
+    const r = await run({ assets, root: registryWith({}) });
+    assertEqual(errorCodes(r).length, 0, JSON.stringify(errorCodes(r)));
+    assert(r.derived.version.capabilities.includes("dom_access"), `the record lost a bundle's capability: ${JSON.stringify(r.derived.version.capabilities)}`);
+    assert(Object.hasOwn(r.derived.version.permissions, "dom_access"), `the record lost a bundle's permission: ${JSON.stringify(r.derived.version.permissions)}`);
+    assertEqual(r.identity?.repository_id, FIXTURE_REPOSITORY_ID, "the fixture certificate's ids did not reach the result");
+    for (const p of ["legacy", "service"]) {
+      const d = heldForDom(r.derived, r.identity, p);
+      assertEqual(d.outcome, "review", `${p}: ${JSON.stringify(d.reasons.map((x) => x.code))}`);
+      assert(d.reasons.some((x) => x.code === "R_DOM_ACCESS_HOLD"), `${p}: not held by R_DOM_ACCESS_HOLD`);
+    }
+  }
+  // Bundles that agree derive exactly what one bundle does.
+  const agree = await run({ assets: [conformingAsset({ os: "linux", capabilities: ["tools", "client"] }), conformingAsset({ os: "windows", capabilities: ["tools", "client"] })], root: registryWith({}) });
+  const one = await run({ assets: [conformingAsset({ os: "linux", capabilities: ["tools", "client"] })], root: registryWith({}) });
+  assertEqual(JSON.stringify(agree.derived.version.capabilities), JSON.stringify(one.derived.version.capabilities), "agreeing bundles derived another set");
+  assertEqual(JSON.stringify(agree.derived.version.permissions), JSON.stringify(one.derived.version.permissions), "agreeing bundles derived other permissions");
+});
+
+await test("B1 — the service path's check lists and decides the union of every bundle's authority, not the first bundle's", async () => {
+  const { v, assetsDir } = await verifyRun({ assets: DOM_ONLY_ON_WINDOWS() });
+  assertEqual(v.outcome, "ok", JSON.stringify(v.findings));
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-check-"));
+  scratch.push(out);
+  const { facts, derived } = await checkFacts({ submissionId: SVC_SID, assetsDir: path.join(assetsDir, SVC_SID), verified: v, out, root: REPO_ROOT });
+  assertEqual(facts.findings.filter((f) => f.level === "error").length, 0, JSON.stringify(facts.findings));
+  assert(derived.version.capabilities.includes("dom_access"), `the record lost a bundle's capability: ${JSON.stringify(derived.version.capabilities)}`);
+  assert(Object.hasOwn(derived.version.permissions, "dom_access"), `the record lost a bundle's permission: ${JSON.stringify(derived.version.permissions)}`);
+  const written = JSON.parse(fs.readFileSync(path.join(out, "listing", "plugins", "dice-roller", "versions", "0.2.0.json"), "utf8"));
+  assert(written.capabilities.includes("dom_access") && Object.hasOwn(written.permissions, "dom_access"), "the listing handed to the publish job lost it");
+  const d = heldForDom(derived, { repository_id: v.repository_id, repository_owner_id: v.repository_owner_id }, "service");
+  assertEqual(d.outcome, "review", JSON.stringify(d.reasons.map((x) => x.code)));
+  assert(d.reasons.some((x) => x.code === "R_DOM_ACCESS_HOLD"), "not held by R_DOM_ACCESS_HOLD");
+});
+
 await test("check: a reserved id is refused on the service path too", async () => {
   const asset = conformingAsset({ id: "moderation" });
   const { v, assetsDir } = await verifyRun({ assets: [asset] });

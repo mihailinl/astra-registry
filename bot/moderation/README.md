@@ -112,9 +112,17 @@ One per `M_*` decision, except `M_APPEAL`, which has none. `bot/lib/moderation.m
 | `delist` | malicious, account_compromise, account_sanction, privacy, impersonation, broken, licence, naming, legal, author_request |
 | `deprecate` | privacy, broken, security_defect, licence, legal, path_test |
 | `revoke` | malicious, account_compromise, account_sanction, privacy, impersonation, security_defect, legal |
-| `relist`, `unrevoke` | error, appeal_reversed, path_test |
+| `relist`, `unrevoke` | error, appeal_reversed, put_back, path_test |
 | `reset` | identity_reset |
 | `appeal` | — |
+
+`put_back` (contract 6.31.0; MOD-59) is the category of a plugin brought back after
+its author answered a notice. The bot accepts it only on `M_RELIST` (reversing a
+`delist`) and `M_UNREVOKE` (reversing a `revoke`) whose `reverses` names such an
+entry on `main` for the same plugin, with a category now (MOD-57) of `legal` or
+`account_sanction`; anything else is `target_changed`. It never learns why the
+service decided to put the plugin back, or when. Public words: *Restored after a
+counter-notice*.
 
 `author_request` on a `yank` is FLOW-79's: an author's own yank, taken in the
 panel and compiled to a yank with an author-action decision record. Its reason
