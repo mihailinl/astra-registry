@@ -82,6 +82,7 @@ import { isTime } from "../../tools/lib/time.mjs";
 import { decisionId, submissionKey } from "./decisions.mjs";
 import { ID_PATTERN } from "../../tools/lib/ids.mjs";
 import { SEMVER_PATTERN } from "../../tools/lib/semver.mjs";
+import { isFirstPartyId, loadFirstParty } from "../../tools/lib/first-party.mjs";
 
 const ID_RE = new RegExp(ID_PATTERN);
 const SEMVER_RE = new RegExp(SEMVER_PATTERN);
@@ -332,7 +333,11 @@ export function readGitState(root, { markersOverride = null, pin = null } = {}) 
   // The owner's approve acts (operator-acts design §4.7), each verified under
   // the pin from THIS checkout and honoured only while its key is active.
   const ownerApprovals = ownerApprovalsAt(root, { pin: pin ?? loadPin() });
-  return { root, records: records.map((r) => r.doc).filter(Boolean), alerts, denied, oks, markers, ownerApprovals };
+  // Contract 6.32.0: Astra's own GitHub ids (policy/first-party.json), for
+  // MIG-10's first-party exemption. A file that does not load is no first
+  // party at all, so every first binding is held as before.
+  const firstParty = loadFirstParty(root).ids;
+  return { root, records: records.map((r) => r.doc).filter(Boolean), alerts, denied, oks, markers, ownerApprovals, firstParty };
 }
 
 function readJsonDir(dir) {
@@ -547,6 +552,27 @@ function ownFile(ownerFile, ids) {
     && ownerFile.verified === true;
 }
 
+/**
+ * Contract 6.32.0 (the owner's report §1.14; POLICY §3.2): a first binding
+ * inside Astra's own accounts needs no moderator. The repository owner's
+ * NUMERIC GitHub id is in policy/first-party.json, and nobody outside that set
+ * is in the binding's history: the build's triggering actor, when read, and
+ * the owner file's newest commit's linked author are first-party ids too, and
+ * that commit is tied to no pull request (ID-63: a stranger's merged pull
+ * request can carry a token the stranger minted). Never by login: `knice`
+ * (36719) is a stranger's account. Anything unread, or any third party, holds
+ * as before.
+ */
+export function firstPartyBinding({ ids, actor = null, ownerFile = null, firstParty = null }) {
+  const set = firstParty instanceof Set ? firstParty : null;
+  if (!set || !isFirstPartyId(ids?.repository_owner_id, set)) return false;
+  const actorId = actor?.triggering_actor_id;
+  if (actorId !== undefined && actorId !== null && !isFirstPartyId(actorId, set)) return false;
+  return Boolean(ownerFile) && ownerFile.pull_request === false
+    && typeof ownerFile.commit === "string" && /^[0-9a-f]{40}$/.test(ownerFile.commit)
+    && isFirstPartyId(ownerFile.author_id, set);
+}
+
 /** The accounts whose own first binding needs no moderator (contract 6.7.0, MIG-10): what `compareActor` calls them. */
 export const FIRST_BINDING_SELF_BASES = Object.freeze(["owner", "admin", "maintain"]);
 
@@ -576,8 +602,9 @@ export const FIRST_BINDING_SELF_BASES = Object.freeze(["owner", "admin", "mainta
  *
  * @returns {{by: string, alert?: object, windowEndsAt?: string}|null}
  */
-export function firstBindingCleared({ actor, verdict, lineHash, records = [], alerts = null, denied = null, ids, pluginId, oks = null, fingerprint = null, ownerFile = null, ownerApprovals = [], windowHours = OPERATOR_WINDOW_HOURS }) {
+export function firstBindingCleared({ actor, verdict, lineHash, records = [], alerts = null, denied = null, ids, pluginId, oks = null, fingerprint = null, ownerFile = null, ownerApprovals = [], windowHours = OPERATOR_WINDOW_HOURS, firstParty = null }) {
   if (!lineHash || verdict !== "pass") return null;
+  if (firstPartyBinding({ ids, actor, ownerFile, firstParty })) return { by: "first_party" };
   // The self path needs the owner FILE to be the owner's too (ID-63): a
   // stranger's merged pull request can carry a token the stranger minted —
   // anyone can mint one for any repository id (ID-10, ID-13), so the service
@@ -1362,6 +1389,7 @@ export function decideSubmission(input) {
       firstCleared = firstBindingCleared({
         actor: verified.actor, verdict, lineHash, records, alerts: git.alerts, denied: git.denied, oks: git.oks, ownerApprovals: git.ownerApprovals ?? [],
         ids: identity, pluginId: verified.plugin_id, fingerprint: verified.fingerprint, ownerFile: verified.owner_file, windowHours,
+        firstParty: git.firstParty ?? null,
       });
       if (!firstCleared) heldCodes.push("R_FIRST_BINDING");
     }

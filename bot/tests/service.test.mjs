@@ -2833,7 +2833,7 @@ const fbVerified = (over = {}) => {
   // The owner file: the owner's own direct commit unless a case says otherwise (ID-63).
   return verified({ binding: FB_LINE, owner_file: { commit: "9".repeat(40), pull_request: false, author_id: P.oid, verified: true }, version, tag, fingerprint: fp, ...over });
 };
-const fbRun = ({ actor = null, version, tag, verdict = "pass", records = [baseline()], alerts = new Map(), denied = new Set(), listingState = { state: "grandfathered" }, windowHours } = {}) => decideWith({
+const fbRun = ({ actor = null, version, tag, verdict = "pass", records = [baseline()], alerts = new Map(), denied = new Set(), listingState = { state: "grandfathered" }, windowHours, firstParty } = {}) => decideWith({
   ...(tag ? { lease: { tag } } : {}),
   verified: fbVerified({ actor, ...(version ? { version } : {}), ...(tag ? { tag } : {}) }),
   facts: facts(version ? { version } : {}),
@@ -2842,7 +2842,7 @@ const fbRun = ({ actor = null, version, tag, verdict = "pass", records = [baseli
     artifacts: { "linux-x64": { url: null, filename: `${P.id}-${version}-linux-x64.astraplugin`, sha256: P.sha, size: 100 } },
   }) }) } : {}),
   ask: ask({ verdict, gates: { stop_status: "no_stop", decisions: [] }, notice: { kind: "first", status: "pending" } }),
-  git: git({ existing: existing(), listingState, records, alerts, denied }),
+  git: git({ existing: existing(), listingState, records, alerts, denied, ...(firstParty ? { firstParty } : {}) }),
   operatorWindowHours: windowHours,
 });
 const heldCodesOf = (plan) => plan.record?.reasons ?? [];
@@ -2913,6 +2913,49 @@ test("6.7.0 (MIG-10, ID-63): the owner's build over a stranger's merged owner fi
   }
   const own = run({ commit: "9".repeat(40), pull_request: false, author_id: P.oid, verified: true });
   assert.equal(own.state, "published", `the owner's own verified direct commit did not clear: ${JSON.stringify(heldCodesOf(own))}`);
+});
+
+// Contract 6.32.0 (the owner's report §1.14; POLICY §3.2): a first binding
+// inside Astra's own accounts, by NUMERIC id, is not held. The set is
+// policy/first-party.json's; `knice` (36719) looks like KNICE and is a
+// stranger. Watched red: with `firstPartyBinding`'s owner-id test removed,
+// 36719 clears; with its actor test removed, a stranger's build clears; with
+// the call in `firstBindingCleared` removed, no first-party id clears.
+test("6.32.0 (MIG-10): a first binding whose repository owner is a first-party numeric id is not held; 36719 and a stranger in its history are", async () => {
+  const { loadFirstParty } = await import("../../tools/lib/first-party.mjs");
+  const { firstPartyBinding } = await import("../lib/service-decide.mjs");
+  const real = loadFirstParty(REPO);
+  assert.deepEqual(real.problems, []);
+  assert.deepEqual([...real.ids].sort(), ["114572819", "193032699", "280318216"], "policy/first-party.json is not the verified set");
+  const ownerFileOf = (id) => ({ commit: "9".repeat(40), pull_request: false, author_id: id });
+  const cleared = (id, over = {}) => firstBindingCleared({
+    actor: { triggering_actor_id: id, floor_days: 0, privileged: false, basis: "not_shown" }, verdict: "pass", lineHash: "ab".repeat(8),
+    ids: { repository_id: P.rid, repository_owner_id: id }, pluginId: P.id, ownerFile: ownerFileOf(id), firstParty: real.ids, ...over,
+  });
+  for (const id of ["280318216", "114572819", "193032699"]) {
+    assert.deepEqual(cleared(id), { by: "first_party" }, `first-party id ${id} was held`);
+    assert.equal(cleared(id, { actor: { triggering_actor_id: "700000555", privileged: false } }), null, `${id}: a stranger's build cleared`);
+    assert.equal(cleared(id, { ownerFile: ownerFileOf("700000555") }), null, `${id}: a stranger's owner-file commit cleared`);
+    assert.equal(cleared(id, { ownerFile: { ...ownerFileOf(id), pull_request: true } }), null, `${id}: an owner file from a pull request cleared`);
+    assert.equal(cleared(id, { ownerFile: null }), null, `${id}: an unread owner file cleared`);
+    assert.equal(cleared(id, { verdict: "B_BINDING_UNUSABLE" }), null, `${id}: a binding the service did not pass cleared`);
+    assert.equal(cleared(id, { firstParty: null }), null, `${id}: cleared with no first-party set read`);
+  }
+  // The look-alike: login knice/KNICE is id 36719, a stranger, and a record
+  // naming it is never first party; nor is a login, or a padded number.
+  assert.equal(cleared("36719"), null, "36719 (knice) was treated as first party");
+  assert.equal(cleared("36719", { actor: { triggering_actor_id: "193032699" }, ownerFile: ownerFileOf("193032699") }), null,
+    "a repository owned by 36719 cleared because a first-party account built it and wrote its owner file");
+  assert.equal(firstPartyBinding({ ids: { repository_owner_id: "KNICE" }, ownerFile: ownerFileOf("KNICE"), firstParty: real.ids }), false, "a login was matched");
+  assert.equal(firstPartyBinding({ ids: { repository_owner_id: "0193032699" }, ownerFile: ownerFileOf("0193032699"), firstParty: real.ids }), false, "a padded id was matched");
+
+  // End to end: the same release, held without the set and published with it.
+  const actor = { triggering_actor_id: P.oid, floor_days: 0, privileged: false, basis: "not_shown" };
+  assert.ok(heldCodesOf(fbRun({ actor })).includes("R_FIRST_BINDING"), "the fixture's first binding is not held without the set");
+  const own = fbRun({ actor, firstParty: new Set([P.oid]) });
+  assert.equal(own.state, "published", `a first-party first binding was held: ${JSON.stringify(heldCodesOf(own))}`);
+  assert.ok(heldCodesOf(fbRun({ actor: { ...actor, triggering_actor_id: "700000555" }, firstParty: new Set([P.oid]) })).includes("R_FIRST_BINDING"),
+    "a stranger's build of a first-party repository was not held");
 });
 
 test("6.7.0 (MIG-10): a second tag under a binding a moderator approved is not held again; it waits the first's window, and a deny stops it", () => {

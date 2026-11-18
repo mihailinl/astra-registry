@@ -503,6 +503,13 @@ with a check. Since contract 3.0.0 an approval there clears only a change of han
   this hold is for. GitHub shows `admin` and `maintain` only to a reader with
   push access, which this registry does not have to authors' repositories, so
   in practice an organisation's first binding is a moderator's.
+- **Astra's own first binding needs no moderator either** (since contract
+  6.32.0). When the repository's owner is one of Astra's own GitHub accounts
+  by NUMERIC id (`policy/first-party.json`: MINICE-AI, KnlCE, mihailinl;
+  never by login), the build's triggering actor, when read, is one of them
+  too, and the owner file's newest commit is one of theirs and not from a
+  pull request, the first binding is not held. Anyone outside that set in
+  the binding's history holds it as above.
 - **A moderator approves a binding once** (since 6.7.0). A later release
   under the same binding token, plugin and repository is not held again; it
   publishes once the approved release's alert is recorded as delivered (there
