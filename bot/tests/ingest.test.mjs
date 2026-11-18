@@ -596,6 +596,25 @@ await test("a missing manifest probe fails the run rather than skipping the chec
   }
 });
 
+// Watched failing: with probe.mjs's `low_tools` check removed, the outdated
+// probe's facts come back and `manifest` is not null.
+await test("an outdated probe that answers without low_tools fails the run closed (E_PROBE_UNAVAILABLE)", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-oldprobe-"));
+  scratch.push(dir);
+  const bin = path.join(dir, "old-probe");
+  const answer = { schema: "astra.manifest-probe.result/1", ok: true, findings: [], manifest: { id: "dice-roller", version: "0.2.0", capabilities: [] } };
+  fs.writeFileSync(bin, `#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '${JSON.stringify(answer)}'\n`, { mode: 0o755 });
+  const saved = process.env.ASTRA_MANIFEST_PROBE;
+  process.env.ASTRA_MANIFEST_PROBE = bin;
+  try {
+    const out = await runProbe({ pluginToml: "", botDir: dir });
+    assertEqual(out.findings[0]?.code, "E_PROBE_UNAVAILABLE", JSON.stringify(out.findings));
+    assertEqual(out.manifest, null, "an outdated probe's facts are not used");
+  } finally {
+    if (saved !== undefined) process.env.ASTRA_MANIFEST_PROBE = saved; else delete process.env.ASTRA_MANIFEST_PROBE;
+  }
+});
+
 await test("the probe the tests run is the real one, built from the daemon's crate", () => {
   assert(findProbe() !== null,
     "build it: bot/manifest-probe/link-deps.sh && cargo build --release --manifest-path bot/manifest-probe/Cargo.toml");
