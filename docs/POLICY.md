@@ -297,9 +297,10 @@ a review.
 **What a declaration is worth now that Phase 4 has landed.** A declaration is
 enforced at run time. `require_permission` runs at the top of every host RPC
 that needs one: `HOST_RPC_PERMISSIONS` in
-`astra-daemon/src/plugins/host_service.rs` is the table, and it names all ten
-RPCs — six gated (`SubscribeEvents`, `SendChatMessage`, `FireTrigger`,
-`SetVariable`, `SetThemeContribution`, `PushToUi`) and four deliberately not
+`astra-daemon/src/plugins/host_service.rs` is the table, and it names all sixteen
+RPCs — twelve gated (`SubscribeEvents`, `SendChatMessage`, `FireTrigger`,
+`SetVariable`, `SetThemeContribution`, `PushToUi`, `GetAiSettings`, `Speak`,
+`StopSpeaking`, `GetUserIdentity`, `RequestSettingsChange`, `ProposeCommand`) and four deliberately not
 (`Register`, `GetPluginSelfConfig`, `PluginLog`, `GetDaemonInfo`, none of which
 acts on anything outside the plugin). A canary reads that table rather than the
 methods, so a new RPC with no gate is a failing test instead of a silent

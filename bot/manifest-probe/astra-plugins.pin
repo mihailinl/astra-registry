@@ -264,6 +264,34 @@ env:
 # `_unmirrored` cap whose copy is already there.
 #
 # `d15c896` is a merge commit on AstraPlugins master. R3 still has not exited.
+#
+# Bumped to `23134b8` for five permissions and one capability. Like the `wakeword`
+# bump, this one is MEANT to change how a manifest is judged. AstraPlugins
+# master now carries the permissions `speak`, `read_user_identity`,
+# `receive_attachments`, `request_settings_change` and `propose_commands` and the
+# capability `image_provider` in `astra-plugin-manifest` (commits 6ea389d..23134b8),
+# and at `d15c896` this probe parses with a crate that refuses
+# `[capabilities] image_provider = true` as E_CAPABILITY_UNKNOWN and files the
+# five ids as unknown, so a plugin the daemon would run was refused here.
+#
+# Measured, not assumed: `git diff d15c896 23134b8 -- astra-plugin-cli/vendor/astra-plugin-manifest/src`
+# is NOT permissions and capabilities alone. `capabilities.rs` and `permissions.rs`
+# grow as above; `manifest.rs` + `lib.rs` add `check_reserved_keys`, which refuses
+# a manifest with a `kind` other than "plugin" or a non-empty `requires` (a future
+# item manifest, refused for its kind rather than its shape); `platform.rs` moves
+# too (48 lines). `PluginHostService` gains six rpcs at this commit
+# (GetAiSettings, Speak, StopSpeaking, GetUserIdentity, RequestSettingsChange,
+# ProposeCommand), which `HOST_RPCS` does not list yet, so the probe's
+# `the_host_rpc_list_is_the_protos_and_not_a_copy_of_it` is red at this commit,
+# as is `the_registrys_two_capability_lists_are_the_daemons`. The readers follow
+# in the next commit and cannot land first, the same pairing as `wakeword`.
+# Byte-identical between the two commits: `spec/listing-limits.yaml`,
+# `spec/icon-formats.yaml`, `spec/locales.yaml`, `spec/reserved-ids.yaml`,
+# `testdata/locales/`. `plugin-release.yml` changes (466 lines) and reaches this
+# registry only through an author's bundle, for the reason the `6d6861f` note gives.
+#
+# `23134b8` is AstraPlugins master's tip (origin/master, 2026-11-13). R3 still has
+# not exited, so no operator acknowledgement applies.
 
-ASTRA_PLUGINS_REF=d15c8960a90a961fd5c83ead6f3d01e89f5f60f6
+ASTRA_PLUGINS_REF=23134b8beeab67d7f33283b37b5415a2e8441e79
 ASTRA_PLUGINS_URL=https://github.com/mihailinl/AstraPlugins.git
