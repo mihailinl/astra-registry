@@ -35,12 +35,12 @@ export function loadFirstParty(root) {
   // A tree with no file has no first party: nothing is granted, nothing is
   // skipped, and nothing else changes (a fixture tree is one). The registry's
   // own tree carries the file, and tools/validate.mjs says so when it does not.
-  if (!fs.existsSync(file)) return { ids: new Set(), problems: [], missing: true };
+  if (!fs.existsSync(file)) return { ids: new Set(), logins: new Map(), problems: [], missing: true };
   let doc;
   try {
     doc = JSON.parse(fs.readFileSync(file, "utf8"));
   } catch (e) {
-    return { ids: new Set(), problems: [`${FIRST_PARTY_FILE} cannot be read: ${e.message}`] };
+    return { ids: new Set(), logins: new Map(), problems: [`${FIRST_PARTY_FILE} cannot be read: ${e.message}`] };
   }
   return firstPartyFrom(doc);
 }
@@ -52,7 +52,7 @@ export function firstPartyFrom(doc) {
   const listed = doc?.github_ids;
   if (listed === null || typeof listed !== "object" || Array.isArray(listed)) {
     problems.push("github_ids is not an object keyed by numeric id");
-    return { ids: new Set(), problems };
+    return { ids: new Set(), logins: new Map(), problems };
   }
   const ids = new Set();
   const logins = new Map();
