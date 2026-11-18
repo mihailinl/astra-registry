@@ -365,6 +365,9 @@ jobs:
     outputs:
       results: ${{ steps.apply.outputs.results }}
       main_commit: ${{ steps.apply.outputs.main_commit }}
+      # Contract 6.32.0: the plugin ids this run withdrew when the day is past
+      # TAKEDOWN_ALERT_AT (3); `[]` otherwise, and `[]` unless the push landed.
+      takedown_alert: ${{ steps.apply.outputs.takedown_alert }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -604,8 +607,13 @@ jobs:
               fi
             fi
           fi
+          takedown_alert='[]'
+          if [ -n "${main_commit}" ] && [ -s moderation/takedown-alert.json ]; then
+            takedown_alert=$(tr -d '\n' < moderation/takedown-alert.json)
+          fi
           {
             echo "main_commit=${main_commit}"
+            echo "takedown_alert=${takedown_alert}"
             echo "results<<ASTRA_MODERATION_RESULTS"
             cat moderation/results.json
             echo "ASTRA_MODERATION_RESULTS"
@@ -769,6 +777,9 @@ jobs:
         env:
           ASTRA_VERDICT_CODES: ${{ steps.settle.outcome == 'success' && '[]' || '["BOT_84_UNSETTLED_DECISION"]' }}
           ASTRA_VERDICT_IDS: '[]'
+          # Contract 6.32.0: more than three withdrawn today pages the owner,
+          # after the push, with the ids a revert names.
+          ASTRA_TAKEDOWN_ALERT: ${{ needs.commit.outputs.takedown_alert }}
         run: node bot/moderation-run.mjs --job verdict --check moderation-run --out verdict.json
 
       - uses: ./.github/actions/alert

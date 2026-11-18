@@ -103,7 +103,14 @@ import { countWindow } from "../lib/takedown-bound.mjs";
 // Ops entry 100's module, imported so that this suite, run against a tree
 // without it, is red test by test rather than at import.
 const settledLib = await import("../lib/settled.mjs").catch(() => null);
-import { CATEGORIES, TAKEDOWN_BOUND } from "../lib/moderation.mjs";
+import { CATEGORIES, TAKEDOWN_ALERT_AT, TAKEDOWN_BOUND } from "../lib/moderation.mjs";
+/**
+ * The bound this suite's commit-job fixtures run at: an estate of five
+ * plugins, written for the owner's bound of 3 (contract 6.32.0 made the
+ * production bound 10). `main`'s `bound` option carries it; the CLI passes
+ * none. The tests marked 6.32.0 run at the module's own `TAKEDOWN_BOUND`.
+ */
+const FIXTURE_BOUND = 3;
 import { BOT_AUDIENCE } from "../lib/oidc.mjs";
 import { BODIES, CALL_TIMEOUT_MS } from "../lib/service.mjs";
 import { buildIndex } from "../../tools/build-index.mjs";
@@ -1342,7 +1349,7 @@ test("with `list` down, a reversal held before contract 6.6.0 is released in one
 // before the repair on this same shape: `main` returned 0, and the add died.
 async function commitJob(root, {
   entries, submissions = [], shadow = false, now = new Date("2026-09-20T12:30:00Z"), env = {},
-  coverage = () => ({ status: "green", codes: [] }),
+  coverage = () => ({ status: "green", codes: [] }), bound = FIXTURE_BOUND,
 }) {
   const out = path.join(root, "moderation");
   const logs = [];
@@ -1368,6 +1375,7 @@ async function commitJob(root, {
       // unlisted floor the real one is held to. The test that asks about it
       // hands in a red one.
       coverage,
+      bound,
     });
     const paths = fs.readFileSync(path.join(out, "paths.txt"), "utf8").split("\n").filter(Boolean);
     const results = JSON.parse(fs.readFileSync(path.join(out, "results.json"), "utf8"));
@@ -1893,12 +1901,15 @@ test("R6: a push rejected because main moved is compiled again over the new main
 // both. Every rejected push is compiled again now, and the redo counts the
 // window out of the new main. Watched red: with a clean rebase pushed as
 // before, origin carries four withdrawals in the trailing 24 h.
-test("two takedowns raced across a rejected push never make four withdrawals in 24 h", async () => {
-  assert.equal(TAKEDOWN_BOUND, 3);
+test("two takedowns raced across a rejected push never make more withdrawals in 24 h than the bound", async () => {
+  // Run at the production bound (6.32.0: 10), because the redo after the
+  // rejected push is the CLI's, which takes no bound from anywhere: so the
+  // estate carries enough fillers that one slot is left.
+  const fillers = Array.from({ length: TAKEDOWN_BOUND - 3 }, (_, i) => `filler-${"abcdefghijklmnop"[i]}`);
   const now = new Date();
   const iso = (ms) => `${new Date(now.getTime() - ms).toISOString().slice(0, 19)}Z`;
-  const root = withDocuments(crowd({ at: iso(10 * 3600_000) }));
-  withdrawnInGit(root, ["gadgets", "gizmos"], iso(3600_000));
+  const root = withDocuments(crowd({ at: iso(10 * 3600_000), more: fillers }));
+  withdrawnInGit(root, ["gadgets", "gizmos", ...fillers], iso(3600_000));
   const origin = withRemote(root);
   const peer = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-peer-"));
   tmpRoots.push(peer);
@@ -1910,9 +1921,9 @@ test("two takedowns raced across a rejected push never make four withdrawals in 
   const a = [takedownOf("widgets", 0)];
   const b = [decision({ service_decision_id: SDIS[1], plugin_id: "doohickeys", code: "M_REVOKE", category: "security_defect",
     severity: "high", action: "block_install", moderator: "amoderator", versions: ["1.0.0"] })];
-  const first = await measuredJob(root, a, { now });
-  assert.deepEqual(first.results.compiled, [SDIS[0]], "the fixture: two withdrawn leave one slot, and A takes it");
-  const second = await measuredJob(peer, b, { now, env: { GITHUB_RUN_ID: "35502265999" } });
+  const first = await measuredJob(root, a, { now, bound: TAKEDOWN_BOUND });
+  assert.deepEqual(first.results.compiled, [SDIS[0]], "the fixture: the bound less one withdrawn leave one slot, and A takes it");
+  const second = await measuredJob(peer, b, { now, env: { GITHUB_RUN_ID: "35502265999" }, bound: TAKEDOWN_BOUND });
   assert.deepEqual(second.results.compiled, [SDIS[1]], "the fixture: B, from the same tree, also sees one slot");
   assert.equal(runApply(root, compileEnv({ entries: a })).status, 0);
   const two = runApply(peer, { ...compileEnv({ entries: b }), GITHUB_RUN_ID: "35502265999" });
@@ -1925,7 +1936,7 @@ test("two takedowns raced across a rejected push never make four withdrawals in 
     }
   };
   const advisories = sh(["ls-tree", "--name-only", "refs/heads/main", "tools/revocations/"], origin).split("\n").filter((f) => f.endsWith(".json"));
-  const withdrawn = ["widgets", ...PEERS].filter((id) => !listed(id)).length + advisories.length;
+  const withdrawn = ["widgets", ...PEERS, ...fillers].filter((id) => !listed(id)).length + advisories.length;
   assert.ok(withdrawn <= TAKEDOWN_BOUND,
     `origin carries ${withdrawn} withdrawals in the trailing 24 h under a bound of ${TAKEDOWN_BOUND}: ${advisories.join(", ")}`);
   assert.equal(advisories.length, 0, "the second run's revoke went out over a full bound");
@@ -3239,10 +3250,10 @@ test("a moderation commit may write the settled record, and exactly that one fil
 const PEERS = ["gadgets", "gizmos", "doohickeys"];
 const SDIS = ["…a1", "…a2", "…a3", "…a4", "…a5"].map((_, i) => `0192f3a4-5b6c-7d8e-9f01-2345678910${String(i + 10)}`);
 
-/** An estate with `widgets` and three more listed, bound plugins. */
-function crowd({ at = "2026-09-20T09:00:00Z" } = {}) {
+/** An estate with `widgets` and three more listed, bound plugins, and `more` beside them. */
+function crowd({ at = "2026-09-20T09:00:00Z", more = [] } = {}) {
   const extra = {};
-  for (const id of PEERS) {
+  for (const id of [...PEERS, ...more]) {
     extra[`plugins/${id}/plugin.json`] = plugin(id);
     extra[`plugins/${id}/versions/1.0.0.json`] = version(id, "1.0.0");
     extra[`plugins/${id}/identity.json`] = identity(id);
@@ -3264,12 +3275,12 @@ function withdrawnInGit(root, ids, when) {
 const takedownOf = (id, i) => decision({ service_decision_id: SDIS[i], plugin_id: id, code: "M_DELIST", category: "broken", moderator: "amoderator" });
 
 /** The commit job as the workflow runs it: no bound handed in from outside. */
-async function measuredJob(root, entries, { env = {}, now = new Date("2026-09-20T12:30:00Z") } = {}) {
-  return commitJob(root, { entries, now, env: { ASTRA_OVER_BOUND: "", ...env } });
+async function measuredJob(root, entries, { env = {}, now = new Date("2026-09-20T12:30:00Z"), bound = FIXTURE_BOUND, shadow = false } = {}) {
+  return commitJob(root, { entries, now, env: { ASTRA_OVER_BOUND: "", ...env }, bound, shadow });
 }
 
 test("M-T3.4: a batch of four takedowns under a bound of three, with none spent today, applies three and holds the fourth", async () => {
-  assert.equal(TAKEDOWN_BOUND, 3, "this fixture is written for the owner's bound of 3");
+  assert.equal(FIXTURE_BOUND, 3, "this fixture is written for a bound of 3");
   const root = crowd();
   const entries = ["widgets", ...PEERS].map(takedownOf);
   const { code, logs, results } = await measuredJob(root, entries);
@@ -3278,6 +3289,62 @@ test("M-T3.4: a batch of four takedowns under a bound of three, with none spent 
     "the first three takedowns of the batch are the ones the bound admits");
   assert.deepEqual(results.held.map((h) => [h.service_decision_id, h.held_for]), [[SDIS[3], "bound"]],
     "the fourth takedown in one batch went out unheld — four withdrawals in one commit under a bound of three");
+});
+
+// Contract 6.32.0 (report row "Снятие плагинов"): the bound is 10, and from
+// the fourth withdrawal of a day on the run that withdraws more raises the
+// alarm the `settled` job sends, naming the ids a revert names.
+//
+// Watched red: with TAKEDOWN_BOUND back at 3 the production batch holds the
+// fourth; with `takedownAlert`'s `<= alertAt` made `< alertAt` the third
+// pages; with the shadow guard removed a shadow run pages.
+const takedownAlertOf = (root) => JSON.parse(fs.readFileSync(path.join(root, "moderation", "takedown-alert.json"), "utf8"));
+test("6.32.0: under the production bound four takedowns in one batch all apply, and the fourth of the day raises the takedown alarm", async () => {
+  assert.equal(TAKEDOWN_BOUND, 10, "the report row \"Снятие плагинов\": the bound is 10");
+  assert.equal(TAKEDOWN_ALERT_AT, 3, "and the alarm is from the fourth withdrawal of a day");
+  const four = crowd();
+  const job = await measuredJob(four, ["widgets", ...PEERS].map(takedownOf), { bound: TAKEDOWN_BOUND });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.compiled, SDIS.slice(0, 4), "a batch of four went over a bound of ten");
+  assert.deepEqual(job.results.held, []);
+  assert.deepEqual(takedownAlertOf(four), ["doohickeys", "gadgets", "gizmos", "widgets"], "the run's withdrawals, for a revert");
+
+  // Three in a day is no alarm.
+  const three = crowd();
+  const quiet = await measuredJob(three, ["widgets", "gadgets", "gizmos"].map(takedownOf), { bound: TAKEDOWN_BOUND });
+  assert.deepEqual(quiet.results.compiled, SDIS.slice(0, 3));
+  assert.deepEqual(takedownAlertOf(three), [], "three withdrawals in a day paged");
+
+  // Three already in git and one more now: the one is the alarm's.
+  const counted = crowd();
+  withdrawnInGit(counted, PEERS, "2026-09-20T11:30:00Z");
+  const fourth = await measuredJob(counted, [takedownOf("widgets", 0)], { bound: TAKEDOWN_BOUND });
+  assert.deepEqual(fourth.results.compiled, [SDIS[0]]);
+  assert.deepEqual(takedownAlertOf(counted), ["widgets"], "the fourth withdrawal of the day raised no alarm");
+
+  // A shadow run withdraws nothing it writes, and pages for nothing.
+  const shadowed = crowd();
+  await measuredJob(shadowed, ["widgets", ...PEERS].map(takedownOf), { bound: TAKEDOWN_BOUND, shadow: true });
+  assert.deepEqual(takedownAlertOf(shadowed), [], "a shadow run raised the takedown alarm");
+});
+
+test("6.32.0: the `settled` verdict carries the takedown alarm, and only plugin ids", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-verdict-"));
+  tmpRoots.push(dir);
+  const verdictOf = async (env) => {
+    const out = path.join(dir, "verdict.json");
+    const code = await main(["--job", "verdict", "--check", "moderation-run", "--out", out], { env: { ASTRA_VERDICT_CODES: "[]", ASTRA_VERDICT_IDS: "[]", ...env }, log: { log() {}, error() {} } });
+    assert.equal(code, 0);
+    return JSON.parse(fs.readFileSync(out, "utf8"));
+  };
+  const paged = await verdictOf({ ASTRA_TAKEDOWN_ALERT: JSON.stringify(["widgets", "gadgets", "not an id"]) });
+  assert.equal(paged.status, "red");
+  assert.deepEqual(paged.codes, [moderationRun.TAKEDOWN_ALERT_CODE]);
+  assert.deepEqual(paged.ids, ["gadgets", "widgets"]);
+  const calm = await verdictOf({ ASTRA_TAKEDOWN_ALERT: "[]" });
+  assert.equal(calm.status, "green");
+  const absent = await verdictOf({});
+  assert.equal(absent.status, "green", "a verdict without the commit job's output paged");
 });
 
 test("M-T3.4: the bound counts what git already holds, and a full one is not lifted by the environment", async () => {
@@ -4649,7 +4716,7 @@ test("M_REVIEW over a full takedown bound is applied, the takedown beside it is 
   const root = crowd();
   withdrawnInGit(root, PEERS, "2026-09-20T11:30:00Z");
   withRemote(root);
-  assert.equal(countWindow(root, { now: new Date("2026-09-20T12:30:00Z") }).count, TAKEDOWN_BOUND,
+  assert.equal(countWindow(root, { now: new Date("2026-09-20T12:30:00Z") }).count, FIXTURE_BOUND,
     "the fixture's bound is not full, so the hold below is not the bound's");
 
   const job = await measuredJob(root, [reviewOf(SDIS[0], ["1.0.0"]), takedownOf("widgets", 1)]);
@@ -4660,7 +4727,7 @@ test("M_REVIEW over a full takedown bound is applied, the takedown beside it is 
   assert.equal(runApply(root, dated("2026-09-20T12:45:00Z")).status, 0);
 
   const after = countWindow(root, { now: new Date("2026-09-20T13:00:00Z") });
-  assert.equal(after.count, TAKEDOWN_BOUND, `the review commit changed the count: ${after.detail.join(" | ")}`);
+  assert.equal(after.count, FIXTURE_BOUND, `the review commit changed the count: ${after.detail.join(" | ")}`);
   assert.ok(!after.ids.some((x) => x.id === "widgets"), "a review was counted as withdrawing its listing");
   assert.ok(sh(["show", "--name-only", "--format=", "HEAD"], root).includes("plugins/widgets/versions/1.0.0.json"),
     "the landed commit carries no review, so the count above did not read one");
@@ -5183,7 +5250,7 @@ async function actsJob(root, { acts = [], shadow = false, delivered = "2026-09-2
       ASTRA_LIST_RESULT: listResult, ASTRA_ANNOUNCED: JSON.stringify(announced),
     },
     log: { log: (m) => logs.push(String(m)), error: (m) => logs.push(String(m)) },
-    fetchImpl: offline, now, pin, coverage: () => ({ status: "green", codes: [] }),
+    fetchImpl: offline, now, pin, coverage: () => ({ status: "green", codes: [] }), bound: FIXTURE_BOUND,
   });
   const paths = fs.readFileSync(path.join(out, "paths.txt"), "utf8").split("\n").filter(Boolean);
   const results = JSON.parse(fs.readFileSync(path.join(out, "results.json"), "utf8"));

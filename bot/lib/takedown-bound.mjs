@@ -156,7 +156,7 @@ import { REPO_ROOT } from "../../tools/lib/sources.mjs";
 import { commitMeta, firstParent, git, isShallow, jsonAt } from "../../tools/coverage/git.mjs";
 import { stagingListingId, triggersOf } from "../../tools/moderation-coverage.mjs";
 
-import { TAKEDOWN_BOUND } from "./moderation.mjs";
+import { TAKEDOWN_ALERT_AT, TAKEDOWN_BOUND } from "./moderation.mjs";
 
 /**
  * TRUST-26's window. Trailing, from `now`, over HEAD's first-parent line, on
@@ -632,6 +632,22 @@ export function boundLedger(counted, { bound = TAKEDOWN_BOUND, staging = null } 
       }
     },
   };
+}
+
+/**
+ * Contract 6.32.0's alarm above `TAKEDOWN_ALERT_AT`: after a run's takedowns
+ * are spent, the ids THIS run withdrew when the trailing 24 hours now hold
+ * more than the alarm level, and null otherwise. An unknown count is no
+ * alarm: it already holds every takedown (`overBound`), so nothing it could
+ * page for went out.
+ *
+ * @param {{count: number|null, admitted: string[]}} ledger a `boundLedger` after the run spent it
+ * @returns {{count: number, ids: string[]}|null}
+ */
+export function takedownAlert(ledger, { alertAt = TAKEDOWN_ALERT_AT } = {}) {
+  const ids = [...new Set(ledger?.admitted ?? [])].sort();
+  if (!ids.length || typeof ledger?.count !== "number" || ledger.count <= alertAt) return null;
+  return { count: ledger.count, ids };
 }
 
 /** The listed plugins, and their artifacts' digests, at `HEAD` — what a batch compiles against. */

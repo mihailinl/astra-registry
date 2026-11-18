@@ -198,7 +198,10 @@ import {
   resultKey,
   resultsToPost,
 } from "./lib/holds.mjs";
-import { boundLedger, countWindow, headListing, withdrawnBy } from "./lib/takedown-bound.mjs";
+import { boundLedger, countWindow, headListing, takedownAlert, withdrawnBy } from "./lib/takedown-bound.mjs";
+import { ID_PATTERN } from "../tools/lib/ids.mjs";
+
+const ID_RE = new RegExp(ID_PATTERN);
 import { run as coverageRun, stagingListingId } from "../tools/moderation-coverage.mjs";
 import { VERDICT_SCHEMA, runUrl, verdictProblems } from "./lib/alert-verdict.mjs";
 import { SOURCE_DIR as MODERATION_DIR, loadEntries as loadLogEntries } from "./lib/moderation.mjs";
@@ -2300,6 +2303,22 @@ export function alarmsFor(entries) {
   return out;
 }
 
+/**
+ * Contract 6.32.0: the alarm code the `settled` job sends when a run took the
+ * day past `TAKEDOWN_ALERT_AT` withdrawals, with the ids it withdrew.
+ */
+export const TAKEDOWN_ALERT_CODE = "TRUST_26_TAKEDOWNS_ABOVE_ALERT";
+
+/** The commit job's `takedown_alert` output: plugin ids, or none for anything else. */
+export function takedownAlertIds(text) {
+  try {
+    const rows = JSON.parse(String(text ?? ""));
+    return Array.isArray(rows) ? [...new Set(rows.filter((id) => typeof id === "string" && ID_RE.test(id)))].sort() : [];
+  } catch {
+    return [];
+  }
+}
+
 /** An `astra.registry.alert-verdict/1`, refused here rather than at the channel. */
 export function composeVerdict({ check, status, codes = [], ids = [], hexes = [], run = null }) {
   const verdict = {
@@ -2452,7 +2471,7 @@ export function listRefusals(text, { entries = [] } = {}) {
 }
 
 export async function main(argv = [], {
-  env = process.env, log = console, fetchImpl = fetch, now = new Date(), coverage = coverageRun, pin = null,
+  env = process.env, log = console, fetchImpl = fetch, now = new Date(), coverage = coverageRun, pin = null, bound = null,
 } = {}) {
   // The owner's passkeys, from THIS checkout by literal path (operator-acts
   // design §2.2). `pin` is this file's own tests', as `fetchImpl` is: the CLI
@@ -2572,7 +2591,10 @@ export async function main(argv = [], {
     // longer reads one and `bot/tests/moderation-run.test.mjs` sets it to
     // "false" over a full bound to prove it.
     const counted = countWindow(root, { now });
-    const ledger = boundLedger(counted, { staging: stagingListingId(root) });
+    // `bound` is this file's own tests', as `pin` is: their fixtures are an
+    // estate of five plugins written for the bound of 3. The CLI passes none,
+    // and no input of the workflow's can name one.
+    const ledger = boundLedger(counted, { staging: stagingListingId(root), ...(bound !== null ? { bound } : {}) });
     log.log(`bound  ${ledger.reason()}`);
 
     // Re-checked, never trusted: `list` is a different job and its outputs
@@ -2711,6 +2733,13 @@ export async function main(argv = [], {
     // compile that throws is red in shadow too rather than first at R3's exit.
     const compiledAll = compileAll(fresh, { root, ledger });
     if (ledger.admitted.length) log.log(`bound  this run withdraws ${ledger.admitted.join(", ")}; ${ledger.reason()}`);
+    // Contract 6.32.0: above TAKEDOWN_ALERT_AT a day, the ids this run
+    // withdraws go to the `settled` job's alarm once the push has landed.
+    // Live only: a shadow compile withdraws nothing it writes.
+    const alarm = shadow === false ? takedownAlert(ledger) : null;
+    fs.mkdirSync(out, { recursive: true });
+    fs.writeFileSync(path.join(out, "takedown-alert.json"), `${JSON.stringify(alarm ? alarm.ids : [])}\n`);
+    if (alarm) log.log(`alert  ${alarm.count} listed plugin id(s) withdrawn in the trailing 24 h; this run withdraws ${alarm.ids.join(", ")}`);
 
     // BOT-92: from here to `composeCommit`, the work the list answer names is
     // written ONLY under `shadow === false` — and "written" is every one of
@@ -3039,6 +3068,12 @@ export async function main(argv = [], {
     const check = arg(argv, "--check") ?? "moderation-run";
     const codes = JSON.parse(env.ASTRA_VERDICT_CODES || "[]");
     const ids = JSON.parse(env.ASTRA_VERDICT_IDS || "[]");
+    // Contract 6.32.0: the commit job's takedown alarm, the ids a revert names.
+    const withdrawn = takedownAlertIds(env.ASTRA_TAKEDOWN_ALERT);
+    if (withdrawn.length) {
+      codes.push(TAKEDOWN_ALERT_CODE);
+      ids.push(...withdrawn.filter((id) => !ids.includes(id)).slice(0, Math.max(0, 40 - ids.length)));
+    }
     const verdict = composeVerdict({
       check,
       status: codes.length ? "red" : "green",
