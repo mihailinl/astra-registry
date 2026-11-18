@@ -1407,6 +1407,7 @@ export function decideSubmission(input) {
     queued: queued && queued.fingerprint && queued.fingerprint !== verified.fingerprint ? null : queued,
     approval: owner?.approval ?? honoured.approval,
     identity: recycled ? { code: "B_REPOSITORY_RECYCLED", reason: recycled } : null,
+    sourceIds: identity,
     now: new Date(now),
     shadow: shadowed,
   });
@@ -1528,7 +1529,8 @@ export function decideSubmission(input) {
     // retry is the moment the approval takes effect, which the panel shows.
     // The hold it would otherwise have been is the one this approval clears:
     // since contract 3.0.0 every service-path hold is a change of hands
-    // (DEC-19), and an approval clears exactly those (DEC-6).
+    // (DEC-19) or, for now, `R_DOM_ACCESS_HOLD`, and an approval clears
+    // exactly those (DEC-6).
     return waitPlan("W_APPROVAL_DEFERRED", honoured.cause, { earliest: honoured.earliest, reasons, derived: derivedFacts });
   }
 
