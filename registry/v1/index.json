@@ -3464,7 +3464,7 @@
               "repo": "KnlCE/office-files",
               "tag": "v0.2.0"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.2.0"
           }
         ],
@@ -6093,6 +6093,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 159
+    "serial": 160
   }
 }
