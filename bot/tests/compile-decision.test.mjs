@@ -1210,13 +1210,22 @@ function lowEstate() {
   } });
 }
 
-test("M_REVIEW: a record without low_tools moves as before, whether the decision names Low tools or not", () => {
-  const root = lowEstate();
-  for (const over of [{}, { low_tools: ["roll"] }, { low_tools: [] }]) {
-    const r = compileDecision(review({ versions: ["1.1.0"], ...over }), { root });
-    assert.equal(r.outcome, "compiled", `${JSON.stringify(over)}: ${JSON.stringify(r.why ?? r)}`);
-    assert.deepEqual(r.edits.map((e) => e.file), ["plugins/widgets/versions/1.1.0.json"]);
-    assert.ok(!Object.hasOwn(r.log[0].doc, "low_tools"), "a review moving no Low-tool version logs none");
+// A record with no member was never probed; Astra honours no Low tool for
+// it, so its review adds no Low-tool trust and it stays reviewable as before.
+// `[]` was probed and declares none. Both move whatever the decision carries.
+// Watched failing: with `declared.length > 0` changed to `record.doc?.low_tools
+// !== undefined`, the `[]` record (1.6.0) is stuck.
+test("M_REVIEW: a record without low_tools, or with [], moves as before, whether the decision names Low tools or not", () => {
+  const root = reviewEstate({ extra: {
+    "plugins/widgets/versions/1.6.0.json": { ...marked("widgets", "1.6.0", "unreviewed"), low_tools: [] },
+  } });
+  for (const version of ["1.1.0", "1.6.0"]) {
+    for (const over of [{}, { low_tools: ["roll"] }, { low_tools: [] }]) {
+      const r = compileDecision(review({ versions: [version], ...over }), { root });
+      assert.equal(r.outcome, "compiled", `${version} ${JSON.stringify(over)}: ${JSON.stringify(r.why ?? r)}`);
+      assert.deepEqual(r.edits.map((e) => e.file), [`plugins/widgets/versions/${version}.json`]);
+      assert.ok(!Object.hasOwn(r.log[0].doc, "low_tools"), "a review moving no Low-tool version logs none");
+    }
   }
 });
 

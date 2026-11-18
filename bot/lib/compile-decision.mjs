@@ -1322,9 +1322,14 @@ function compileYank(root, d, listing, { decidedAt, date, reason, batch = null }
  * only when the decision's `low_tools` is that set, in any order; otherwise it
  * stays `unreviewed` — Astra then asks before every tool, which is safe — and
  * is stuck like a yanked one, with a sentence naming the version and its tools.
- * A record with no `low_tools` moves exactly as before, whatever the decision
- * carries. The log entry records, per moved version, the tools it was
- * reviewed with.
+ * A record with `low_tools: []` (probed, none declared) moves exactly as
+ * before, whatever the decision carries. So does a record with NO member
+ * (published before ingest read `[tools.danger]`; records are immutable and
+ * never re-probed): it stays reviewable as it always was, and the label adds
+ * no Low-tool trust, because Astra honours a declared Low tool only when the
+ * signed index entry carries `low_tools` and lists it — an absent member
+ * grants nothing, so its `reviewed` still means "asks before every tool".
+ * The log entry records, per moved version, the tools it was reviewed with.
  */
 function compileReview(root, d, listing, { decidedAt, date, reason, batch = null }) {
   const named = [...new Set(Array.isArray(d.versions) ? d.versions : [])];
@@ -1358,6 +1363,8 @@ function compileReview(root, d, listing, { decidedAt, date, reason, batch = null
       stuck.push(version);
       continue;
     }
+    // Absent (never probed) and `[]` (probed, none) both read as no Low tool
+    // here: neither lets Astra skip a question (see the docblock above).
     const declared = lowToolSet(record.doc?.low_tools);
     if (declared.length > 0) {
       if (declared.join("\u0000") !== reviewedWith.join("\u0000")) {
