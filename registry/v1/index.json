@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "z18FoKCUYYnkSZI0buclEOT6tIN6R2NGwUd4VpspIyB20ywo6VC2pfQNUR7zqIgseuLk+tai0ROt9okfi6scDA=="
+      "sig": "HTfj9uq6/M7euCzwIjh9D5WgTh0BAGGDCR+o6P4P6ETQ+U18CvXAQlbY0HUq32RCa0EsbnKFTjagiQ0I4T/SCw=="
     }
   ],
   "signed": {
-    "expires_at": "2026-12-17T22:27:38Z",
-    "issued_at": "2026-11-17T22:27:38Z",
+    "expires_at": "2026-12-18T06:39:23Z",
+    "issued_at": "2026-11-18T06:39:23Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
@@ -3471,7 +3471,7 @@
               "repo": "KnlCE/office-files",
               "tag": "v0.2.0"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.2.0"
           }
         ],
@@ -6100,6 +6100,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 159
+    "serial": 160
   }
 }
