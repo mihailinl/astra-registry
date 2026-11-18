@@ -628,7 +628,7 @@ test("once the marker is on main, a version or queue addition with no record is 
 
 const FP16 = "0123456789abcdef";
 const alertDoc = (over = {}) => ({ schema: "astra.registry.alert/1", fingerprint: FP16, event: "approval", approval_decided_at: "2026-09-24T00:00:00Z", delivered_at: "2026-09-24T00:00:05Z", run: "1/1", ...over });
-const identityDoc = (over = {}) => ({ schema: "astra.registry.identity/1", plugin_id: "alpha", repository_id: "12", repository_owner_id: "34", repo: "you/alpha", token_hash: FP16, ...over });
+const identityDoc = (over = {}) => ({ schema: "astra.registry.identity/1", plugin_id: "alpha", repository_id: "12", repository_owner_id: "34", repo: "example/alpha", token_hash: FP16, ...over });
 
 test("an alert record and an identity record land only through the service path", () => {
   for (const [what, plant] of [
@@ -636,14 +636,14 @@ test("an alert record and an identity record land only through the service path"
     ["an identity record", (at) => write(at, "plugins/alpha/identity.json", `${JSON.stringify(identityDoc())}\n`)],
   ]) {
     const legacy = estate();
-    const reports = withRecord(report(legacy.dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", recordDoc());
+    const reports = withRecord(report(legacy.dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", recordDoc({ repository_id: "12", repository_owner_id: "34" }));
     plant(path.join(reports, "ingest-report-0"));
     const refused = run({ root: legacy.one, reports, watchState: path.join(legacy.dir, "none"), skipChecks: true, log: quiet });
     assert.equal(refused.outcome, "refused", `the legacy path applied ${what}`);
     assert.match(refused.refusals[0].message, /service-path record/);
 
     const svc = estate();
-    const r2 = withRecord(report(svc.dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", recordDoc());
+    const r2 = withRecord(report(svc.dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", recordDoc({ repository_id: "12", repository_owner_id: "34" }));
     plant(path.join(r2, "ingest-report-0"));
     const ok = run({ root: svc.one, reports: r2, watchState: path.join(svc.dir, "none"), skipChecks: true, servicePath: true, log: quiet });
     assert.equal(ok.outcome, "committed", `${what}: ${JSON.stringify(ok.refusals)}`);
@@ -680,6 +680,18 @@ test("ID-40: an identity record's repository ids are its own publication's", () 
   const out = run({ root: e.one, reports: rep, watchState: path.join(e.dir, "none"), skipChecks: true, servicePath: true, log: quiet });
   assert.equal(out.outcome, "refused", "an identity record naming another repository than its publication landed");
   assert.match(out.refusals[0].message, /binds the repository its publication came from/);
+  for (const [what, ident, rec, expected] of [
+    ["a publication with no repository ids", identityDoc(), recordDoc(), /binds the repository its publication came from/],
+    ["another repository name under the same ids", identityDoc({ repo: "someone/else" }), recordDoc({ repository_id: "12", repository_owner_id: "34" }), /binds the repository its publication came from/],
+    ["a `migration` record carried in a report", identityDoc(), recordDoc({ repository_id: "12", repository_owner_id: "34", trigger: "migration" }), /only MIG-20's baseline writes those/],
+  ]) {
+    const e2 = estate();
+    const rp = withRecord(report(e2.dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", rec);
+    write(path.join(rp, "ingest-report-0"), "plugins/alpha/identity.json", `${JSON.stringify(ident)}\n`);
+    const o = run({ root: e2.one, reports: rp, watchState: path.join(e2.dir, "none"), skipChecks: true, servicePath: true, log: quiet });
+    assert.equal(o.outcome, "refused", `${what} landed`);
+    assert.match(o.refusals[0].message, expected, what);
+  }
   const ok = estate();
   const rep2 = withRecord(report(ok.dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", recordDoc({ repository_id: "12", repository_owner_id: "34" }));
   write(path.join(rep2, "ingest-report-0"), "plugins/alpha/identity.json", `${JSON.stringify(identityDoc())}\n`);

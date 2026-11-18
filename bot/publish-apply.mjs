@@ -180,6 +180,9 @@ export function recordFileProblem(reportDir, rel) {
   }
   if (doc?.schema !== "astra.registry.decision/1") return `${rel} is not an astra.registry.decision/1 record`;
   if (doc.decision_id !== m[3]) return `${rel} names decision_id ${doc.decision_id}; a record's name is its id`;
+  // MIG-20's baseline writes `migration` records once, by bot/baseline.mjs, never through a publication; and ID-64
+  // reads them as who is a sibling of whom, so one carried in a report could make a listing a sibling of anything.
+  if (doc.trigger === "migration") return `${rel} is a \`migration\` record; only MIG-20's baseline writes those, never a publication (ID-64)`;
   const at = typeof doc.decided_at === "string" ? doc.decided_at : "";
   if (at.slice(0, 4) !== m[1] || at.slice(5, 7) !== m[2]) {
     return `${rel}: decided_at ${at} files it under log/decisions/${at.slice(0, 4)}/${at.slice(5, 7)}, not here`;
@@ -575,15 +578,12 @@ export function applyReport(root, reportDir, state) {
       const at = identities[0];
       throw new Refusal(`${at} is written with no \`published\` decision record beside it; an identity record changes only in a publishing commit (ID-40)`, { file: at });
     }
-    const sameIds = (d, doc) => ["repository_id", "repository_owner_id"].every((k) => d[k] === undefined || String(d[k]) === String(doc[k]));
+    // Both ids must be on the publication and equal, and the repository name too (case-folded, as GitHub's).
+    const sameIds = (d, doc) => ["repository_id", "repository_owner_id"].every((k) => d[k] !== undefined && d[k] !== null && String(d[k]) === String(doc[k])) &&
+      String(d.repo ?? "").toLowerCase() === String(doc.repo ?? "").toLowerCase();
     for (const at of identities) {
       const id = IDENTITY_FILE.exec(at)[1];
-      let doc;
-      try {
-        doc = JSON.parse(fs.readFileSync(path.join(reportDir, at), "utf8"));
-      } catch {
-        throw new Refusal(`${at} is not readable JSON (ID-40)`, { file: at });
-      }
+      const doc = JSON.parse(fs.readFileSync(path.join(reportDir, at), "utf8")); // serviceFileProblem read it already
       const own = published.filter((d) => d.plugin_id === id);
       if (own.length) {
         if (!own.some((d) => sameIds(d, doc))) {
@@ -591,8 +591,7 @@ export function applyReport(root, reportDir, state) {
         }
         continue;
       }
-      const sibling = published.some((d) => d.repository_id !== undefined && d.repository_owner_id !== undefined &&
-        sameIds(d, doc) && namesRepositoryOnMain(root, id, d.repository_id));
+      const sibling = published.some((d) => sameIds(d, doc) && namesRepositoryOnMain(root, id, d.repository_id));
       if (!sibling) {
         throw new Refusal(`${at} is written beside \`published\` records for ${[...new Set(published.map((d) => d.plugin_id))].join(", ")}, none for ${id}, and ${id} is not a listing already naming that publication's repository id; an identity record changes only in its own listing's publishing commit, or a sibling's (ID-40; ID-64)`, { file: at });
       }
