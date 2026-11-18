@@ -438,6 +438,44 @@ export function effectiveBaseline({ records, pluginId }) {
 }
 
 /**
+ * ID-64's baseline half: does listing `pluginId` name `repositoryId` through
+ * its MIG-20 baseline (`migration`) record, as `effectiveBaseline` reads it?
+ *
+ * The three sibling readers — service-decide's `siblingsOf`, publish-apply's
+ * `namesRepositoryOnMain` and detector A9's `namedBefore` — each matched raw
+ * `migration` records, so an `M_IDENTITY_RESET` that deleted a listing's
+ * `identity.json` left its old baseline still naming the repository. The next
+ * publication from that repository then counted the reset listing as a sibling
+ * and rebound it in the same commit, silently undoing the reset. Asking here
+ * ends the baseline where every other baseline reader ends it.
+ *
+ * @param {object[]} records decision records, any ids, any order — a caller
+ *   that may only see some (A9: those already on the parent) filters first.
+ * @returns {boolean}
+ */
+export function baselineNamesRepository(records, pluginId, repositoryId) {
+  if (repositoryId === undefined || repositoryId === null) return false;
+  const { baseline } = effectiveBaseline({ records, pluginId });
+  return !!baseline && String(baseline.repository_id) === String(repositoryId);
+}
+
+/**
+ * The ids whose effective MIG-20 baseline names `repositoryId`
+ * (`baselineNamesRepository`, for every id a record mentions).
+ *
+ * @returns {string[]}
+ */
+export function baselineNamedIds(records, repositoryId) {
+  const byId = new Map();
+  for (const r of records ?? []) {
+    if (typeof r?.plugin_id !== "string" || r.plugin_id === "") continue;
+    if (!byId.has(r.plugin_id)) byId.set(r.plugin_id, []);
+    byId.get(r.plugin_id).push(r);
+  }
+  return [...byId].filter(([id, mine]) => baselineNamesRepository(mine, id, repositoryId)).map(([id]) => id);
+}
+
+/**
  * TRUST-23, for a listing with no identity record: this release's certificate
  * against the migration baseline.
  *

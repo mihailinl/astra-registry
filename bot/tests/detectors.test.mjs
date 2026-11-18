@@ -891,6 +891,16 @@ test("A9: ID-64 — a publication's sibling listing, rebound to the same ids in 
     }, identity("beta"), false], // only the rebinding commit is judged here; the earlier hand-written one alarms on its own
     ["no sibling: beta named no repository", () => {}, identity("beta"), true],
     ["a sibling rebound to OTHER ids", baselineBeta, identity("beta", { repository_owner_id: "999" }), true],
+    // An M_IDENTITY_RESET ended beta's baseline before this commit; the baseline record is still there, and read
+    // raw it let a publication of alpha rebind beta unremarked, undoing the reset. The first row is its control.
+    ["no sibling: beta's baseline was ended by an identity reset", (dir) => {
+      baselineBeta(dir);
+      record(dir, {
+        decided_at: "2026-01-02T12:00:00Z", actor: "moderator", moderator: "mod-1", trigger: "moderation",
+        plugin_id: "beta", state: "identity_reset", reasons: ["M_IDENTITY_RESET"], category: "identity_reset",
+      });
+      commit(dir, "moderation: identity reset for beta", "2026-01-02T12:00:00Z");
+    }, identity("beta"), true],
   ]) {
     const dir = estate();
     baseline(dir);

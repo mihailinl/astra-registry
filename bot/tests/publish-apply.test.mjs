@@ -34,6 +34,7 @@ import {
   run,
 } from "../publish-apply.mjs";
 import { readTree, treeModeProblems } from "../../tools/lib/tree-modes.mjs";
+import { composeVoidingRecord } from "../lib/decisions.mjs";
 import { makeKey, pinOf } from "./fixtures/authenticator.mjs";
 
 const git = (cwd, ...args) =>
@@ -708,6 +709,17 @@ test("ID-64: a sibling listing's identity record lands beside its repository's p
     ["a sibling by its identity record", (root) => write(root, "plugins/beta/identity.json", `${JSON.stringify(identityDoc({ plugin_id: "beta" }))}\n`), identityDoc({ plugin_id: "beta", token_hash: "e".repeat(16) }), true],
     ["a sibling rebound to other ids", (root) => write(root, `log/decisions/2026/08/${"b".repeat(32)}.json`, `${JSON.stringify(migration)}\n`), identityDoc({ plugin_id: "beta", repository_owner_id: "99" }), false],
     ["a listing naming another repository", (root) => write(root, `log/decisions/2026/08/${"b".repeat(32)}.json`, `${JSON.stringify({ ...migration, repository_id: "77" })}\n`), identityDoc({ plugin_id: "beta" }), false],
+    // An M_IDENTITY_RESET of beta deleted its identity record and wrote DEC-7's voiding record; the baseline
+    // record is still on main, and read raw it made beta a sibling again, so alpha's publication rebound it and
+    // undid the reset. The first row is the control: the same baseline, no voiding record.
+    ["a baseline sibling whose baseline an identity reset ended", (root) => {
+      write(root, `log/decisions/2026/08/${"b".repeat(32)}.json`, `${JSON.stringify(migration)}\n`);
+      const { record } = composeVoidingRecord({
+        service_decision_id: "123e4567-e89b-42d3-a456-426614174000", plugin_id: "beta",
+        decided_at: "2026-10-01T00:00:00Z", moderator: "mod-1",
+      });
+      write(root, `log/decisions/2026/10/${"c".repeat(32)}.json`, `${JSON.stringify(record)}\n`);
+    }, identityDoc({ plugin_id: "beta" }), false],
   ]) {
     const e = estate();
     plantMain(e.one);

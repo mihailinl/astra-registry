@@ -61,6 +61,7 @@ import { compareSemver, parseSemver } from "../tools/lib/semver.mjs";
 import { invalidId, unsafePathComponent } from "../tools/lib/ids.mjs";
 import { readTree, treeProblems } from "../tools/lib/tree-modes.mjs";
 import { PIN_REL, REVOKED_DIR, canonicalBody, keyByCredential, loadPin, pinRefusal } from "./lib/operator-act.mjs";
+import { baselineNamesRepository } from "./lib/identity.mjs";
 
 export const EXIT = { ok: 0, refused: 1, broke: 2, conflict: 3 };
 
@@ -457,8 +458,9 @@ export function refuseVersionRegressions(root, reportDir, rels) {
  */
 /**
  * ID-64's sibling test, on main's tree as it stands before this report: does listing `id` already name
- * `repositoryId`, by its identity record or by a MIG-20 baseline (`migration`) record? The same rule as
- * service-decide's `siblingsOf`, read here without importing the decide job (this module stays small).
+ * `repositoryId`, by its identity record or by a MIG-20 baseline (`migration`) record that no later voiding
+ * record ended? The same rule as service-decide's `siblingsOf` — both ask `baselineNamesRepository` — read here
+ * without importing the decide job (this module stays small; `lib/identity.mjs` is pure).
  */
 function namesRepositoryOnMain(root, id, repositoryId) {
   const want = String(repositoryId);
@@ -468,27 +470,30 @@ function namesRepositoryOnMain(root, id, repositoryId) {
   } catch {
     /* no identity record */
   }
+  // This id's records — its baselines and its voidings — so that an `M_IDENTITY_RESET` ends the baseline here
+  // exactly as `effectiveBaseline` ends it everywhere else.
+  const mine = [];
   const walk = (d) => {
     let entries;
     try {
       entries = fs.readdirSync(d, { withFileTypes: true });
     } catch {
-      return false;
+      return;
     }
     for (const e of entries) {
       const full = path.join(d, e.name);
-      if (e.isDirectory()) { if (walk(full)) return true; continue; }
+      if (e.isDirectory()) { walk(full); continue; }
       if (!e.isFile() || !e.name.endsWith(".json")) continue;
       try {
         const r = JSON.parse(fs.readFileSync(full, "utf8"));
-        if (r?.trigger === "migration" && r.plugin_id === id && String(r.repository_id) === want) return true;
+        if (r?.plugin_id === id) mine.push(r);
       } catch {
         /* not a record */
       }
     }
-    return false;
   };
-  return walk(path.join(root, "log", "decisions"));
+  walk(path.join(root, "log", "decisions"));
+  return baselineNamesRepository(mine, id, want);
 }
 
 export function applyReport(root, reportDir, state) {

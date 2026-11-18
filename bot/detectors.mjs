@@ -53,7 +53,7 @@ import { cleanEnv } from "../tools/lib/git-env.mjs";
 
 import { readDecisionRecords } from "./baseline.mjs";
 import { mergeOwnChanges } from "../tools/coverage/git.mjs";
-import { isVoidingRecord } from "./lib/identity.mjs";
+import { baselineNamesRepository, isVoidingRecord } from "./lib/identity.mjs";
 import { VERDICT_SCHEMA, runUrl } from "./lib/alert-verdict.mjs";
 import {
   BASELINE_FILE,
@@ -817,15 +817,20 @@ export function a9({ anchor, git, records = [] }, findings, skipped, scanned) {
 
 /**
  * ID-64's sibling test, as of the parent of `sha`: did listing `id` already name `repositoryId`, by its identity
- * record there, or by a MIG-20 baseline (`migration`) record (those are written once, at the baseline)?
+ * record there, or by a MIG-20 baseline (`migration`) record (those are written once, at the baseline) that no
+ * voiding record on the parent ended?
  */
 function namedBefore(git, sha, id, repositoryId, records) {
   if (repositoryId === undefined || repositoryId === null) return false;
   const want = String(repositoryId);
   if (String(readJsonAt(git, `${sha}^`, `plugins/${id}/identity.json`)?.repository_id ?? "") === want) return true;
   // The record must already be on the parent: a commit that wrote its own baseline record would name its own sibling.
-  return records.some(({ file, doc }) => doc?.trigger === "migration" && doc.plugin_id === id &&
-    String(doc.repository_id) === want && git.blobAt(`${sha}^`, file) !== null);
+  // The same holds for the voiding records that end a baseline (`baselineNamesRepository`): a reset counts from the
+  // commit that carries it on.
+  const before = records
+    .filter(({ file, doc }) => doc?.plugin_id === id && git.blobAt(`${sha}^`, file) !== null)
+    .map(({ doc }) => doc);
+  return baselineNamesRepository(before, id, want);
 }
 
 /** Did this commit change `source` in a `plugin.json`, as opposed to anything else in it? */

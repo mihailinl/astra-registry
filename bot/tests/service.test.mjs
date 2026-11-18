@@ -5025,3 +5025,40 @@ test("§4.7 (review finding 8): under a pin that fails its own rules the ingest 
     fs.rmSync(t, { recursive: true, force: true });
   }
 });
+
+// ── ID-64's siblings after an identity reset ───────────────────────────────
+//
+// `siblingsOf` read MIG-20's `migration` records raw, so a listing whose
+// identity an `M_IDENTITY_RESET` had deleted was still a sibling of its old
+// repository through the baseline record the reset ended: the next
+// publication from that repository rebound it in the same commit and undid the
+// reset. The baseline counts only while `effectiveBaseline` says it does.
+import { siblingsOf } from "../lib/service-decide.mjs";
+import { composeVoidingRecord } from "../lib/decisions.mjs";
+
+test("ID-64: siblingsOf drops a baseline-named listing once an identity reset ended its baseline", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "siblings-"));
+  try {
+    fs.mkdirSync(path.join(root, "plugins", "alpha"), { recursive: true });
+    fs.writeFileSync(path.join(root, "plugins", "alpha", "identity.json"),
+      `${JSON.stringify({ schema: "astra.registry.identity/1", plugin_id: "alpha", repository_id: "111", repository_owner_id: "222", repo: "example/alpha", token_hash: "c".repeat(16) })}\n`);
+    const baseline = (id, at = "2026-08-01T00:00:00Z") => ({
+      decided_at: at, actor: "system", trigger: "migration", plugin_id: id, version: "1.0.0",
+      repo: "example/alpha", tag: "v1.0.0", state: "published", repository_id: "111", repository_owner_id: "222",
+    });
+    const reset = (id, at) => composeVoidingRecord({
+      service_decision_id: "123e4567-e89b-42d3-a456-426614174000", plugin_id: id, decided_at: at, moderator: "mod-1",
+    }).record;
+
+    assert.deepEqual(siblingsOf(root, [baseline("beta")], "111"), ["alpha", "beta"],
+      "the control: a baseline-named listing with no reset is a sibling");
+    assert.deepEqual(siblingsOf(root, [baseline("beta"), reset("beta", "2026-10-01T00:00:00Z")], "111"), ["alpha"],
+      "a reset listing was still a sibling through the baseline the reset ended");
+    assert.deepEqual(siblingsOf(root, [baseline("beta"), reset("beta", "2026-10-01T00:00:00Z"), baseline("beta", "2026-11-01T00:00:00Z")], "111"),
+      ["alpha", "beta"], "a baseline written after the reset counts again");
+    assert.deepEqual(siblingsOf(root, [baseline("beta"), reset("gamma", "2026-10-01T00:00:00Z")], "111"), ["alpha", "beta"],
+      "another id's reset ended beta's baseline");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

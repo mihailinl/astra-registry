@@ -71,7 +71,7 @@ import { loadPin, ownerApprovalsAt } from "./operator-act.mjs";
 import { HOUR_MS, iso } from "./policy/time.mjs";
 import { CODES } from "./codes.mjs";
 import { POLICY_CODES } from "./policy/constants.mjs";
-import { applyIdentity, compareWithBaseline, effectiveBaseline } from "./identity.mjs";
+import { applyIdentity, baselineNamedIds, compareWithBaseline, effectiveBaseline } from "./identity.mjs";
 import { safeRepo, safeTag } from "./safe.mjs";
 import { execFileSync } from "node:child_process";
 import { trackRecord } from "./policy/track-record.mjs";
@@ -1952,7 +1952,8 @@ function finishPlan(p, { shadowed, startedAt }) {
 
 /**
  * Every listing naming this repository id, by identity record or by MIG-20's
- * baseline record (ID-64: "baseline-named ones included").
+ * baseline record (ID-64: "baseline-named ones included") — a baseline that a
+ * later voiding record ended does not count.
  */
 export function siblingsOf(root, records, repositoryId) {
   const out = new Set();
@@ -1971,10 +1972,10 @@ export function siblingsOf(root, records, repositoryId) {
       /* no identity record */
     }
   }
-  for (const r of records ?? []) {
-    if (r?.trigger === "migration" && String(r.repository_id) === String(repositoryId) && ID_RE.test(String(r.plugin_id))) {
-      out.add(r.plugin_id);
-    }
+  // A baseline counts only while it is effective: an `M_IDENTITY_RESET`'s voiding record ends it, and a raw
+  // `migration` record read past that would make the reset listing a sibling again (`baselineNamesRepository`).
+  for (const id of baselineNamedIds(records, repositoryId)) {
+    if (ID_RE.test(id)) out.add(id);
   }
   return [...out].sort();
 }
