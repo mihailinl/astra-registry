@@ -1016,10 +1016,10 @@ jobs:
       contents: read
       id-token: none
     outputs:
-      # TRUST-32 gates publication on this: the Bot API's message time for the
-      # owner's chat. `publish` writes it into each `state/alerts/` record, and
-      # a fingerprint with no reported delivery waits with `W_ALERT_UNDELIVERED`
-      # rather than publishing.
+      # The Bot API's message time for the owner's chat. `publish` writes it
+      # into each `state/alerts/` record. Since contract 6.32.0 the operator
+      # window is 0 h, so it gates nothing: a fingerprint whose alert reported
+      # no delivery publishes anyway, and this job's own red says so.
       delivered_at: ${{ steps.alert.outputs.delivered_at }}
       alerted: ${{ steps.alert.outputs.alerted }}
     env:
@@ -1101,8 +1101,8 @@ jobs:
   publish:
     needs: [roots, claim, check, decide, alert]
     # `always()` so that an alert job which could not send does not also lose
-    # this run's waits and records: TRUST-32 answers that case per
-    # fingerprint, as `W_ALERT_UNDELIVERED`, from the empty `delivered_at`.
+    # this run's waits and records. Since contract 6.32.0 an empty
+    # `delivered_at` holds nothing back; it only means no alert record lands.
     if: >-
       always() && !cancelled() && needs.roots.result == 'success' &&
       needs.decide.result == 'success' && needs.decide.outputs.publish == 'true'

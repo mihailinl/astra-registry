@@ -467,21 +467,22 @@ with a check. Since contract 3.0.0 an approval there clears only a change of han
   binding line and neither the hold nor this run names `R_BINDING_CHANGED` —
   a renamed repository, a first binding — every notice goes to the one account
   that made the release, and telling it about its own release protects
-  nobody: it waits for no notice, only for a stop, the operator window below
-  and the checks (since contract 5.8.0). An approval clears a hold and nothing
+  nobody: it waits for no notice, only for a stop and the checks (since
+  contract 5.8.0). An approval clears a hold and nothing
   else.
-- **Every approval is shown to an operator first, and waits 6 hours after
-  that, or until an operator says OK.** The alert goes out in the run that
-  first reads the event, and the release is published only once the channel
-  has reported the alert delivered and **6 hours** have passed since, or an
-  operator OK record for that alert is on `main` (since contract 5.8.0).
-  The OK, `state/ok/<fingerprint>.json`, is written only by the operator
-  workflow's act `ok`, dispatched by the owner, and names the approval it
-  answers; it ends this window and nothing else — not an undelivered alert, a
-  deny record, a stop or any other wait. A waiting author sees
-  `W_OPERATOR_WINDOW` with the window's end and a retry time at most 15
-  minutes away, so an OK is read within a quarter of an hour, or
-  `W_ALERT_UNDELIVERED` while no delivery is reported (TRUST-14, TRUST-32).
+- **Every approval is shown to an operator, and waits for nothing after
+  that** (since contract 6.32.0, the operator window is **0 hours**). The
+  alert goes out in the run that publishes the approved release, and names
+  the release's fingerprint, whole digest, held record and binding, which is
+  what a deny or a revert of it names. Before publication a deny record
+  withholds it (`P_OPERATOR_DENIED`); after, a revert takes it down. A channel
+  that reports no delivery no longer holds the release: no alert record is
+  written and the alert job's own failure says so. From contract 5.8.0 to
+  6.31 the release waited 6 hours after the channel reported the alert
+  delivered, or until an operator OK (`state/ok/<fingerprint>.json`, written
+  by the operator workflow's act `ok`); a waiting author saw
+  `W_OPERATOR_WINDOW`, or `W_ALERT_UNDELIVERED` while no delivery was
+  reported (TRUST-14, TRUST-32). Neither wait is used now.
 - **A first binding the owner built waits no extra time.** An approval of
   `R_FIRST_BINDING` — the first release of a published listing that carries a
   binding line — is honoured from **0 days** after the record of that hold
@@ -504,8 +505,9 @@ with a check. Since contract 3.0.0 an approval there clears only a change of han
   in practice an organisation's first binding is a moderator's.
 - **A moderator approves a binding once** (since 6.7.0). A later release
   under the same binding token, plugin and repository is not held again; it
-  publishes once the approved release's operator window has passed, and not
-  at all if an operator denied that release.
+  publishes once the approved release's alert is recorded as delivered (there
+  is no operator window since 6.32.0), and not at all if an operator denied
+  that release.
 
 There is no `/publish` on that path, and since contract 3.0.0 no first listing
 on it is held or delayed: it publishes at once, marked not reviewed (§2.1).

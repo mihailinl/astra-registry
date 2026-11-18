@@ -116,8 +116,23 @@ const DIGEST_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*:[0-9a-f]{64}$/;
  * this run, or no binding line at all — waits it (`noticeExempt`).
  */
 export const UPDATE_WINDOW_HOURS = 6;
-/** TRUST-32 / DEC-6: the operator objection window, counted from reported delivery. */
-export const OPERATOR_WINDOW_HOURS = 6;
+/**
+ * TRUST-32 / DEC-6: the operator objection window, counted from reported
+ * delivery.
+ *
+ * **0 since contract 6.32.0** (the owner's over-security cleanup of
+ * 2026-11-18, report row "После одобрения смены владельца плагина релиз ждёт
+ * 6 ч"). An approved change of hands publishes in the run that reads the
+ * approval, and TRUST-14's alert still goes out in that same run, carrying the
+ * fingerprint, digest, held record and binding a deny (TRUST-33) or a revert
+ * (MOD-52) names — the plugins service's buttons, not this bot's. The channel
+ * not reporting delivery (`W_ALERT_UNDELIVERED`) no longer holds the release;
+ * an undelivered alert is the alert job's own red. `W_OPERATOR_WINDOW` stays
+ * in the vocabulary and is unused at 0; the machinery below is kept, and
+ * tested at a non-zero `windowHours`, so the number is the only thing a
+ * reinstated window would change.
+ */
+export const OPERATOR_WINDOW_HOURS = 0;
 /**
  * TRUST-32 since contract 5.8.0: while the operator window runs, the wait's
  * `earliest_retry_at` is a retry hint at most this far after the report, and
@@ -561,7 +576,7 @@ export const FIRST_BINDING_SELF_BASES = Object.freeze(["owner", "admin", "mainta
  *
  * @returns {{by: string, alert?: object, windowEndsAt?: string}|null}
  */
-export function firstBindingCleared({ actor, verdict, lineHash, records = [], alerts = null, denied = null, ids, pluginId, oks = null, fingerprint = null, ownerFile = null, ownerApprovals = [] }) {
+export function firstBindingCleared({ actor, verdict, lineHash, records = [], alerts = null, denied = null, ids, pluginId, oks = null, fingerprint = null, ownerFile = null, ownerApprovals = [], windowHours = OPERATOR_WINDOW_HOURS }) {
   if (!lineHash || verdict !== "pass") return null;
   // The self path needs the owner FILE to be the owner's too (ID-63): a
   // stranger's merged pull request can carry a token the stranger minted —
@@ -601,7 +616,7 @@ export function firstBindingCleared({ actor, verdict, lineHash, records = [], al
     // digest ends this window as an OK record does.
     const okd = (oks?.get(fp) && okAnswers({ ok: oks.get(fp), record: alert, fingerprint: fp, digest: alert.digest, heldDecisionId: alert.held_decision_id }))
       || (ownerApprovals ?? []).some((a) => a?.target?.held_decision_id === alert.held_decision_id && a?.target?.digest === alert.digest && a?.target?.fingerprint === fp);
-    const windowEndsAt = okd ? alert.delivered_at : iso(new Date(new Date(alert.delivered_at).getTime() + OPERATOR_WINDOW_HOURS * HOUR_MS));
+    const windowEndsAt = okd ? alert.delivered_at : iso(new Date(new Date(alert.delivered_at).getTime() + windowHours * HOUR_MS));
     return { by: "approved", alert, fingerprint: fp, windowEndsAt };
   }
   // The owner's own approve act of a first binding of this listing (review of
@@ -893,7 +908,11 @@ export function noticeElapsed({ notice, windowSeconds, bindingChanged, now }) {
  */
 export function operatorWindow({
   record, fingerprint, event, approvalDecidedAt, now, ok = null, hintFrom = now, digest = null, heldDecisionId = null, tokenHash = null,
+  windowHours = OPERATOR_WINDOW_HOURS,
 }) {
+  // Contract 6.32.0: with no window (0 hours) nothing here waits. The alert is
+  // still named on its first read, and the release publishes beside it.
+  const waits = windowHours > 0;
   // Contract 6.7.0: an alert record from 6.7.0 on binds the whole digest, and
   // one that names another digest under the same 16-hex label is an alert
   // about other bytes — this release's alert has not gone out. A record from
@@ -906,7 +925,7 @@ export function operatorWindow({
     // First read of this event: TRUST-14 names it, and this run cannot publish
     // it — the window is counted from a delivery that has not happened yet.
     return {
-      ok: false,
+      ok: !waits,
       name: {
         fingerprint, event, approval_decided_at: event === "approval" ? approvalDecidedAt : null,
         digest, held_decision_id: heldDecisionId,
@@ -917,6 +936,7 @@ export function operatorWindow({
     };
   }
   if (!isTime(record.delivered_at)) {
+    if (!waits) return { ok: true, name: null, wait: null };
     return {
       ok: false,
       name: null,
@@ -928,14 +948,14 @@ export function operatorWindow({
   // ends `W_ALERT_UNDELIVERED`, and the deny record, the stop and every other
   // wait are decided elsewhere and before.
   if (okAnswers({ ok, record, fingerprint, digest, heldDecisionId })) return { ok: true, name: null, wait: null, okd: true };
-  const due = new Date(record.delivered_at).getTime() + OPERATOR_WINDOW_HOURS * HOUR_MS;
+  const due = new Date(record.delivered_at).getTime() + windowHours * HOUR_MS;
   if (due > new Date(now).getTime()) {
     return {
       ok: false,
       name: null,
       wait: {
         code: "W_OPERATOR_WINDOW",
-        cause: `TRUST-32: the alert was delivered at ${record.delivered_at}; the ${OPERATOR_WINDOW_HOURS}-hour operator objection window is still running, unless an operator answers it with an OK`,
+        cause: `TRUST-32: the alert was delivered at ${record.delivered_at}; the ${windowHours}-hour operator objection window is still running, unless an operator answers it with an OK`,
         earliest: operatorRetryHint({ windowEndsAt: iso(new Date(due)), from: hintFrom }),
         window_ends_at: iso(new Date(due)),
       },
@@ -1045,6 +1065,9 @@ export function decideSubmission(input) {
   const startedAt = input.startedAt ?? now;
   const sid = lease.submission_id;
   const shadowed = input.shadow === true || input.ask?.shadow === true || input.ask?.verdict === "shadow";
+  // TRUST-32's window, from the one constant; a test of the window machinery
+  // passes a non-zero one, since contract 6.32.0 sets it to 0.
+  const windowHours = input.operatorWindowHours ?? OPERATOR_WINDOW_HOURS;
 
   const plan = (kind, fields) => finishPlan({
     submission_id: sid,
@@ -1338,7 +1361,7 @@ export function decideSubmission(input) {
     if (binding.outcome === "one") {
       firstCleared = firstBindingCleared({
         actor: verified.actor, verdict, lineHash, records, alerts: git.alerts, denied: git.denied, oks: git.oks, ownerApprovals: git.ownerApprovals ?? [],
-        ids: identity, pluginId: verified.plugin_id, fingerprint: verified.fingerprint, ownerFile: verified.owner_file,
+        ids: identity, pluginId: verified.plugin_id, fingerprint: verified.fingerprint, ownerFile: verified.owner_file, windowHours,
       });
       if (!firstCleared) heldCodes.push("R_FIRST_BINDING");
     }
@@ -1628,6 +1651,7 @@ export function decideSubmission(input) {
     });
   }
 
+  let publishAlert = null;
   if (approved) {
     // MIG-12 — evaluated before the notice read, and ignoring it.
     if (git.markers?.cutover === true && listingState?.state === "grandfathered" && binding.outcome === "none") {
@@ -1671,12 +1695,15 @@ export function decideSubmission(input) {
       digest,
       heldDecisionId: honoured.held_decision_id ?? null,
       tokenHash: lineHash,
+      windowHours,
     });
-    if (w.name) {
+    if (w.name && !w.ok) {
       return plan("wait", {
         // The composer decides between the two waits: `W_OPERATOR_WINDOW` from
         // the delivery the alert job reports, `W_ALERT_UNDELIVERED` without one.
-        wait: { code: "W_ALERT_UNDELIVERED", started_at: startedAt, cause: "TRUST-14: the operator alert goes out in this run", earliest_retry_at: nextRun() },
+        // `window_hours`: the composer counts the window with the number this
+        // plan was decided by, and never sends it (`resultBody` picks members).
+        wait: { code: "W_ALERT_UNDELIVERED", started_at: startedAt, cause: "TRUST-14: the operator alert goes out in this run", earliest_retry_at: nextRun(), window_hours: windowHours },
         alert: w.name,
         reasons,
         derived: derivedFacts,
@@ -1687,6 +1714,10 @@ export function decideSubmission(input) {
         earliest: w.wait.earliest, windowEndsAt: w.wait.window_ends_at ?? null, reasons, derived: derivedFacts,
       });
     }
+    // Contract 6.32.0 (no window): the alert this run names goes out beside
+    // the publication, and `publish` writes its record when the channel
+    // reports delivery.
+    if (w.name) publishAlert = w.name;
   }
 
   // ID-40 and ID-64: a bound publication writes the identity record, and the
@@ -1715,6 +1746,9 @@ export function decideSubmission(input) {
     derived: derivedFacts,
     listing: derived,
     identity_records: identityRecords,
+    // Contract 6.32.0: TRUST-14's alert for an approved change of hands, named
+    // in the run that publishes it (no operator window).
+    ...(publishAlert ? { alert: publishAlert } : {}),
     record: {
       ...baseRecord,
       decided_at: startedAt,
