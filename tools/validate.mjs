@@ -38,6 +38,7 @@ import {
   unsafeDisplayText,
   unsafePathComponent,
 } from "./lib/ids.mjs";
+import { FIRST_PARTY_FILE, isFirstPartyId, loadFirstParty } from "./lib/first-party.mjs";
 import {
   ALERTS_DIR,
   BASELINE_FILE,
@@ -95,7 +96,7 @@ import {
   latinFraction,
   localeEnumProblems,
 } from "../bot/lib/locales.mjs";
-import { buildIndex, indexContent, publisherKeyProblems } from "./build-index.mjs";
+import { buildIndex, indexContent, ownerIdOf, publisherKeyProblems } from "./build-index.mjs";
 import { RESERVED_KEYS, SUPPORTED_KEYS } from "./lib/platform.mjs";
 import { isTime } from "./lib/time.mjs";
 import { reviewMarkFindings } from "./lib/review-mark.mjs";
@@ -1031,6 +1032,12 @@ export function catalogueListingProblems(signed, { allowDirect = false } = {}) {
               fix: "INV-39: a card that names one repository and downloads from another is the picture a user cannot check." });
           }
         }
+      }
+    }
+    if (typeof p?.publisher === "string" && p.publisher !== "" && keys.has(p.publisher)) {
+      if (!Number.isSafeInteger(signed.publishers[p.publisher]?.github_id)) {
+        out.push({ where: `signed.publishers.${p.publisher}`, problem: "carries no github_id",
+          fix: "Contract 6.32.0: every signed.publishers entry names its account by numeric id; give publishers/<owner>.json an owner_ids entry for its owner." });
       }
     }
     if (typeof p?.publisher === "string" && p.publisher !== "") {
@@ -2839,6 +2846,22 @@ export function checkPublisherRecords(ctx, loaded = loadPublishers(ctx.root)) {
   for (const e of loaded.errors) report.error(e.file, e.message);
   // Moved here from tools/selftest/publishers.mjs (contract 6.32.0): two
   // records that render as one word are a badge a stranger can borrow.
+  // Contract 6.32.0: `astra_team` is Astra's own, by numeric id and never by
+  // login (policy/first-party.json). The generator already gives such a
+  // record no badge; this says why, at the commit that writes it.
+  const firstParty = loadFirstParty(ctx.root);
+  for (const p of firstParty.problems) report.error(FIRST_PARTY_FILE, p);
+  for (const { file, doc } of publisherRecords(loaded.publishers)) {
+    if (doc?.tier !== "astra_team") continue;
+    const id = ownerIdOf(doc, doc.owner);
+    const covered = (Array.isArray(doc.covers) ? doc.covers : []).map((l) => [l, ownerIdOf(doc, l)]);
+    const strangers = [[doc.owner, id], ...covered].filter(([, v]) => !isFirstPartyId(v, firstParty.ids));
+    if (strangers.length) {
+      report.error(file, `claims tier astra_team for ${strangers.map(([l, v]) => `${l} (id ${v ?? "none"})`).join(", ")}, ` +
+        `not ${strangers.length === 1 ? "a" : ""} first-party numeric id${strangers.length === 1 ? "" : "s"}`,
+        `Contract 6.32.0: astra_team is granted only to the ids in ${FIRST_PARTY_FILE}, never by login, and such a record gives no badge.`);
+    }
+  }
   for (const c of publisherNameCollisions(loaded.publishers)) {
     report.error(`publishers/${c.a}.json`, `renders as the same word as ${c.b}: ${c.why}`,
       "No two publishers may render alike; a reader cannot tell them apart on a card.");

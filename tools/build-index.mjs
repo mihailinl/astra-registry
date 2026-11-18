@@ -62,6 +62,7 @@ import { cleanEnv } from "./lib/git-env.mjs";
 import { ijsonProblems, stableStringify } from "./lib/canonical.mjs";
 import { compareSemver } from "./lib/semver.mjs";
 import { loadIdentities, loadPublishers, loadSources, REPO_ROOT } from "./lib/sources.mjs";
+import { canonicalGithubId, isFirstPartyId, loadFirstParty } from "./lib/first-party.mjs";
 import { INDEX_SCHEMA } from "../bot/lib/sign.mjs";
 import { MAX_README_BYTES, iconDataUri } from "../bot/lib/assets.mjs";
 import { SUPPORTED_KEYS } from "./lib/platform.mjs";
@@ -386,10 +387,18 @@ const OWNER_ID_RE = /^[0-9]{1,20}$/;
  *          identity?: object|null}} args `identity` is the parsed identity.json, or
  *          null/undefined when the listing has none
  */
-export function publisherFor({ plugin, publishers, identity = null }) {
+export function publisherFor({ plugin, publishers, identity = null, firstParty = null }) {
   const login = String(plugin?.doc?.source?.repo ?? "").split("/")[0];
   const record = publishers.get(login.toLowerCase());
   if (!record) return null;
+  // Contract 6.32.0: `astra_team` is Astra's own, by NUMERIC id and never by
+  // login (policy/first-party.json). The record's own account and the login
+  // the listing is published under must both be first-party ids; otherwise
+  // the record gives no badge at all. `firstParty` absent is the empty set.
+  if (record.doc?.tier === "astra_team") {
+    const ids = firstParty instanceof Set ? firstParty : new Set();
+    if (!isFirstPartyId(ownerIdOf(record.doc, record.doc?.owner), ids) || !isFirstPartyId(ownerIdOf(record.doc, login), ids)) return null;
+  }
   if (identity === null || identity === undefined) return record;
 
   const ownerId = identity?.repository_owner_id;
@@ -399,6 +408,18 @@ export function publisherFor({ plugin, publishers, identity = null }) {
   const keys = Object.keys(ids).filter((k) => k.toLowerCase() === login.toLowerCase());
   if (keys.length !== 1) return null;
   return ids[keys[0]] === ownerId ? record : null;
+}
+
+/**
+ * The record's `owner_ids` entry for `login`, matched case-insensitively and
+ * only when exactly one key matches (the same rule TRUST-25's join reads), or
+ * null.
+ */
+export function ownerIdOf(doc, login) {
+  const ids = doc?.owner_ids;
+  if (ids === null || typeof ids !== "object" || Array.isArray(ids) || typeof login !== "string") return null;
+  const keys = Object.keys(ids).filter((k) => k.toLowerCase() === login.toLowerCase());
+  return keys.length === 1 ? canonicalGithubId(ids[keys[0]]) : null;
 }
 
 /**
@@ -445,6 +466,11 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
   const { errors: idErrors, identities } = loadIdentities(root, plugins.map((p) => p.dir));
   errors.push(...idErrors);
   const identityOf = new Map(identities.map((r) => [r.file.split("/")[1], r.doc]));
+  // Contract 6.32.0: the first-party ids `astra_team` is granted from. A file
+  // that does not load stops the build, as a publisher record that does not
+  // load does: read as "no first party", it would silently drop every badge.
+  const firstParty = loadFirstParty(root);
+  errors.push(...firstParty.problems.map((message) => ({ file: "policy/first-party.json", message })));
   if (errors.length) {
     const lines = errors.map((e) => `  ${e.file}: ${e.message}`).join("\n");
     throw new Error(`cannot generate the index, the sources do not load:\n${lines}`);
@@ -493,7 +519,7 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
       entryErrors.push(...pres.errors);
       continue;
     }
-    const badge = publisherFor({ plugin, publishers, identity: identityOf.get(plugin.dir) ?? null });
+    const badge = publisherFor({ plugin, publishers, identity: identityOf.get(plugin.dir) ?? null, firstParty: firstParty.ids });
 
     entries.push({
       id: p.id,
@@ -550,8 +576,15 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
   const usedPublishers = {};
   for (const key of [...new Set(entries.map((e) => e.publisher).filter(Boolean))].sort()) {
     const rec = publishers.get(key.toLowerCase()).doc;
+    // Contract 6.32.0: the record's account by number, inside the signature,
+    // on every entry, so a client can tell an official publisher by an id
+    // that never moves rather than by a login anybody may register next.
+    // A record with no `owner_ids` entry for its owner has none to give, and
+    // tools/validate.mjs refuses a committed catalogue entry without one.
+    const githubId = ownerIdOf(rec, rec.owner);
     usedPublishers[key] = {
       display_name: rec.display_name,
+      ...(githubId !== null && Number.isSafeInteger(Number(githubId)) ? { github_id: Number(githubId) } : {}),
       // The line a person reads. Carried beside the tier rather than derived
       // from it, because "official" says what kind of claim this is and the
       // reader wanted to know who the publisher IS.

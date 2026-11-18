@@ -17,6 +17,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { buildIndex } from "../build-index.mjs";
+import { loadFirstParty } from "../lib/first-party.mjs";
 import * as generator from "../build-index.mjs";
 import { validate as validateSchema } from "../lib/jsonschema.mjs";
 import { reservedPrefixViolation, stagingListingId } from "../lib/reserved.mjs";
@@ -146,7 +147,8 @@ function publisherReach(root, noListingText) {
   // copy of it here would have started disagreeing about the unlisted half.
   const identityOf = new Map(loadIdentities(root, plugins.map((p) => p.dir)).identities
     .map((r) => [r.file.split("/")[1], r.doc]));
-  const recordOf = (p) => generator.publisherFor({ plugin: p, publishers, identity: identityOf.get(p.dir) ?? null }) ?? undefined;
+  const firstParty = loadFirstParty(root).ids;
+  const recordOf = (p) => generator.publisherFor({ plugin: p, publishers, identity: identityOf.get(p.dir) ?? null, firstParty }) ?? undefined;
 
   for (const p of plugins) {
     if (p.doc?.unlisted === true) continue;
@@ -500,6 +502,13 @@ export async function run() {
         const doc = buildIndex({ root: tree, serial: 1 });
         return new Map(doc.signed.plugins.map((e) => [e.id, e.publisher ?? null]));
       };
+      // publishers/mihailinl.json is `astra_team`, which since contract 6.32.0
+      // is granted only to first-party numeric ids: the ids this fixture
+      // writes are made first party in its own tree, so TRUST-25's join is
+      // what each case below asks.
+      fs.writeFileSync(path.join(tree, "policy", "first-party.json"), JSON.stringify({
+        schema: "astra.registry.first-party/1", github_ids: { 1: "fixture", 2002: "fixture", 9999: "fixture" },
+      }));
 
       identity();
       // (a) a record whose owner id differs: no badge. The one the rule exists for.
@@ -521,12 +530,14 @@ export async function run() {
       publisher({ MihailinL: "2002" });
       assert(badges().get("dice-roller") === "mihailinl", "owner_ids keyed `MihailinL` did not match the login `mihailinl`");
 
-      // (c) no owner_ids at all: no badge for the identity-recorded listing only.
+      // (c) no owner_ids at all: no badge for the identity-recorded listing,
+      // and since 6.32.0 none for the login-joined one either, because an
+      // `astra_team` record with no numeric id is no first-party account.
       publisher(undefined);
       b = badges();
       assert(b.get("dice-roller") === null,
         `publishers/mihailinl.json has no owner_ids and dice-roller, which has an identity record, carries ${JSON.stringify(b.get("dice-roller"))}`);
-      assert(b.get("bad-apple") === "mihailinl", "bad-apple lost its badge when the record lost owner_ids");
+      assert(b.get("bad-apple") === null, "an astra_team record with no owner_ids still badged bad-apple by login (6.32.0)");
 
       // A number is not §0.7's base-10 string, and the comparison is of strings.
       publisher({ mihailinl: 2002 });
@@ -562,6 +573,75 @@ export async function run() {
       covering({ mihailinl: "1", "covered-org": "2002" });
       assert(badges().get("dice-roller") === "mihailinl",
         "owner_ids[covered-org] equals the identity record's owner id and the covered listing took no badge");
+    } finally {
+      fs.rmSync(tree, { recursive: true, force: true });
+    }
+  });
+
+  // Contract 6.32.0: `astra_team` by numeric id, never by login, and every
+  // signed.publishers entry carries the account's `github_id`. The set is
+  // policy/first-party.json: MINICE-AI 280318216, KnlCE 114572819 (lowercase
+  // L), mihailinl 193032699. The login knice/KNICE is 36719, a stranger whose
+  // login reads as KnlCE's display name, and it never gets the tier.
+  //
+  // Watched red: with `publisherFor`'s first-party test removed, the KNICE
+  // record badges its listing `astra_team`; with `github_id` dropped from the
+  // generator, the real catalogue's entries carry none.
+  await test("6.32.0: astra_team only for a first-party numeric id — a KNICE record with id 36719 never gets it, and github_id is on every entry", async () => {
+    const { catalogueListingProblems, checkPublisherRecords } = await import("../validate.mjs");
+    const real = buildIndex({ serial: 1 });
+    const entries = Object.entries(real.signed.publishers ?? {});
+    assert(entries.length >= 2, `${entries.length} signed.publishers entr(ies); the real catalogue badges two publishers`);
+    for (const [login, rec] of entries) {
+      assert(Number.isSafeInteger(rec.github_id), `signed.publishers.${login} carries no github_id`);
+    }
+    assertEqual(JSON.stringify(Object.fromEntries(entries.map(([l, r]) => [l, [r.tier, r.github_id]]))),
+      JSON.stringify({ KnlCE: ["astra_team", 114572819], mihailinl: ["astra_team", 193032699] }),
+      "the real publishers are not the two first-party accounts by id");
+
+    const tree = fs.mkdtempSync(path.join(SUITE_TMP, "astra-pub-firstparty-"));
+    try {
+      for (const dir of ["plugins", "registry", "policy", "schema", "publishers"]) {
+        fs.cpSync(path.join(REPO_ROOT, dir), path.join(tree, dir), { recursive: true });
+      }
+      const pluginFile = path.join(tree, "plugins", "bad-apple", "plugin.json");
+      const plugin = JSON.parse(fs.readFileSync(pluginFile, "utf8"));
+      assert(plugin.unlisted !== true && !fs.existsSync(path.join(tree, "plugins", "bad-apple", "identity.json")),
+        "this fixture needs bad-apple listed and with no identity record, so the login join is what it asks");
+      const moveTo = (owner) => {
+        fs.writeFileSync(pluginFile, JSON.stringify({ ...plugin, source: { ...plugin.source, repo: `${owner}/astra-bad-apple` } }, null, 2) + "\n");
+      };
+      const knice = (ids) => fs.writeFileSync(path.join(tree, "publishers", "KNICE.json"), JSON.stringify({
+        schema: "astra.registry.publisher/1", owner: "KNICE", owner_ids: ids, display_name: "Not KNICE",
+        tier: "astra_team", verified_at: "2026-11-18", evidence: { kind: "first-party", note: "a stranger's claim" },
+      }, null, 2) + "\n");
+      const tierOf = () => {
+        const doc = buildIndex({ root: tree, serial: 1 });
+        const entry = doc.signed.plugins.find((e) => e.id === "bad-apple");
+        return entry?.publisher ? doc.signed.publishers[entry.publisher] : null;
+      };
+      moveTo("KNICE");
+      for (const login of ["KNICE", "knice"]) {
+        knice({ [login]: "36719" });
+        assertEqual(tierOf(), null, `a ${login} record with id 36719 badged its listing`);
+      }
+      // By login alone, a first-party id under the stranger's login is no
+      // grant either: the record's own id must be the first-party one.
+      knice({ KNICE: "114572819" });
+      const borrowed = tierOf();
+      assert(borrowed === null || borrowed.github_id === 114572819,
+        `a KNICE record carrying KnlCE's id produced ${JSON.stringify(borrowed)}`);
+      // The validator refuses the 36719 claim outright.
+      knice({ KNICE: "36719" });
+      const errors = [];
+      checkPublisherRecords({ root: tree, schemas: loadSchemas(tree), report: { error: (f, m) => errors.push(`${f}: ${m}`), warn() {}, note() {} } });
+      assert(errors.some((e) => /KNICE\.json: .*astra_team.*36719/.test(e)), `the validator did not refuse the 36719 astra_team claim: ${errors.join(" | ")}`);
+      // The control: the same listing under a first-party login keeps the tier.
+      fs.rmSync(path.join(tree, "publishers", "KNICE.json"));
+      moveTo("mihailinl");
+      const own = tierOf();
+      assertEqual(JSON.stringify(own && [own.tier, own.github_id]), JSON.stringify(["astra_team", 193032699]), "the first-party control lost its tier");
+      assertEqual(catalogueListingProblems(buildIndex({ root: tree, serial: 1 }).signed).length, 0, "the control catalogue breaks a per-listing rule");
     } finally {
       fs.rmSync(tree, { recursive: true, force: true });
     }

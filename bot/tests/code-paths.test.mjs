@@ -245,6 +245,10 @@ export const ENTRIES = [
   "policy/reserved-ids.json",
   "policy/spdx-allowlist.json",
   "policy/listing-language-exemptions.json",
+  // Contract 6.32.0: Astra's own GitHub ids. `tools/build-index.mjs` grants the
+  // `astra_team` tier from it and `bot/lib/service-decide.mjs` skips MIG-10's
+  // `R_FIRST_BINDING` hold by it, so it decides what a bot run publishes.
+  "policy/first-party.json",
   // Contract 2.4.0's: B.4's alert record, which tools/validate.mjs judges
   // against it by literal path (the fourteenth schema).
   "schema/alert-v1.json",
