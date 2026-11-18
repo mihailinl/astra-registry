@@ -556,21 +556,32 @@ function ownFile(ownerFile, ids) {
  * Contract 6.32.0 (the owner's report §1.14; POLICY §3.2): a first binding
  * inside Astra's own accounts needs no moderator. The repository owner's
  * NUMERIC GitHub id is in policy/first-party.json, and nobody outside that set
- * is in the binding's history: the build's triggering actor, when read, and
- * the owner file's newest commit's linked author are first-party ids too, and
- * that commit is tied to no pull request (ID-63: a stranger's merged pull
- * request can carry a token the stranger minted). Never by login: `knice`
+ * is in the binding's history: the run's original actor is read and first
+ * party (and its triggering actor, when read, too), and every commit of the
+ * owner file (`owner_file.history`, which verify reads only for a first-party
+ * owner) carries a verified signature, is linked to a first-party id and is
+ * tied to no pull request (ID-63: a stranger's merged pull request can carry
+ * a token the stranger minted). Never by login: `knice`
  * (36719) is a stranger's account. Anything unread, or any third party, holds
  * as before.
  */
 export function firstPartyBinding({ ids, actor = null, ownerFile = null, firstParty = null }) {
   const set = firstParty instanceof Set ? firstParty : null;
   if (!set || !isFirstPartyId(ids?.repository_owner_id, set)) return false;
-  const actorId = actor?.triggering_actor_id;
-  if (actorId !== undefined && actorId !== null && !isFirstPartyId(actorId, set)) return false;
-  return Boolean(ownerFile) && ownerFile.pull_request === false
-    && typeof ownerFile.commit === "string" && /^[0-9a-f]{40}$/.test(ownerFile.commit)
-    && isFirstPartyId(ownerFile.author_id, set);
+  // The run's ORIGINAL actor, read and first party (review of #512, H1): a
+  // run with no actor read (no `run_id`) is not first party, and the
+  // triggering actor of a re-run is not who started it.
+  if (!isFirstPartyId(actor?.actor_id, set)) return false;
+  if (actor?.triggering_actor_id != null && !isFirstPartyId(actor.triggering_actor_id, set)) return false;
+  // EVERY commit of the owner file, not only the newest: a token a stranger
+  // committed before a transfer keeps the hold. Each is signed and verified
+  // (the author link is GitHub's mapping of the commit e-mail, which a write
+  // collaborator can set), linked to a first-party id, and from no pull
+  // request. The newest is ID-63's own read and must head that history.
+  const history = Array.isArray(ownerFile?.history) ? ownerFile.history : null;
+  if (!history || !history.length || history[0]?.commit !== ownerFile?.commit) return false;
+  return history.every((c) => typeof c?.commit === "string" && /^[0-9a-f]{40}$/.test(c.commit)
+    && c.verified === true && c.pull_request === false && isFirstPartyId(c.author_id, set));
 }
 
 /** The accounts whose own first binding needs no moderator (contract 6.7.0, MIG-10): what `compareActor` calls them. */

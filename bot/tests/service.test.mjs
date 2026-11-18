@@ -2833,9 +2833,9 @@ const fbVerified = (over = {}) => {
   // The owner file: the owner's own direct commit unless a case says otherwise (ID-63).
   return verified({ binding: FB_LINE, owner_file: { commit: "9".repeat(40), pull_request: false, author_id: P.oid, verified: true }, version, tag, fingerprint: fp, ...over });
 };
-const fbRun = ({ actor = null, version, tag, verdict = "pass", records = [baseline()], alerts = new Map(), denied = new Set(), listingState = { state: "grandfathered" }, windowHours, firstParty } = {}) => decideWith({
+const fbRun = ({ actor = null, version, tag, verdict = "pass", records = [baseline()], alerts = new Map(), denied = new Set(), listingState = { state: "grandfathered" }, windowHours, firstParty, ownerFile } = {}) => decideWith({
   ...(tag ? { lease: { tag } } : {}),
-  verified: fbVerified({ actor, ...(version ? { version } : {}), ...(tag ? { tag } : {}) }),
+  verified: fbVerified({ actor, ...(version ? { version } : {}), ...(tag ? { tag } : {}), ...(ownerFile ? { owner_file: ownerFile } : {}) }),
   facts: facts(version ? { version } : {}),
   ...(version ? { listing: listing({ version: versionDoc(version, {
     release: { kind: "github_release", repo: "placeholder/placeholder", tag: tag ?? `v${version}`, commit: null },
@@ -2920,23 +2920,41 @@ test("6.7.0 (MIG-10, ID-63): the owner's build over a stranger's merged owner fi
 // policy/first-party.json's; `knice` (36719) looks like KNICE and is a
 // stranger. Watched red: with `firstPartyBinding`'s owner-id test removed,
 // 36719 clears; with its actor test removed, a stranger's build clears; with
-// the call in `firstBindingCleared` removed, no first-party id clears.
+// its `verified` or `every` test removed, an unsigned or older stranger's
+// owner-file commit clears; with the call in `firstBindingCleared` removed,
+// no first-party id clears.
 test("6.32.0 (MIG-10): a first binding whose repository owner is a first-party numeric id is not held; 36719 and a stranger in its history are", async () => {
   const { loadFirstParty } = await import("../../tools/lib/first-party.mjs");
   const { firstPartyBinding } = await import("../lib/service-decide.mjs");
   const real = loadFirstParty(REPO);
   assert.deepEqual(real.problems, []);
   assert.deepEqual([...real.ids].sort(), ["114572819", "193032699", "280318216"], "policy/first-party.json is not the verified set");
-  const ownerFileOf = (id) => ({ commit: "9".repeat(40), pull_request: false, author_id: id });
+  // The owner file's whole history (review of #512, H1): each commit signed,
+  // linked to a first-party id and from no pull request; the newest heads it.
+  const commitOf = (id, over = {}) => ({ commit: "9".repeat(40), pull_request: false, author_id: id, verified: true, ...over });
+  const ownerFileOf = (id, older = []) => ({ ...commitOf(id), history: [commitOf(id), ...older] });
+  const actorOf = (id, over = {}) => ({ actor_id: id, triggering_actor_id: id, floor_days: 0, privileged: false, basis: "not_shown", ...over });
   const cleared = (id, over = {}) => firstBindingCleared({
-    actor: { triggering_actor_id: id, floor_days: 0, privileged: false, basis: "not_shown" }, verdict: "pass", lineHash: "ab".repeat(8),
+    actor: actorOf(id), verdict: "pass", lineHash: "ab".repeat(8),
     ids: { repository_id: P.rid, repository_owner_id: id }, pluginId: P.id, ownerFile: ownerFileOf(id), firstParty: real.ids, ...over,
   });
+  const stranger = "700000555";
   for (const id of ["280318216", "114572819", "193032699"]) {
     assert.deepEqual(cleared(id), { by: "first_party" }, `first-party id ${id} was held`);
-    assert.equal(cleared(id, { actor: { triggering_actor_id: "700000555", privileged: false } }), null, `${id}: a stranger's build cleared`);
-    assert.equal(cleared(id, { ownerFile: ownerFileOf("700000555") }), null, `${id}: a stranger's owner-file commit cleared`);
-    assert.equal(cleared(id, { ownerFile: { ...ownerFileOf(id), pull_request: true } }), null, `${id}: an owner file from a pull request cleared`);
+    assert.equal(cleared(id, { actor: actorOf(stranger) }), null, `${id}: a stranger's build cleared`);
+    assert.equal(cleared(id, { actor: actorOf(id, { actor_id: stranger }) }), null, `${id}: a stranger's ORIGINAL actor cleared (a first-party re-run)`);
+    assert.equal(cleared(id, { actor: actorOf(id, { triggering_actor_id: stranger }) }), null, `${id}: a stranger's re-run cleared`);
+    assert.equal(cleared(id, { actor: null }), null, `${id}: no actor read (no run_id) cleared`);
+    assert.equal(cleared(id, { actor: actorOf(id, { actor_id: null }) }), null, `${id}: an unread original actor cleared`);
+    assert.equal(cleared(id, { ownerFile: ownerFileOf(stranger) }), null, `${id}: a stranger's owner-file commit cleared`);
+    assert.equal(cleared(id, { ownerFile: { ...ownerFileOf(id), history: [{ ...commitOf(id), verified: false }] } }), null, `${id}: an unsigned owner-file commit cleared`);
+    assert.equal(cleared(id, { ownerFile: { ...ownerFileOf(id), history: [{ ...commitOf(id), pull_request: true }] } }), null, `${id}: an owner file from a pull request cleared`);
+    // A token a stranger committed before the repository moved to Astra's own account.
+    assert.equal(cleared(id, { ownerFile: ownerFileOf(id, [commitOf(stranger, { commit: "8".repeat(40) })]) }), null, `${id}: an older stranger's owner-file commit cleared`);
+    assert.equal(cleared(id, { ownerFile: ownerFileOf(id, [commitOf(id, { commit: "8".repeat(40), verified: false })]) }), null, `${id}: an older unsigned owner-file commit cleared`);
+    assert.deepEqual(cleared(id, { ownerFile: ownerFileOf(id, [commitOf(id, { commit: "8".repeat(40) })]) }), { by: "first_party" }, `${id}: an all-first-party history was held`);
+    assert.equal(cleared(id, { ownerFile: { ...commitOf(id) } }), null, `${id}: an owner file with no history read cleared`);
+    assert.equal(cleared(id, { ownerFile: { ...commitOf(id), history: [commitOf(id, { commit: "7".repeat(40) })] } }), null, `${id}: a history not headed by ID-63's newest commit cleared`);
     assert.equal(cleared(id, { ownerFile: null }), null, `${id}: an unread owner file cleared`);
     assert.equal(cleared(id, { verdict: "B_BINDING_UNUSABLE" }), null, `${id}: a binding the service did not pass cleared`);
     assert.equal(cleared(id, { firstParty: null }), null, `${id}: cleared with no first-party set read`);
@@ -2944,17 +2962,18 @@ test("6.32.0 (MIG-10): a first binding whose repository owner is a first-party n
   // The look-alike: login knice/KNICE is id 36719, a stranger, and a record
   // naming it is never first party; nor is a login, or a padded number.
   assert.equal(cleared("36719"), null, "36719 (knice) was treated as first party");
-  assert.equal(cleared("36719", { actor: { triggering_actor_id: "193032699" }, ownerFile: ownerFileOf("193032699") }), null,
+  assert.equal(cleared("36719", { actor: actorOf("193032699"), ownerFile: ownerFileOf("193032699") }), null,
     "a repository owned by 36719 cleared because a first-party account built it and wrote its owner file");
-  assert.equal(firstPartyBinding({ ids: { repository_owner_id: "KNICE" }, ownerFile: ownerFileOf("KNICE"), firstParty: real.ids }), false, "a login was matched");
-  assert.equal(firstPartyBinding({ ids: { repository_owner_id: "0193032699" }, ownerFile: ownerFileOf("0193032699"), firstParty: real.ids }), false, "a padded id was matched");
+  assert.equal(firstPartyBinding({ ids: { repository_owner_id: "KNICE" }, actor: actorOf("KNICE"), ownerFile: ownerFileOf("KNICE"), firstParty: real.ids }), false, "a login was matched");
+  assert.equal(firstPartyBinding({ ids: { repository_owner_id: "0193032699" }, actor: actorOf("0193032699"), ownerFile: ownerFileOf("0193032699"), firstParty: real.ids }), false, "a padded id was matched");
 
   // End to end: the same release, held without the set and published with it.
-  const actor = { triggering_actor_id: P.oid, floor_days: 0, privileged: false, basis: "not_shown" };
-  assert.ok(heldCodesOf(fbRun({ actor })).includes("R_FIRST_BINDING"), "the fixture's first binding is not held without the set");
-  const own = fbRun({ actor, firstParty: new Set([P.oid]) });
+  const actor = actorOf(P.oid);
+  const ownerFile = ownerFileOf(P.oid);
+  assert.ok(heldCodesOf(fbRun({ actor, ownerFile })).includes("R_FIRST_BINDING"), "the fixture's first binding is not held without the set");
+  const own = fbRun({ actor, ownerFile, firstParty: new Set([P.oid]) });
   assert.equal(own.state, "published", `a first-party first binding was held: ${JSON.stringify(heldCodesOf(own))}`);
-  assert.ok(heldCodesOf(fbRun({ actor: { ...actor, triggering_actor_id: "700000555" }, firstParty: new Set([P.oid]) })).includes("R_FIRST_BINDING"),
+  assert.ok(heldCodesOf(fbRun({ actor: actorOf(stranger), ownerFile, firstParty: new Set([P.oid]) })).includes("R_FIRST_BINDING"),
     "a stranger's build of a first-party repository was not held");
 });
 

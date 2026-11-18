@@ -44,6 +44,7 @@ import path from "node:path";
 
 import { runValidation } from "../tools/validate.mjs";
 import { loadSources, loadPolicy, REPO_ROOT } from "../tools/lib/sources.mjs";
+import { isFirstPartyId, loadFirstParty } from "../tools/lib/first-party.mjs";
 import { compareSemver, parseSemver } from "../tools/lib/semver.mjs";
 import { SUPPORTED_KEYS } from "../tools/lib/platform.mjs";
 import { TAG_PATTERN } from "../tools/lib/tags.mjs";
@@ -1078,6 +1079,25 @@ export async function verifyBatch(opts, deps = {}) {
  *   signerWorkflow?: string}} opts
  * @param {object} deps the same seam `ingest` takes, plus the by-id readers
  */
+
+/**
+ * Contract 6.32.0: the owner file's history for MIG-10 (c) — each commit with
+ * its linked author, signature verdict and pull-request answer — or null when
+ * any read fails or the history is longer than the bot reads.
+ */
+async function ownerFileHistory(repositoryId, attested, deps = {}) {
+  const all = await (deps.commitsTouching ?? gh.commitsTouching)(repositoryId, attested, OWNER_FILE);
+  if (all?.status !== "found" || all.truncated || !Array.isArray(all.commits) || !all.commits.length) return null;
+  const out = [];
+  for (const c of all.commits) {
+    if (!c.commit) return null;
+    const pulls = await (deps.pullsForCommit ?? gh.pullsForCommit)(repositoryId, c.commit);
+    if (pulls?.status !== "found") return null;
+    out.push({ commit: c.commit, author_id: c.author_id ?? null, verified: c.verified === true, pull_request: pulls.pulls.length > 0 });
+  }
+  return out;
+}
+
 export async function verifyFacts(opts, deps = {}) {
   const { lease } = opts;
   const root = opts.root ?? REPO_ROOT;
@@ -1293,6 +1313,14 @@ export async function verifyFacts(opts, deps = {}) {
       pr = pulls.pulls.length > 0;
     }
     ownerFile = { commit: last.commit, pull_request: pr, author_id: last.author_id ?? null, verified: last.verified === true };
+    // Contract 6.32.0 (MIG-10 (c)): for a first-party owner, every commit of
+    // the owner file, each with its pull-request answer, so one stranger
+    // anywhere in that history keeps the hold. Read only where it can matter;
+    // anything unread, partial or past ten commits is `history: null`, which
+    // holds as before rather than waiting.
+    if (last.commit && isFirstPartyId(identity.repository_owner_id, (deps.firstParty ?? loadFirstParty(REPO_ROOT).ids))) {
+      ownerFile.history = await ownerFileHistory(identity.repository_id, attested, deps);
+    }
     if (identity.run_id) {
       const run = await (deps.workflowRun ?? gh.workflowRun)(identity.repository_id, identity.run_id);
       const found = run?.status === "found" ? { status: "found", triggering_actor_id: run.triggering_actor_id } : { status: "transient", reason: run?.reason };
@@ -1312,7 +1340,12 @@ export async function verifyFacts(opts, deps = {}) {
       }
       const cmp = compareActor({ identity, actor: found, permission, membership });
       if (cmp.outcome === "wait") return out("wait", { code: cmp.code, reason: cmp.reason });
-      actor = { triggering_actor_id: run.triggering_actor_id, floor_days: 0, privileged: cmp.privileged === true, basis: cmp.basis };
+      actor = {
+        triggering_actor_id: run.triggering_actor_id,
+        // 6.32.0: the run's original actor, for MIG-10 (c); null when unread.
+        actor_id: run.actor_id ?? null,
+        floor_days: 0, privileged: cmp.privileged === true, basis: cmp.basis,
+      };
     }
   }
 

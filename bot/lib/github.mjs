@@ -424,8 +424,12 @@ export async function workflowRun(repo, runId, { fetchImpl = fetch } = {}) {
     return { status: "transient", reason: "HTTP 200 with no triggering_actor id", triggering_actor_id: null };
   }
   const login = answer.parsed?.triggering_actor?.login;
+  // The ORIGINAL actor (`actor`, the account whose event started the run's
+  // first attempt), beside the triggering one (which a re-run replaces):
+  // contract 6.32.0's first-party exemption asks both. Null when unread.
+  const original = idField(answer.raw, answer.parsed?.actor?.id, { after: '"actor"' });
   return {
-    status: "found", reason: answer.reason, triggering_actor_id: actor.id,
+    status: "found", reason: answer.reason, triggering_actor_id: actor.id, actor_id: original.id ?? null,
     // The login, for MIG-31's two privilege reads (6.7.0), which GitHub keys
     // by login. The id stays the identity every comparison uses.
     triggering_actor_login: typeof login === "string" && LOGIN_RE.test(login) ? login : null,
@@ -561,6 +565,30 @@ export async function lastCommitTouching(repositoryId, sha, filePath, { fetchImp
     // Exactly `true` or `false`; anything else is `false`.
     verified: list[0]?.commit?.verification?.verified === true,
   };
+}
+
+/**
+ * Every commit touching `filePath` up to `sha`, newest first, at most `limit`
+ * (contract 6.32.0: MIG-10's first-party exemption reads the owner file's
+ * WHOLE history, so a token a stranger committed before a transfer keeps the
+ * hold). `truncated` when the path has more commits than `limit`: the caller
+ * holds rather than judging part of a history.
+ */
+export async function commitsTouching(repositoryId, sha, filePath, { limit = 10, fetchImpl = fetch } = {}) {
+  if (!BASE10_RE.test(String(repositoryId))) {
+    return { status: "transient", reason: `${JSON.stringify(repositoryId)} is not a repository id`, commits: null, truncated: false };
+  }
+  const url = `${API}/repositories/${repositoryId}/commits` +
+    `?sha=${encodeURIComponent(sha)}&path=${encodeURIComponent(filePath)}&per_page=${limit + 1}`;
+  const answer = await read(url, { fetchImpl });
+  if (answer.status !== "found") return { status: answer.status, reason: answer.reason, commits: null, truncated: false };
+  const list = Array.isArray(answer.parsed) ? answer.parsed : [];
+  const commits = list.slice(0, limit).map((c) => ({
+    commit: typeof c?.sha === "string" ? c.sha : null,
+    author_id: c?.author && Number.isSafeInteger(c.author.id) && c.author.id > 0 ? String(c.author.id) : null,
+    verified: c?.commit?.verification?.verified === true,
+  }));
+  return { status: "found", reason: answer.reason, commits, truncated: list.length > limit };
 }
 
 /**
