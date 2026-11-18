@@ -55,18 +55,62 @@ export function firstPartyFrom(doc) {
     return { ids: new Set(), problems };
   }
   const ids = new Set();
-  for (const key of Object.keys(listed)) {
-    if (canonicalGithubId(key) === null) problems.push(`github_ids key ${JSON.stringify(key)} is not a canonical numeric id (a login never counts)`);
-    else ids.add(key);
+  const logins = new Map();
+  for (const [key, value] of Object.entries(listed)) {
+    if (canonicalGithubId(key) === null) { problems.push(`github_ids key ${JSON.stringify(key)} is not a canonical numeric id (a login never counts)`); continue; }
+    if (!value || typeof value.login !== "string" || !LOGIN_RE.test(value.login)) { problems.push(`github_ids.${key} names no login`); continue; }
+    ids.add(key);
+    logins.set(key, value.login);
   }
   for (const key of Object.keys(doc?.not_first_party ?? {})) {
     if (ids.has(key)) problems.push(`${key} is both first party and named as not first party`);
   }
-  return { ids: problems.length ? new Set() : ids, problems };
+  return problems.length ? { ids: new Set(), logins: new Map(), problems } : { ids, logins, problems };
+}
+
+const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
+
+/**
+ * A publisher record's claims on first-party ids that are NOT its own
+ * (review of #512, H2). `owner_ids` is typed by whoever writes the record, so
+ * an entry mapping a login to a first-party id is honoured only when the
+ * policy names that very login for the id, compared case-insensitively.
+ *
+ * @returns {string[]} one line per false claim; empty when there is none
+ */
+export function firstPartyClaimProblems(doc, firstParty) {
+  const ids = doc?.owner_ids;
+  if (!firstParty?.logins || ids === null || typeof ids !== "object" || Array.isArray(ids)) return [];
+  const out = [];
+  for (const [login, value] of Object.entries(ids)) {
+    const id = canonicalGithubId(value);
+    if (id === null || !firstParty.ids.has(id)) continue;
+    const expected = firstParty.logins.get(id);
+    if (String(login).toLowerCase() !== String(expected).toLowerCase()) {
+      out.push(`owner_ids maps ${JSON.stringify(login)} to ${id}, which is ${expected}'s first-party id`);
+    }
+  }
+  return out;
+}
+
+/**
+ * Is this record Astra's own, by id and login together: its owner and every
+ * `covers` login each map, in `owner_ids`, to a first-party id the policy
+ * names for exactly that login, and it claims no other first-party id?
+ */
+export function isFirstPartyRecord(doc, firstParty, ownerIdOf) {
+  if (!firstParty?.logins) return false;
+  if (firstPartyClaimProblems(doc, firstParty).length) return false;
+  const logins = [doc?.owner, ...(Array.isArray(doc?.covers) ? doc.covers : [])];
+  return logins.every((login) => {
+    const id = ownerIdOf(doc, login);
+    return isFirstPartyId(id, firstParty.ids) && String(firstParty.logins.get(id)).toLowerCase() === String(login).toLowerCase();
+  });
 }
 
 /** Is this numeric id one of Astra's own accounts? */
 export function isFirstPartyId(value, ids) {
+  if (ids && !(ids instanceof Set) && ids.ids instanceof Set) ids = ids.ids;
   const id = canonicalGithubId(value);
   return id !== null && ids instanceof Set && ids.has(id);
 }

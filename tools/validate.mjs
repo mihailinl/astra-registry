@@ -38,7 +38,7 @@ import {
   unsafeDisplayText,
   unsafePathComponent,
 } from "./lib/ids.mjs";
-import { FIRST_PARTY_FILE, isFirstPartyId, loadFirstParty } from "./lib/first-party.mjs";
+import { FIRST_PARTY_FILE, firstPartyClaimProblems, isFirstPartyRecord, loadFirstParty } from "./lib/first-party.mjs";
 import {
   ALERTS_DIR,
   BASELINE_FILE,
@@ -2854,15 +2854,15 @@ export function checkPublisherRecords(ctx, loaded = loadPublishers(ctx.root)) {
   const firstParty = ctx.root ? loadFirstParty(ctx.root) : null;
   for (const p of firstParty?.problems ?? []) report.error(FIRST_PARTY_FILE, p);
   for (const { file, doc } of firstParty ? publisherRecords(loaded.publishers) : []) {
-    if (doc?.tier !== "astra_team") continue;
-    const id = ownerIdOf(doc, doc.owner);
-    const covered = (Array.isArray(doc.covers) ? doc.covers : []).map((l) => [l, ownerIdOf(doc, l)]);
-    const strangers = [[doc.owner, id], ...covered].filter(([, v]) => !isFirstPartyId(v, firstParty.ids));
-    if (strangers.length) {
-      report.error(file, `claims tier astra_team for ${strangers.map(([l, v]) => `${l} (id ${v ?? "none"})`).join(", ")}, ` +
-        `not ${strangers.length === 1 ? "a" : ""} first-party numeric id${strangers.length === 1 ? "" : "s"}`,
-        `Contract 6.32.0: astra_team is granted only to the ids in ${FIRST_PARTY_FILE}, never by login, and such a record gives no badge.`);
+    // Any tier: a login mapped to another account's first-party id (H2).
+    for (const p of firstPartyClaimProblems(doc, firstParty)) {
+      report.error(file, p, `Contract 6.32.0: ${FIRST_PARTY_FILE} names the one login each first-party id is; owner_ids is typed by the record's author.`);
     }
+    if (doc?.tier !== "astra_team" || isFirstPartyRecord(doc, firstParty, ownerIdOf)) continue;
+    const logins = [doc.owner, ...(Array.isArray(doc.covers) ? doc.covers : [])];
+    report.error(file, `claims tier astra_team for ${logins.map((l) => `${l} (id ${ownerIdOf(doc, l) ?? "none"})`).join(", ")}, ` +
+      "which are not all first-party ids under their own logins",
+      `Contract 6.32.0: astra_team is granted only to the ids in ${FIRST_PARTY_FILE}, each under the login it names, and such a record gives no badge.`);
   }
   for (const c of publisherNameCollisions(loaded.publishers)) {
     report.error(`publishers/${c.a}.json`, `renders as the same word as ${c.b}: ${c.why}`,

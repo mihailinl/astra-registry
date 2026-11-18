@@ -62,7 +62,7 @@ import { cleanEnv } from "./lib/git-env.mjs";
 import { ijsonProblems, stableStringify } from "./lib/canonical.mjs";
 import { compareSemver } from "./lib/semver.mjs";
 import { loadIdentities, loadPublishers, loadSources, REPO_ROOT } from "./lib/sources.mjs";
-import { canonicalGithubId, isFirstPartyId, loadFirstParty } from "./lib/first-party.mjs";
+import { canonicalGithubId, firstPartyClaimProblems, isFirstPartyRecord, loadFirstParty } from "./lib/first-party.mjs";
 import { INDEX_SCHEMA } from "../bot/lib/sign.mjs";
 import { MAX_README_BYTES, iconDataUri } from "../bot/lib/assets.mjs";
 import { SUPPORTED_KEYS } from "./lib/platform.mjs";
@@ -395,10 +395,13 @@ export function publisherFor({ plugin, publishers, identity = null, firstParty =
   // login (policy/first-party.json). The record's own account and the login
   // the listing is published under must both be first-party ids; otherwise
   // the record gives no badge at all. `firstParty` absent is the empty set.
-  if (record.doc?.tier === "astra_team") {
-    const ids = firstParty instanceof Set ? firstParty : new Set();
-    if (!isFirstPartyId(ownerIdOf(record.doc, record.doc?.owner), ids) || !isFirstPartyId(ownerIdOf(record.doc, login), ids)) return null;
-  }
+  // Review of #512 (H2): `owner_ids` is the record author's typing, so the
+  // policy also names each id's login, and every login the record speaks for
+  // (owner and `covers`) must be that login. A record of any tier that maps a
+  // login to someone else's first-party id gives no badge at all.
+  const fp = firstParty?.logins ? firstParty : { ids: new Set(), logins: new Map() };
+  if (firstPartyClaimProblems(record.doc, fp).length) return null;
+  if (record.doc?.tier === "astra_team" && !isFirstPartyRecord(record.doc, fp, ownerIdOf)) return null;
   if (identity === null || identity === undefined) return record;
 
   const ownerId = identity?.repository_owner_id;
@@ -519,7 +522,7 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
       entryErrors.push(...pres.errors);
       continue;
     }
-    const badge = publisherFor({ plugin, publishers, identity: identityOf.get(plugin.dir) ?? null, firstParty: firstParty.ids });
+    const badge = publisherFor({ plugin, publishers, identity: identityOf.get(plugin.dir) ?? null, firstParty });
 
     entries.push({
       id: p.id,
