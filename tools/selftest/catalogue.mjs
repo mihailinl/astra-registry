@@ -594,4 +594,45 @@ export async function run() {
       "the catalogue's release review enum is not the version record's, so the generator can copy a value the " +
       "catalogue schema refuses, or the reverse");
   });
+
+  // Contract 6.32.0: the publish path no longer runs this suite, so the
+  // live-data checks above (INV-29, INV-39, inlined icons, the publisher keys)
+  // are `tools/validate.mjs`'s too, per listing, and run at every publish.
+  // Each is planted once into the real catalogue's `signed` and must be named
+  // by the listing it was planted in; the real one must name none.
+  //
+  // Watched red: each rule's `out.push` removed in turn leaves its plant unnamed.
+  await test("tools/validate.mjs holds every listing to the catalogue's live-data rules the publish path used to leave to this suite", async () => {
+    const { catalogueListingProblems } = await import("../validate.mjs");
+    const doc = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "registry/v1/index.json"), "utf8"));
+    assertEqual(JSON.stringify(catalogueListingProblems(doc.signed)), "[]", "the committed catalogue breaks a rule it is published under");
+    const withPublisher = doc.signed.plugins.find((p) => p.publisher && p.releases?.length);
+    assert(withPublisher, "no listing carries a publisher and a release, so half the plants below have no subject");
+    const plant = (mutate) => {
+      const copy = JSON.parse(JSON.stringify(doc.signed));
+      const entry = copy.plugins.find((p) => p.id === withPublisher.id);
+      mutate(entry, copy);
+      return catalogueListingProblems(copy).map((x) => `${x.where}: ${x.problem}`);
+    };
+    const cases = [
+      ["INV-29 a download count", (e) => { e.downloads = 7; }, /claims downloads=7/],
+      ["INV-29 a star", (e) => { e.stars = 1; }, /stars=1/],
+      ["INV-39 an artifact from another repository", (e) => {
+        const k = Object.keys(e.releases[0].artifacts)[0];
+        e.releases[0].artifacts[k].url = "https://github.com/someone-else/x/releases/download/v1/a.astraplugin";
+      }, /is not under https:\/\/github\.com\//],
+      ["BOT-79 a hosted icon", (e) => { e.icon_url = "https://example.invalid/i.png"; }, /icon_url fetches from/],
+      ["ID-51 a publisher with no key", (e) => { e.publisher = "nobody-signed-this"; }, /not a signed\.publishers key/],
+      ["a key no listing names", (e, c) => { c.publishers = { ...c.publishers, "orphan-login": c.publishers[e.publisher] }; }, /signed\.publishers\.orphan-login: is named by no listing/],
+    ];
+    for (const [what, mutate, re] of cases) {
+      const found = plant(mutate);
+      assert(found.some((f) => re.test(f)), `${what} was not named: ${found.join(" | ") || "nothing"}`);
+    }
+    // `--allow-direct` catalogues are self-hosted on purpose, and INV-39 is not asked of them.
+    const direct = JSON.parse(JSON.stringify(doc.signed));
+    const k = Object.keys(direct.plugins[0].releases[0].artifacts)[0];
+    direct.plugins[0].releases[0].artifacts[k].url = "https://downloads.example.invalid/a.astraplugin";
+    assertEqual(catalogueListingProblems(direct, { allowDirect: true }).length, 0, "INV-39 was asked under --allow-direct");
+  });
 }

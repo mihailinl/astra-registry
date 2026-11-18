@@ -365,6 +365,9 @@ jobs:
     outputs:
       results: ${{ steps.apply.outputs.results }}
       main_commit: ${{ steps.apply.outputs.main_commit }}
+      # Contract 6.32.0: the plugin ids this run withdrew when the day is past
+      # TAKEDOWN_ALERT_AT (3); `[]` otherwise, and `[]` unless the push landed.
+      takedown_alert: ${{ steps.apply.outputs.takedown_alert }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -438,7 +441,11 @@ jobs:
         run: |
           set -euo pipefail
           node tools/validate.mjs --allow-staging --writer moderation
-          node tools/selftest.mjs
+          # No tools/selftest.mjs since contract 6.32.0 (review of #512, M5):
+          # a red case in the registry's own test suite must never block a
+          # takedown, a revert or an operator act; it gates pull requests
+          # (`registry-selftest`), and validate holds the tree, as on the
+          # publish path.
           node bot/moderation.mjs --check
 
       # A run with NOTHING to commit is the common case — no work listed, no
@@ -558,7 +565,6 @@ jobs:
             node tools/build-index.mjs --check
             node tools/build-revocations.mjs --check
             node tools/validate.mjs --allow-staging --writer moderation
-            node tools/selftest.mjs
             node bot/moderation.mjs --check
             check_handoff
           }
@@ -604,12 +610,64 @@ jobs:
               fi
             fi
           fi
+          takedown_alert='[]'
+          if [ -n "${main_commit}" ] && [ -s moderation/takedown-alert.json ]; then
+            takedown_alert=$(tr -d '\n' < moderation/takedown-alert.json)
+          fi
           {
             echo "main_commit=${main_commit}"
+            echo "takedown_alert=${takedown_alert}"
             echo "results<<ASTRA_MODERATION_RESULTS"
             cat moderation/results.json
             echo "ASTRA_MODERATION_RESULTS"
           } >> "$GITHUB_OUTPUT"
+
+  # ── takedown-alert: TRUST-26's alarm above three withdrawals a day ───────
+  #
+  # Contract 6.32.0 (review of #512, M6). Its own job, and an EVENT: every run
+  # that takes the day past three withdrawals pages, with the plugin ids it
+  # withdrew (what a revert names). It is handed no once-per-state memory —
+  # inside `settled` the same codes on the next run would have been
+  # suppressed — and it runs only after `commit`'s push landed, which is when
+  # `takedown_alert` is anything but `[]`.
+  #
+  # It posts NO heartbeat: `settled` is this run's liveness signal.
+  takedown-alert:
+    needs: commit
+    if: ${{ always() && needs.commit.outputs.takedown_alert != '' && needs.commit.outputs.takedown_alert != '[]' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: alerts
+    permissions:
+      contents: read
+      id-token: none
+    env:
+      ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+      ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+      ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: The takedown alarm this run owes
+        env:
+          ASTRA_VERDICT_CODES: '[]'
+          ASTRA_VERDICT_IDS: '[]'
+          ASTRA_TAKEDOWN_ALERT: ${{ needs.commit.outputs.takedown_alert }}
+        run: node bot/moderation-run.mjs --job verdict --check moderation-run --out verdict.json
+      - uses: ./.github/actions/alert
+        id: alert
+        with:
+          verdict: verdict.json
+          no-heartbeat-because: >-
+            `settled` is this run's BOT-85 heartbeat for check `moderation-run`.
+            This job runs only when a run withdrew past TRUST-26's alarm level,
+            so a heartbeat here would be a liveness signal that is missing on
+            every quiet run.
 
   # ── report: the result, and only once the commit landed ───────────────────
   #

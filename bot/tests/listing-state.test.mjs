@@ -435,6 +435,9 @@ test("M-T5.2: tools/binding-deadline.mjs writes the deadline and POLICY.md's lin
 function noticeEstate() {
   const root = tmp("astra-notice-");
   write(root, "publishers/team.json", { owner: "team", tier: "astra_team" });
+  // Since contract 6.32.0 (review of #512, L9) "Astra's own" is policy/first-party.json's logins, never a record's
+  // tier: `team` is ours by this file. The publisher record stays, so a tier alone would show here as a stranger.
+  write(root, "policy/first-party.json", { schema: "astra.registry.first-party/1", github_ids: { "100000001": { login: "team" } } });
   write(root, "plugins/alpha/plugin.json", { id: "alpha", source: { repo: "stranger/alpha" }, added_at: "2026-08-01" });
   write(root, "plugins/gamma/plugin.json", { id: "gamma", source: { repo: "other/gamma" }, added_at: "2026-08-02" });
   write(root, "plugins/ours/plugin.json", { id: "ours", source: { repo: "team/ours" }, added_at: "2026-08-01" });

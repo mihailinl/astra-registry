@@ -235,7 +235,10 @@ export async function run() {
       fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
       fs.writeFileSync(path.join(dir, rel), JSON.stringify(doc));
     };
-    put("publishers/team.json", { owner: "team", tier: "astra_team", covers: ["TeamOrg"] });
+    // Astra's own, by the first-party policy (contract 6.32.0; review of #512,
+    // L9), and a record merely claiming the team tier, which spares nobody.
+    put("policy/first-party.json", { schema: "astra.registry.first-party/1", github_ids: { 1001: { login: "team" }, 1002: { login: "TeamOrg" } } });
+    put("publishers/other.json", { owner: "other", tier: "astra_team" });
     put("plugins/alpha/plugin.json", { id: "alpha", source: { repo: "stranger/alpha" }, added_at: "2026-08-02" });
     put("plugins/beta/plugin.json", { id: "beta", source: { repo: "stranger/beta" }, added_at: "2026-08-01" });
     put("plugins/gamma/plugin.json", { id: "gamma", source: { repo: "other/gamma" }, added_at: "2026-08-03" });

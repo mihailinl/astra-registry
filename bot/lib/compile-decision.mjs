@@ -238,9 +238,9 @@ export const ACCOUNT_LEVEL_CATEGORIES = Object.freeze(["account_compromise", "ac
  *
  * `KNICE-TECH` is a login the organisation freed when it renamed itself
  * MINICE-AI, which means anybody may register it. `policy/reserved-ids.json`
- * carries the one repository under it that still has to validate
- * (`KNICE-TECH/astra-chess`, frozen and unlisted) and says in its own note why
- * the OWNER is deliberately not in `first_party_owners`. The literal is here
+ * carried `KNICE-TECH/astra-chess` until M-T6.3 step 3 (2026-11-18), after
+ * astra-chess was re-released from MINICE-AI; no repository under the login validates now, and
+ * the file's note says why the OWNER was never in `first_party_owners`. The literal is here
  * rather than read out of that file because the two say different things: that
  * file says which repository names may list under a reserved prefix, and this
  * says which owner no relist may put back into the catalogue.
@@ -983,7 +983,10 @@ export function compileDecision(entry, { root = REPO_ROOT, overBound = false, ba
         `${listing.id}'s latest listed version is covered by ${covered} (MOD-10). Relisting under a signed ` +
         "advisory would put a plugin back in the catalogue that installed copies are already refusing");
     }
-    if (!listing.bound && listing.id !== MIG25_UNBOUND_EXCEPTION) {
+    // MIG-25's exception holds only while the listing is still contained: since 2026-11-16 (M-T6.3 step 2)
+    // astra-chess is released from MINICE-AI, and an UNBOUND astra-chess (say after an identity reset) is
+    // refused `relist_unbound` like any other listing, rather than falling through to nothing.
+    if (!listing.bound && !(listing.id === MIG25_UNBOUND_EXCEPTION && containedRepo(listing))) {
       return refuse(d, "relist_unbound",
         `${listing.id} has no identity record on \`main\`, so it has no bound release, and a release cannot lift ` +
         "`unlisted` by itself (MIG-27)");

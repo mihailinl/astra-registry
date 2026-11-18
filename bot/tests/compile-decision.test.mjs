@@ -625,6 +625,19 @@ test("relist_unbound: no identity record, and no release can lift `unlisted` (MI
   assert.equal(r.refusal, "relist_unbound");
 });
 
+test("MIG-25's exception ends with containment: an unbound astra-chess from MINICE-AI is refused relist_unbound", () => {
+  const id = MIG25_UNBOUND_EXCEPTION;
+  const unbound = repo([{
+    files: {
+      "schema/contract-tokens-v1.json": tokenFile(),
+      [`plugins/${id}/plugin.json`]: { ...plugin(id, { repo: "MINICE-AI/astra-chess" }), unlisted: true },
+      [`plugins/${id}/versions/0.1.19.json`]: version(id, "0.1.19", { repo: "MINICE-AI/astra-chess" }),
+    },
+  }]);
+  const r = compileDecision(entry({ code: "M_RELIST", plugin_id: id, category: "error", moderator: "knice" }), { root: unbound });
+  assert.equal(r.refusal, "relist_unbound", "an unbound astra-chess fell through MIG-27 once nothing contained it");
+});
+
 test("relist_contained refuses astra-chess at R′, and the post-M-T6.3 fixture passes it", () => {
   const id = MIG25_UNBOUND_EXCEPTION;
   const contained = repo([{

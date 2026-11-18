@@ -112,11 +112,16 @@ export const DOCUMENT_MEMBERS = {
     handleOk: [],
     source: "contract ID-15 (`astra.registry.identity/1`), which says `exactly these required members`",
   },
+  // Since contract 6.7.0 an approval's alert also carries `digest`, `held_decision_id` and `token_hash`
+  // (schema/alert-v1.json; bot/lib/service-publish.mjs's ALERT_MEMBERS). This list was not told, and the
+  // coverage canary was red on the first such record (edef85bf45fc, 2026-11-16) for two days; the test in
+  // bot/tests/moderation-coverage.test.mjs now holds the two lists equal. All three are hashes or ids of
+  // registry objects, nobody's personal data.
   "alert-record": {
-    members: ["schema", "fingerprint", "event", "approval_decided_at", "delivered_at", "run"],
+    members: ["schema", "fingerprint", "event", "approval_decided_at", "delivered_at", "run", "digest", "held_decision_id", "token_hash"],
     uuidOk: [],
     handleOk: [],
-    source: "contract TRUST-14; registry plan RC-R1-4",
+    source: "contract TRUST-14 and MIG-10 (6.7.0); registry plan RC-R1-4",
   },
   "deny-record": {
     members: ["schema", "fingerprint", "run", "at"],

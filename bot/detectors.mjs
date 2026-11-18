@@ -746,7 +746,7 @@ export function a7({ git, now }, findings, skipped, scanned) {
 
 // ── A9 · identity or source changed without a decision ──────────────────────
 
-export function a9({ anchor, git }, findings, skipped, scanned) {
+export function a9({ anchor, git, records = [] }, findings, skipped, scanned) {
   if (!anchor.present || anchor.problem) {
     skipped.push({ detector: "A9", why: `${BASELINE_FILE} is not usable, so every identity record ever written would be in scope`, lifted_by: "B-T3.7b's dispatch" });
     return;
@@ -790,11 +790,18 @@ export function a9({ anchor, git }, findings, skipped, scanned) {
       const id = /^plugins\/([^/]+)\//.exec(file)?.[1] ?? null;
       const after = readJsonAt(git, sha, file) ?? {};
       const repo = after.repo ?? after.source?.repo ?? null;
-      const matched = addedRecords.some((d) =>
-        (!id || d.plugin_id === id) &&
+      const idsMatch = (d) =>
         (!repo || String(d.repo ?? "").toLowerCase() === String(repo).toLowerCase()) &&
         (after.repository_id === undefined || String(d.repository_id ?? "") === String(after.repository_id)) &&
-        (after.repository_owner_id === undefined || String(d.repository_owner_id ?? "") === String(after.repository_owner_id)));
+        (after.repository_owner_id === undefined || String(d.repository_owner_id ?? "") === String(after.repository_owner_id));
+      // ID-64: the publication of one listing rebinds, in the same commit, every SIBLING — a listing already
+      // naming that repository id, by its identity record before this commit or by MIG-20's baseline record —
+      // to the same ids. Such a sibling's identity record is that publication's decision, not one without one.
+      // (2026-11-16, cb52dbafcfb4: astra-chess 0.1.19 rebound knice-chess, baseline-named for the same repository;
+      // A9 read only the record's own plugin_id and was red on every run after it.)
+      const sibling = (d) => Boolean(id) && file.endsWith("/identity.json") &&
+        after.repository_id !== undefined && after.repository_owner_id !== undefined && namedBefore(git, sha, id, d.repository_id, records);
+      const matched = addedRecords.some((d) => idsMatch(d) && (!id || d.plugin_id === id || sibling(d)));
       if (!matched) {
         findings.push({
           detector: "A9",
@@ -806,6 +813,19 @@ export function a9({ anchor, git }, findings, skipped, scanned) {
       }
     }
   }
+}
+
+/**
+ * ID-64's sibling test, as of the parent of `sha`: did listing `id` already name `repositoryId`, by its identity
+ * record there, or by a MIG-20 baseline (`migration`) record (those are written once, at the baseline)?
+ */
+function namedBefore(git, sha, id, repositoryId, records) {
+  if (repositoryId === undefined || repositoryId === null) return false;
+  const want = String(repositoryId);
+  if (String(readJsonAt(git, `${sha}^`, `plugins/${id}/identity.json`)?.repository_id ?? "") === want) return true;
+  // The record must already be on the parent: a commit that wrote its own baseline record would name its own sibling.
+  return records.some(({ file, doc }) => doc?.trigger === "migration" && doc.plugin_id === id &&
+    String(doc.repository_id) === want && git.blobAt(`${sha}^`, file) !== null);
 }
 
 /** Did this commit change `source` in a `plugin.json`, as opposed to anything else in it? */

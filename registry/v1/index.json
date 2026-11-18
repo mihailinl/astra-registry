@@ -6082,12 +6082,14 @@
       "KnlCE": {
         "description": "Astra's co-founder and main developer",
         "display_name": "KNICE",
+        "github_id": 114572819,
         "tier": "astra_team",
         "verified_at": "2026-08-19"
       },
       "mihailinl": {
         "description": "Astra's creator and main developer",
         "display_name": "Mihailin",
+        "github_id": 193032699,
         "tier": "astra_team",
         "verified_at": "2026-08-19"
       }

@@ -2177,8 +2177,16 @@ const decideWith = (over = {}) => decideSubmission({
   facts: over.facts === undefined ? facts() : over.facts, listing: over.listing === undefined ? listing() : over.listing,
   ask: over.ask ?? ask(), git: over.git ?? git(), now: over.now ?? P.now, startedAt: over.now ?? P.now,
   readCommit: "f".repeat(40),
+  ...(over.operatorWindowHours !== undefined ? { operatorWindowHours: over.operatorWindowHours } : {}),
 });
 const codes = (plan) => plan.record?.reasons ?? [];
+/**
+ * TRUST-32's window machinery, tested at a reinstated window. Since contract
+ * 6.32.0 `OPERATOR_WINDOW_HOURS` is 0 and nothing waits; the tests that hold
+ * the machinery (an OK, `window_ends_at`, the retry hint, the digest binding)
+ * pass this, and the tests marked 6.32.0 run at the module's own 0.
+ */
+const WINDOW_H = 6;
 
 // ── B-T3.3a: identity and binding ───────────────────────────────────────────
 
@@ -2467,23 +2475,48 @@ const approvedRun = (over = {}) => decideWith({
   ask: ask({ gates: { stop_status: "no_stop", decisions: [approval(over.approval)] }, notice: over.notice === undefined ? { kind: "approved", status: "sent", accepted_at: "2026-09-26T05:00:00Z" } : over.notice }),
   git: git({ existing: existing(), records: [transfer, heldRecord(over.held)], alerts: over.alerts ?? new Map(), denied: over.denied ?? new Set(), ...(over.git ?? {}) }),
   now: over.now,
+  operatorWindowHours: over.windowHours,
 });
 
-test("TRUST-14/TRUST-32: the three-run sequence — alert only, then the window, then publish", () => {
+test("TRUST-14/TRUST-32 (6.32.0): with no operator window an approved change of hands publishes in the run that names its alert", () => {
+  assert.equal(OPERATOR_WINDOW_HOURS, 0, "the report row \"После одобрения смены владельца плагина релиз ждёт 6 ч\": the window is 0");
   const first = approvedRun();
+  assert.equal(first.state, "published", `run 1 waited: ${first.kind} ${first.wait?.code ?? ""} ${first.wait?.cause ?? ""}`);
+  // The alert still goes, in this run, carrying what a deny or a revert names.
+  assert.deepEqual(first.alert, {
+    fingerprint: FP, event: "approval", approval_decided_at: approval().decided_at, digest: FULL, held_decision_id: "1".repeat(32),
+  });
+  assert.equal(first.record.trigger, "approval");
+  // W_ALERT_UNDELIVERED no longer holds: a record without a delivery publishes.
+  const rec = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: approval().decided_at, delivered_at: null, run: "1/1" };
+  const undelivered = approvedRun({ alerts: new Map([[FP, rec]]) });
+  assert.equal(undelivered.state, "published", `an undelivered alert held the release: ${undelivered.wait?.code ?? undelivered.kind}`);
+  assert.equal(undelivered.alert, null, "an alert already recorded is named again");
+  // A delivered one a minute ago is no window either.
+  const fresh = approvedRun({ alerts: new Map([[FP, { ...rec, delivered_at: hoursBefore(P.now, 1 / 60) }]]) });
+  assert.equal(fresh.state, "published", `${fresh.kind} ${fresh.wait?.code ?? ""}`);
+  // The gates the window never was: a deny withholds, a stop publishes nothing, the notice still waits.
+  assert.deepEqual(codes(approvedRun({ denied: new Set([FP]) })), ["P_OPERATOR_DENIED"], "a deny record no longer withholds");
+  assert.equal(approvedRun({ notice: { kind: "approved", status: "pending" } }).wait?.code, "W_NOTICE_PENDING");
+  // Mutation: the same run at the old window waits, so the 0 is what publishes it.
+  assert.equal(approvedRun({ windowHours: WINDOW_H }).kind, "wait");
+});
+
+test("TRUST-14/TRUST-32 at a reinstated window: the three-run sequence — alert only, then the window, then publish", () => {
+  const first = approvedRun({ windowHours: WINDOW_H });
   assert.equal(first.kind, "wait", `run 1 names the alert and publishes nothing: ${first.kind} ${first.state ?? ""}`);
   assert.deepEqual(first.alert, {
     fingerprint: FP, event: "approval", approval_decided_at: approval().decided_at, digest: FULL, held_decision_id: "1".repeat(32),
   });
   const rec = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: approval().decided_at, delivered_at: "2026-09-26T11:00:00Z", run: "1/1" };
-  const second = approvedRun({ alerts: new Map([[FP, rec]]) });
+  const second = approvedRun({ alerts: new Map([[FP, rec]]), windowHours: WINDOW_H });
   assert.equal(second.kind, "wait");
   assert.equal(second.wait.code, "W_OPERATOR_WINDOW");
   // Contract 5.8.0: the window's end travels as `window_ends_at`, and
   // `earliest_retry_at` is a retry hint 15 minutes out, so an OK is read soon.
-  assert.equal(second.wait.window_ends_at, "2026-09-26T17:00:00Z", `the window's end, ${OPERATOR_WINDOW_HOURS} h after delivery`);
+  assert.equal(second.wait.window_ends_at, "2026-09-26T17:00:00Z", `the window's end, ${WINDOW_H} h after delivery`);
   assert.equal(second.wait.earliest_retry_at, "2026-09-26T12:15:00Z", `${OPERATOR_RETRY_HINT_MINUTES} minutes after the run, sooner than the end`);
-  const third = approvedRun({ alerts: new Map([[FP, rec]]), now: "2026-09-26T17:00:01Z" });
+  const third = approvedRun({ alerts: new Map([[FP, rec]]), now: "2026-09-26T17:00:01Z", windowHours: WINDOW_H });
   assert.equal(third.state, "published", JSON.stringify(third.wait ?? third.reasons));
   assert.equal(third.record.trigger, "approval");
   assert.equal(third.record.moderator, "mod-7");
@@ -2491,7 +2524,7 @@ test("TRUST-14/TRUST-32: the three-run sequence — alert only, then the window,
   // hands publishes `unreviewed` like every other release.
   assert.equal(third.listing.version.review, "unreviewed");
   // An undelivered alert waits: a record with no delivery is W_ALERT_UNDELIVERED.
-  const undelivered = approvedRun({ alerts: new Map([[FP, { ...rec, delivered_at: null }]]) });
+  const undelivered = approvedRun({ alerts: new Map([[FP, { ...rec, delivered_at: null }]]), windowHours: WINDOW_H });
   assert.equal(undelivered.wait.code, "W_ALERT_UNDELIVERED");
 });
 
@@ -2648,14 +2681,15 @@ test("MIG-12: after cutover a grandfathered listing's approved change of hands w
 // sees a notice call.
 const H_OLD = "1".repeat(16);
 const lineOf = (hash) => ({ outcome: "one", token: "t".repeat(24), token_hash: hash, code: null, alert: false, reason: null });
-const alertsFor = (decidedAt = approval().decided_at, deliveredAt = hoursBefore(P.now, OPERATOR_WINDOW_HOURS + 1)) =>
+const alertsFor = (decidedAt = approval().decided_at, deliveredAt = hoursBefore(P.now, WINDOW_H + 1)) =>
   new Map([[FP, { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: decidedAt, delivered_at: deliveredAt, run: "1/1" }]]);
-const boundRun = ({ identity, line, heldReasons, notice = { kind: "approved", status: "pending" }, alerts = alertsFor(), oks = new Map(), denied = new Set(), stop = "no_stop", now } = {}) => decideWith({
+const boundRun = ({ identity, line, heldReasons, notice = { kind: "approved", status: "pending" }, alerts = alertsFor(), oks = new Map(), denied = new Set(), stop = "no_stop", now, windowHours } = {}) => decideWith({
   lease: { claimed_from: "approved" },
   verified: verified({ binding: line, owner_file: { commit: "9".repeat(40), pull_request: false } }),
   ask: ask({ verdict: "pass", gates: { stop_status: stop, decisions: [approval()] }, notice }),
   git: git({ existing: existing({ identity }), records: [baseline(), heldRecord({ reasons: heldReasons })], alerts, oks, denied }),
   now,
+  operatorWindowHours: windowHours,
 });
 /** ID-41 row 5: the repository was renamed; same id, same owner, same token. */
 const renamed = () => ({ identity: { repo: "a-stranger/dice-roller-old", repository_id: P.rid, repository_owner_id: P.oid, token_hash: H_OLD }, line: lineOf(H_OLD), heldReasons: ["R_IDENTITY_CHANGED"] });
@@ -2668,11 +2702,11 @@ test("BOT-28 (5.8.0): `R_IDENTITY_CHANGED` alone (ID-41 row 5) with one line pub
     assert.equal(plan.state, "published", `${JSON.stringify(notice)}: ${plan.kind} ${plan.wait?.code ?? ""} ${plan.wait?.cause ?? ""}`);
     assert.equal(plan.record.moderator, "mod-7");
   }
-  // It still waits the operator window, and still names the alert first.
-  const first = boundRun({ ...row5, alerts: new Map() });
+  // At a reinstated window it still waits, and names the alert first (6.32.0: 0).
+  const first = boundRun({ ...row5, alerts: new Map(), windowHours: WINDOW_H });
   assert.equal(first.kind, "wait");
   assert.equal(first.alert?.event, "approval", "the alert is still named before anything publishes");
-  const running = boundRun({ ...row5, alerts: alertsFor(approval().decided_at, hoursBefore(P.now, 1)) });
+  const running = boundRun({ ...row5, alerts: alertsFor(approval().decided_at, hoursBefore(P.now, 1)), windowHours: WINDOW_H });
   assert.equal(running.wait?.code, "W_OPERATOR_WINDOW");
   // And a stop still publishes nothing.
   assert.equal(boundRun({ ...row5, stop: "stopped" }).kind, "none", "a stop publishes nothing");
@@ -2797,18 +2831,19 @@ const fbVerified = (over = {}) => {
   const tag = over.tag ?? P.tag;
   const fp = submissionFingerprint({ repo: P.repo, tag, id: P.id, version, commit: P.commit, digests: DIGESTS });
   // The owner file: the owner's own direct commit unless a case says otherwise (ID-63).
-  return verified({ binding: FB_LINE, owner_file: { commit: "9".repeat(40), pull_request: false, author_id: P.oid, verified: true }, version, tag, fingerprint: fp, ...over });
+  return verified({ binding: FB_LINE, owner_file: { commit: "9".repeat(40), pull_request: false, author_id: P.oid, committer_id: P.oid, verified: true }, version, tag, fingerprint: fp, ...over });
 };
-const fbRun = ({ actor = null, version, tag, verdict = "pass", records = [baseline()], alerts = new Map(), denied = new Set(), listingState = { state: "grandfathered" } } = {}) => decideWith({
+const fbRun = ({ actor = null, version, tag, verdict = "pass", records = [baseline()], alerts = new Map(), denied = new Set(), listingState = { state: "grandfathered" }, windowHours, firstParty, ownerFile } = {}) => decideWith({
   ...(tag ? { lease: { tag } } : {}),
-  verified: fbVerified({ actor, ...(version ? { version } : {}), ...(tag ? { tag } : {}) }),
+  verified: fbVerified({ actor, ...(version ? { version } : {}), ...(tag ? { tag } : {}), ...(ownerFile ? { owner_file: ownerFile } : {}) }),
   facts: facts(version ? { version } : {}),
   ...(version ? { listing: listing({ version: versionDoc(version, {
     release: { kind: "github_release", repo: "placeholder/placeholder", tag: tag ?? `v${version}`, commit: null },
     artifacts: { "linux-x64": { url: null, filename: `${P.id}-${version}-linux-x64.astraplugin`, sha256: P.sha, size: 100 } },
   }) }) } : {}),
   ask: ask({ verdict, gates: { stop_status: "no_stop", decisions: [] }, notice: { kind: "first", status: "pending" } }),
-  git: git({ existing: existing(), listingState, records, alerts, denied }),
+  git: git({ existing: existing(), listingState, records, alerts, denied, ...(firstParty ? { firstParty } : {}) }),
+  operatorWindowHours: windowHours,
 });
 const heldCodesOf = (plan) => plan.record?.reasons ?? [];
 
@@ -2860,24 +2895,93 @@ test("6.7.0 (MIG-10, ID-63): the owner's build over a stranger's merged owner fi
     ask: ask({ verdict: "pass", gates: { stop_status: "no_stop", decisions: [] }, notice: { kind: "first", status: "pending" } }),
     git: git({ existing: existing(), listingState: { state: "grandfathered" }, records: [baseline()] }),
   });
-  const stranger = run({ commit: "9".repeat(40), pull_request: true, author_id: "700000555", verified: true });
+  const stranger = run({ commit: "9".repeat(40), pull_request: true, author_id: "700000555", committer_id: "700000555", verified: true });
   assert.ok(heldCodesOf(stranger).includes("R_FIRST_BINDING"), "the owner's build over a stranger's merged owner file bound the listing");
   for (const [what, file] of [
-    ["a pull request the owner authored", { commit: "9".repeat(40), pull_request: true, author_id: P.oid, verified: true }],
-    ["a direct commit by another account", { commit: "9".repeat(40), pull_request: false, author_id: "700000555", verified: true }],
+    ["a pull request the owner authored", { commit: "9".repeat(40), pull_request: true, author_id: P.oid, committer_id: P.oid, verified: true }],
+    ["a direct commit by another account", { commit: "9".repeat(40), pull_request: false, author_id: "700000555", committer_id: "700000555", verified: true }],
     ["a commit GitHub links to no account", { commit: "9".repeat(40), pull_request: false, author_id: null, verified: true }],
     ["an owner file nobody read", null],
-    ["no commit", { commit: null, pull_request: false, author_id: P.oid, verified: true }],
+    ["no commit", { commit: null, pull_request: false, author_id: P.oid, committer_id: P.oid, verified: true }],
     // Re-review of #480: the owner's noreply e-mail set by a write
     // collaborator, or a forged patch applied with `git am`: linked to the
     // owner, unsigned.
-    ["an unsigned commit linked to the owner by its e-mail", { commit: "9".repeat(40), pull_request: false, author_id: P.oid, verified: false }],
-    ["a commit whose signature GitHub did not answer", { commit: "9".repeat(40), pull_request: false, author_id: P.oid }],
+    ["a commit authored as the owner and signed by another account (its committer)", { commit: "9".repeat(40), pull_request: false, author_id: P.oid, committer_id: "700000555", verified: true }],
+    ["a web-flow commit authored as the owner", { commit: "9".repeat(40), pull_request: false, author_id: P.oid, committer_id: "19864447", verified: true }],
+    ["an unsigned commit linked to the owner by its e-mail", { commit: "9".repeat(40), pull_request: false, author_id: P.oid, committer_id: P.oid, verified: false }],
+    ["a commit whose signature GitHub did not answer", { commit: "9".repeat(40), pull_request: false, author_id: P.oid, committer_id: P.oid }],
   ]) {
     assert.ok(heldCodesOf(run(file)).includes("R_FIRST_BINDING"), `${what} cleared the first binding`);
   }
-  const own = run({ commit: "9".repeat(40), pull_request: false, author_id: P.oid, verified: true });
+  const own = run({ commit: "9".repeat(40), pull_request: false, author_id: P.oid, committer_id: P.oid, verified: true });
   assert.equal(own.state, "published", `the owner's own verified direct commit did not clear: ${JSON.stringify(heldCodesOf(own))}`);
+});
+
+// Contract 6.32.0 (the owner's report §1.14; POLICY §3.2): a first binding
+// inside Astra's own accounts, by NUMERIC id, is not held. The set is
+// policy/first-party.json's; `knice` (36719) looks like KNICE and is a
+// stranger. Watched red: with `firstPartyBinding`'s owner-id test removed,
+// 36719 clears; with its actor test removed, a stranger's build clears; with
+// its `verified` or `every` test removed, an unsigned or older stranger's
+// owner-file commit clears; with the call in `firstBindingCleared` removed,
+// no first-party id clears.
+test("6.32.0 (MIG-10): a first binding whose repository owner is a first-party numeric id is not held; 36719 and a stranger in its history are", async () => {
+  const { loadFirstParty } = await import("../../tools/lib/first-party.mjs");
+  const { firstPartyBinding } = await import("../lib/service-decide.mjs");
+  const real = loadFirstParty(REPO);
+  assert.deepEqual(real.problems, []);
+  assert.deepEqual([...real.ids].sort(), ["114572819", "193032699", "280318216"], "policy/first-party.json is not the verified set");
+  // The owner file's whole history (review of #512, H1): each commit signed,
+  // linked to a first-party id and from no pull request; the newest heads it.
+  const commitOf = (id, over = {}) => ({ commit: "9".repeat(40), pull_request: false, author_id: id, committer_id: id, verified: true, ...over });
+  const ownerFileOf = (id, older = []) => ({ ...commitOf(id), history: [commitOf(id), ...older] });
+  const actorOf = (id, over = {}) => ({ actor_id: id, triggering_actor_id: id, floor_days: 0, privileged: false, basis: "not_shown", ...over });
+  const cleared = (id, over = {}) => firstBindingCleared({
+    actor: actorOf(id), verdict: "pass", lineHash: "ab".repeat(8),
+    ids: { repository_id: P.rid, repository_owner_id: id }, pluginId: P.id, ownerFile: ownerFileOf(id), firstParty: real.ids, ...over,
+  });
+  const stranger = "700000555";
+  for (const id of ["280318216", "114572819", "193032699"]) {
+    assert.deepEqual(cleared(id), { by: "first_party" }, `first-party id ${id} was held`);
+    assert.equal(cleared(id, { actor: actorOf(stranger) }), null, `${id}: a stranger's build cleared`);
+    assert.equal(cleared(id, { actor: actorOf(id, { actor_id: stranger }) }), null, `${id}: a stranger's ORIGINAL actor cleared (a first-party re-run)`);
+    assert.equal(cleared(id, { actor: actorOf(id, { triggering_actor_id: stranger }) }), null, `${id}: a stranger's re-run cleared`);
+    assert.equal(cleared(id, { actor: null }), null, `${id}: no actor read (no run_id) cleared`);
+    assert.equal(cleared(id, { actor: actorOf(id, { actor_id: null }) }), null, `${id}: an unread original actor cleared`);
+    assert.equal(cleared(id, { ownerFile: ownerFileOf(stranger) }), null, `${id}: a stranger's owner-file commit cleared`);
+    assert.equal(cleared(id, { ownerFile: { ...ownerFileOf(id), history: [{ ...commitOf(id), verified: false }] } }), null, `${id}: an unsigned owner-file commit cleared`);
+    assert.equal(cleared(id, { ownerFile: { ...ownerFileOf(id), history: [{ ...commitOf(id), pull_request: true }] } }), null, `${id}: an owner file from a pull request cleared`);
+    // A token a stranger committed before the repository moved to Astra's own account.
+    assert.equal(cleared(id, { ownerFile: ownerFileOf(id, [commitOf(stranger, { commit: "8".repeat(40) })]) }), null, `${id}: an older stranger's owner-file commit cleared`);
+    assert.equal(cleared(id, { ownerFile: ownerFileOf(id, [commitOf(id, { commit: "8".repeat(40), verified: false })]) }), null, `${id}: an older unsigned owner-file commit cleared`);
+    assert.deepEqual(cleared(id, { ownerFile: ownerFileOf(id, [commitOf(id, { commit: "8".repeat(40) })]) }), { by: "first_party" }, `${id}: an all-first-party history was held`);
+    // re-review of #512, blocker 1: GitHub verifies the COMMITTER's signature, so an author link alone proves nothing
+    assert.equal(cleared(id, { ownerFile: { ...ownerFileOf(id), history: [{ ...commitOf(id), committer_id: stranger }] } }), null, `${id}: a commit authored as first party and signed by a stranger cleared`);
+    assert.equal(cleared(id, { ownerFile: ownerFileOf(id, [commitOf(id, { commit: "8".repeat(40), committer_id: stranger })]) }), null, `${id}: an older commit signed by a stranger cleared`);
+    assert.equal(cleared(id, { ownerFile: { ...ownerFileOf(id), history: [{ ...commitOf(id), committer_id: "19864447" }] } }), null, `${id}: a web-flow commit cleared (a moderator's)`);
+    assert.equal(cleared(id, { ownerFile: { ...ownerFileOf(id), history: [{ ...commitOf(id), committer_id: null }] } }), null, `${id}: a commit with no linked committer cleared`);
+    assert.equal(cleared(id, { ownerFile: { ...commitOf(id) } }), null, `${id}: an owner file with no history read cleared`);
+    assert.equal(cleared(id, { ownerFile: { ...commitOf(id), history: [commitOf(id, { commit: "7".repeat(40) })] } }), null, `${id}: a history not headed by ID-63's newest commit cleared`);
+    assert.equal(cleared(id, { ownerFile: null }), null, `${id}: an unread owner file cleared`);
+    assert.equal(cleared(id, { verdict: "B_BINDING_UNUSABLE" }), null, `${id}: a binding the service did not pass cleared`);
+    assert.equal(cleared(id, { firstParty: null }), null, `${id}: cleared with no first-party set read`);
+  }
+  // The look-alike: login knice/KNICE is id 36719, a stranger, and a record
+  // naming it is never first party; nor is a login, or a padded number.
+  assert.equal(cleared("36719"), null, "36719 (knice) was treated as first party");
+  assert.equal(cleared("36719", { actor: actorOf("193032699"), ownerFile: ownerFileOf("193032699") }), null,
+    "a repository owned by 36719 cleared because a first-party account built it and wrote its owner file");
+  assert.equal(firstPartyBinding({ ids: { repository_owner_id: "KNICE" }, actor: actorOf("KNICE"), ownerFile: ownerFileOf("KNICE"), firstParty: real.ids }), false, "a login was matched");
+  assert.equal(firstPartyBinding({ ids: { repository_owner_id: "0193032699" }, actor: actorOf("0193032699"), ownerFile: ownerFileOf("0193032699"), firstParty: real.ids }), false, "a padded id was matched");
+
+  // End to end: the same release, held without the set and published with it.
+  const actor = actorOf(P.oid);
+  const ownerFile = ownerFileOf(P.oid);
+  assert.ok(heldCodesOf(fbRun({ actor, ownerFile })).includes("R_FIRST_BINDING"), "the fixture's first binding is not held without the set");
+  const own = fbRun({ actor, ownerFile, firstParty: new Set([P.oid]) });
+  assert.equal(own.state, "published", `a first-party first binding was held: ${JSON.stringify(heldCodesOf(own))}`);
+  assert.ok(heldCodesOf(fbRun({ actor: actorOf(stranger), ownerFile, firstParty: new Set([P.oid]) })).includes("R_FIRST_BINDING"),
+    "a stranger's build of a first-party repository was not held");
 });
 
 test("6.7.0 (MIG-10): a second tag under a binding a moderator approved is not held again; it waits the first's window, and a deny stops it", () => {
@@ -2886,7 +2990,7 @@ test("6.7.0 (MIG-10): a second tag under a binding a moderator approved is not h
   const held = heldRecord({ submission_id: P.sid2, reasons: ["R_FIRST_BINDING"], decision_id: "3".repeat(32), decided_at: hoursBefore(P.now, 30) });
   const alertFor = (over = {}) => new Map([[firstFp, {
     schema: ALERT_SCHEMA, fingerprint: firstFp, event: "approval", approval_decided_at: hoursBefore(P.now, 28),
-    delivered_at: hoursBefore(P.now, OPERATOR_WINDOW_HOURS + 1), run: "1/1", digest: FULL, held_decision_id: "3".repeat(32),
+    delivered_at: hoursBefore(P.now, WINDOW_H + 1), run: "1/1", digest: FULL, held_decision_id: "3".repeat(32),
     token_hash: FB_LINE.token_hash, ...over,
   }]]);
   const foreign = { triggering_actor_id: "700000555", floor_days: 0, privileged: false, basis: "not_shown" };
@@ -2894,8 +2998,11 @@ test("6.7.0 (MIG-10): a second tag under a binding a moderator approved is not h
 
   const passed = second({ alerts: alertFor() });
   assert.equal(passed.state, "published", `the second tag under the approved binding: ${passed.kind} ${JSON.stringify(heldCodesOf(passed))} ${passed.wait?.code ?? ""} ${passed.why ?? ""}`);
-  const running = second({ alerts: alertFor({ delivered_at: hoursBefore(P.now, 1) }) });
+  const running = second({ alerts: alertFor({ delivered_at: hoursBefore(P.now, 1) }), windowHours: WINDOW_H });
   assert.equal(running.wait?.code, "W_OPERATOR_WINDOW", "the second tag published inside the approved release's operator window");
+  // 6.32.0: with no window an alert delivered an hour ago covers the next tag at once.
+  const noWindow = second({ alerts: alertFor({ delivered_at: hoursBefore(P.now, 1) }) });
+  assert.equal(noWindow.state, "published", `at 0 h the second tag waited: ${noWindow.kind} ${noWindow.wait?.code ?? ""}`);
   const denied = second({ alerts: alertFor(), denied: new Set([firstFp]) });
   assert.ok(heldCodesOf(denied).includes("R_FIRST_BINDING"), "a denied approval still covered the binding");
   // Review of #480 (MEDIUM): an approval later rejected, refused or stopped
@@ -2969,7 +3076,7 @@ test("6.7.0: an approval of one release does not clear another that shares its 6
 test("6.7.0: the operator window and an OK bind the whole digest and the held record", () => {
   const alert = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: approval().decided_at,
     delivered_at: hoursBefore(P.now, 1), run: "1/1", digest: FULL, held_decision_id: "1".repeat(32) };
-  const args = { record: alert, fingerprint: FP, event: "approval", approvalDecidedAt: approval().decided_at, now: P.now };
+  const args = { record: alert, fingerprint: FP, event: "approval", approvalDecidedAt: approval().decided_at, now: P.now, windowHours: WINDOW_H };
   const running = operatorWindow({ ...args, digest: FULL, heldDecisionId: "1".repeat(32) });
   assert.equal(running.wait?.code, "W_OPERATOR_WINDOW", "the fixture's window is running");
   const twin = operatorWindow({ ...args, digest: TWIN, heldDecisionId: "1".repeat(32) });
@@ -3026,23 +3133,23 @@ test("6.7.0: end to end, a held record carrying this label over other facts clea
   assert.ok((twin.reasons ?? []).some((r) => r.code === "P_APPROVAL_STALE"), `no P_APPROVAL_STALE: ${JSON.stringify(twin.reasons)}`);
 });
 
-test("TRUST-32 (5.8.0): an operator OK for the alert's approval ends the operator window", () => {
-  const waiting = boundRun({ ...renamed(), alerts: runningWindow() });
+test("TRUST-32 (5.8.0) at a reinstated window: an operator OK for the alert's approval ends the operator window", () => {
+  const waiting = boundRun({ ...renamed(), windowHours: WINDOW_H, alerts: runningWindow() });
   assert.equal(waiting.wait?.code, "W_OPERATOR_WINDOW", "the fixture's window is running");
-  const okd = boundRun({ ...renamed(), alerts: runningWindow(), oks: new Map([[FP, okFor()]]) });
+  const okd = boundRun({ ...renamed(), windowHours: WINDOW_H, alerts: runningWindow(), oks: new Map([[FP, okFor()]]) });
   assert.equal(okd.state, "published", `${okd.kind} ${okd.wait?.code ?? ""}`);
   // The same through the change of hands with no line, which also waits the
   // notice: the OK ends the window, and the notice was read first.
-  const transfer = approvedRun({ alerts: runningWindow(), git: { oks: new Map([[FP, okFor()]]) } });
+  const transfer = approvedRun({ windowHours: WINDOW_H, alerts: runningWindow(), git: { oks: new Map([[FP, okFor()]]) } });
   assert.equal(transfer.state, "published", `${transfer.kind} ${transfer.wait?.code ?? ""}`);
 });
 
 test("TRUST-32 (5.8.0): an OK for another fingerprint, or for another approval of this one, ends nothing", () => {
-  const otherApproval = boundRun({ ...renamed(), alerts: runningWindow(), oks: new Map([[FP, okFor({ approval_decided_at: "2026-09-20T00:00:00Z" })]]) });
+  const otherApproval = boundRun({ ...renamed(), windowHours: WINDOW_H, alerts: runningWindow(), oks: new Map([[FP, okFor({ approval_decided_at: "2026-09-20T00:00:00Z" })]]) });
   assert.equal(otherApproval.wait?.code, "W_OPERATOR_WINDOW", "an OK given for an earlier approval ended the window of a new one");
-  const otherFp = boundRun({ ...renamed(), alerts: runningWindow(), oks: new Map([[FP, okFor({ fingerprint: "0".repeat(16) })]]) });
+  const otherFp = boundRun({ ...renamed(), windowHours: WINDOW_H, alerts: runningWindow(), oks: new Map([[FP, okFor({ fingerprint: "0".repeat(16) })]]) });
   assert.equal(otherFp.wait?.code, "W_OPERATOR_WINDOW", "an OK naming another fingerprint ended this one's window");
-  const malformed = boundRun({ ...renamed(), alerts: runningWindow(), oks: new Map([[FP, { ...okFor(), extra: 1 }]]) });
+  const malformed = boundRun({ ...renamed(), windowHours: WINDOW_H, alerts: runningWindow(), oks: new Map([[FP, { ...okFor(), extra: 1 }]]) });
   assert.equal(malformed.wait?.code, "W_OPERATOR_WINDOW", "an OK with an unnamed member ended the window");
   // On disk: a file whose name and member disagree is not read at all.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-ok-"));
@@ -3060,25 +3167,25 @@ test("TRUST-32 (5.8.0): an OK for another fingerprint, or for another approval o
 
 test("TRUST-32 (5.8.0): an OK never ends `W_ALERT_UNDELIVERED`, a deny record, a stop or a notice wait", () => {
   const oks = new Map([[FP, okFor()]]);
-  const undelivered = boundRun({ ...renamed(), alerts: new Map([[FP, { ...runningWindow().get(FP), delivered_at: null }]]), oks });
+  const undelivered = boundRun({ ...renamed(), windowHours: WINDOW_H, alerts: new Map([[FP, { ...runningWindow().get(FP), delivered_at: null }]]), oks });
   assert.equal(undelivered.wait?.code, "W_ALERT_UNDELIVERED");
-  const unnamed = boundRun({ ...renamed(), alerts: new Map(), oks });
+  const unnamed = boundRun({ ...renamed(), windowHours: WINDOW_H, alerts: new Map(), oks });
   assert.equal(unnamed.kind, "wait", "an OK before the alert was even raised published");
   assert.ok(unnamed.alert, "the alert is still named");
-  const denied = boundRun({ ...renamed(), alerts: runningWindow(), oks, denied: new Set([FP]) });
+  const denied = boundRun({ ...renamed(), windowHours: WINDOW_H, alerts: runningWindow(), oks, denied: new Set([FP]) });
   assert.deepEqual(codes(denied), ["P_OPERATOR_DENIED"], "an OK overrode a deny record");
-  assert.equal(boundRun({ ...renamed(), alerts: runningWindow(), oks, stop: "stopped" }).kind, "none", "an OK overrode a stop");
-  const notice = approvedRun({ notice: { kind: "approved", status: "pending" }, alerts: runningWindow(), git: { oks } });
+  assert.equal(boundRun({ ...renamed(), windowHours: WINDOW_H, alerts: runningWindow(), oks, stop: "stopped" }).kind, "none", "an OK overrode a stop");
+  const notice = approvedRun({ windowHours: WINDOW_H, notice: { kind: "approved", status: "pending" }, alerts: runningWindow(), git: { oks } });
   assert.equal(notice.wait?.code, "W_NOTICE_PENDING", "an OK ended a notice wait");
 });
 
 test("§4.4 (5.8.0): `window_ends_at` rides every `W_OPERATOR_WINDOW` wait and no other code, with a hint at most 15 minutes out", () => {
   const plans = {
-    window: boundRun({ ...renamed(), alerts: runningWindow() }),
-    windowNearEnd: boundRun({ ...renamed(), alerts: alertsFor(approval().decided_at, hoursBefore(P.now, OPERATOR_WINDOW_HOURS - 0.1)) }),
-    undelivered: boundRun({ ...renamed(), alerts: new Map([[FP, { ...runningWindow().get(FP), delivered_at: null }]]) }),
-    named: boundRun({ ...renamed(), alerts: new Map() }),
-    notice: approvedRun({ notice: { kind: "approved", status: "pending" } }),
+    window: boundRun({ ...renamed(), windowHours: WINDOW_H, alerts: runningWindow() }),
+    windowNearEnd: boundRun({ ...renamed(), windowHours: WINDOW_H, alerts: alertsFor(approval().decided_at, hoursBefore(P.now, WINDOW_H - 0.1)) }),
+    undelivered: boundRun({ ...renamed(), windowHours: WINDOW_H, alerts: new Map([[FP, { ...runningWindow().get(FP), delivered_at: null }]]) }),
+    named: boundRun({ ...renamed(), windowHours: WINDOW_H, alerts: new Map() }),
+    notice: approvedRun({ windowHours: WINDOW_H, notice: { kind: "approved", status: "pending" } }),
     unreachable: decideWith({ ask: ask({ gates: null }) }),
     checks: decideWith({ facts: facts({ findings: [{ code: "E_PROBE_UNAVAILABLE", level: "error" }] }) }),
   };
@@ -3090,7 +3197,7 @@ test("§4.4 (5.8.0): `window_ends_at` rides every `W_OPERATOR_WINDOW` wait and n
     assert.equal("window_ends_at" in plan.wait, isWindow, `${name}: the plan's wait`);
   }
   const end = plans.window.wait.window_ends_at;
-  assert.equal(end, hoursBefore(P.now, 1 - OPERATOR_WINDOW_HOURS), "the window's end, from the delivery");
+  assert.equal(end, hoursBefore(P.now, 1 - WINDOW_H), "the window's end, from the delivery");
   const atReport = resultBody(plans.window, { reportedAt: "2026-09-26T12:02:00Z" });
   assert.equal(atReport.wait.earliest_retry_at, "2026-09-26T12:17:00Z", "the hint counts from the report");
   assert.equal(atReport.wait.window_ends_at, end);
@@ -3185,6 +3292,7 @@ const domRun = ({ ids = DOM_STRANGER, previous = null, over = {} } = {}) => deci
   }),
   ...(over.ask ? { ask: over.ask } : {}),
   ...(over.now ? { now: over.now } : {}),
+  operatorWindowHours: over.windowHours,
 });
 
 test("R_DOM_ACCESS_HOLD: a release asking for dom_access is held on the service path — a first listing, a new version, newly or already", () => {
@@ -3216,7 +3324,16 @@ test("R_DOM_ACCESS_HOLD: the first-party SDK repository's ids are exempt on the 
 // An approval clears it exactly as it clears a change of hands, and every
 // window an approval waits on this path still applies after it: BOT-28's
 // notice and TRUST-14's operator alert and window. No `P_DELAY_*` (DEC-19).
-test("R_DOM_ACCESS_HOLD: a moderator's approval clears it on the service path, after the windows every approval waits", () => {
+test("R_DOM_ACCESS_HOLD: a moderator's approval clears it on the service path, after the windows every approval waits — its operator window stays 6 h (6.32.0)", async () => {
+  // Contract 6.32.0 (review of #512, M3): the owner's 0 is for a change of
+  // hands; an approval clearing R_DOM_ACCESS_HOLD keeps 6 h, at the module's
+  // own table and no test override. Watched red: with the approval's window
+  // not taken from the table, the run an hour after delivery publishes.
+  const { OPERATOR_WINDOW_HOURS_BY_CODE, operatorWindowFor } = await import("../lib/service-decide.mjs");
+  assert.equal(OPERATOR_WINDOW_HOURS_BY_CODE.R_DOM_ACCESS_HOLD, 6);
+  assert.equal(operatorWindowFor(["R_DOM_ACCESS_HOLD"]), 6);
+  assert.equal(operatorWindowFor(["R_IDENTITY_CHANGED", "R_DOM_ACCESS_HOLD"]), 6, "the longest window of the held codes");
+  for (const code of ["R_IDENTITY_CHANGED", "R_BINDING_CHANGED", "R_FIRST_BINDING"]) assert.equal(operatorWindowFor([code]), 0, `${code} is a change of hands`);
   const held = domRun({ previous: ["tools", "dom_access"] });
   assert.equal(held.state, "held");
   const rec = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: approval().decided_at, delivered_at: "2026-09-26T11:00:00Z", run: "1/1" };
@@ -3837,9 +3954,9 @@ test("BOT-34: with a re-hold on main, TRUST-27's wait and MIG-31's floor still c
   const after = run([baseline(), A, B]);
   assert.notEqual(after.state, "held",
     `the re-hold restarted the wait counted from the hold's record: ${JSON.stringify(after.reasons?.find((r) => r.code === "P_APPROVAL_STALE")?.message ?? codes(after))}`);
-  // Both runs honour the approval and stop at TRUST-14's alert, as a cleared
-  // change of hands does (DEC-6).
-  assert.equal(before.kind, "wait");
+  // Both runs honour the approval and name TRUST-14's alert, as a cleared
+  // change of hands does (DEC-6); since 6.32.0 (no window) beside publishing.
+  assert.equal(before.state, "published", `${before.kind} ${before.wait?.code ?? ""}`);
   assert.equal(before.alert?.event, "approval", "the fixture's approval was not honoured with the first hold alone");
   assert.equal(after.kind, before.kind);
   assert.deepEqual(after.wait?.code, before.wait?.code);
@@ -4015,7 +4132,7 @@ test("TRUST-14: the alert record lands with the delivery the channel reported, a
   const t = registryTree();
   const reports = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-reports-"));
   try {
-    const plan = approvedRun();
+    const plan = approvedRun({ windowHours: WINDOW_H });
     const delivered = composePublication({ plans: [plan], root: t.dir, listingsDir: reports, reportsDir: reports, run: "5/1", deliveredAt: "2026-09-26T12:00:05Z" });
     const doc = JSON.parse(fs.readFileSync(path.join(reports, "report-0", "state", "alerts", `${FP}.json`), "utf8"));
     assert.deepEqual(alertProblems(doc), []);
@@ -4026,6 +4143,24 @@ test("TRUST-14: the alert record lands with the delivery the channel reported, a
     const none = composePublication({ plans: [plan], root: t.dir, listingsDir: reports, reportsDir: reports, run: "6/1" });
     assert.equal(none.pending[0].body.wait.code, "W_ALERT_UNDELIVERED");
     assert.ok(!fs.existsSync(path.join(reports, "report-0", "state")), "no delivery, no record");
+    // 6.32.0 (no window): the publication carries the alert, and its record
+    // lands beside the listing when the channel reported delivery; without
+    // one the release still publishes and no alert record is written.
+    const published = approvedRun();
+    assert.equal(published.state, "published");
+    fs.rmSync(reports, { recursive: true, force: true });
+    fs.mkdirSync(reports);
+    const landed = composePublication({ plans: [published], root: t.dir, listingsDir: reports, reportsDir: reports, run: "7/1", deliveredAt: "2026-09-26T12:00:05Z" });
+    const rec = JSON.parse(fs.readFileSync(path.join(reports, "report-0", "state", "alerts", `${FP}.json`), "utf8"));
+    assert.deepEqual(alertProblems(rec), []);
+    assert.deepEqual([rec.digest, rec.held_decision_id, rec.delivered_at], [FULL, "1".repeat(32), "2026-09-26T12:00:05Z"], "the record the deny and revert buttons read");
+    assert.equal(landed.pending[0].kind, "published");
+    assert.ok(!("wait" in landed.pending[0].body), "a published result carries a wait");
+    fs.rmSync(reports, { recursive: true, force: true });
+    fs.mkdirSync(reports);
+    const unsent = composePublication({ plans: [published], root: t.dir, listingsDir: reports, reportsDir: reports, run: "8/1" });
+    assert.equal(unsent.pending[0].kind, "published", "an undelivered alert held the publication");
+    assert.ok(!fs.existsSync(path.join(reports, "report-0", "state", "alerts")), "no delivery, no alert record");
   } finally {
     t.cleanup();
     fs.rmSync(reports, { recursive: true, force: true });
@@ -4151,7 +4286,7 @@ test("docs/POLICY.md §3.2 states the numbers bot/lib/service-decide.mjs enforce
   // does not expire (bot/tests/policy.test.mjs refuses the old sentence).
   assert.ok(section.includes("**An approval does not expire.**"), "the approval maximum's withdrawal");
   assert.ok(section.includes(`**${UPDATE_WINDOW_HOURS} hours** earlier`), "the update window");
-  assert.ok(section.includes(`**${OPERATOR_WINDOW_HOURS} hours** have passed`), "the operator window");
+  assert.ok(section.includes(`the operator window is **${OPERATOR_WINDOW_HOURS} hours**`), "the operator window");
   assert.ok(section.includes(`**${FIRST_BINDING_WAIT_DAYS} days** after the record`), "TRUST-27's wait");
   // MIG-31 since contract 6.7.0: a check, not a floor. The section must say
   // so and must not state the 14 days as a rule any more.
@@ -4795,7 +4930,7 @@ test("§4.7: a deny beside the owner's approve withholds; R_BINDING_CHANGED stil
   assert.equal(changed.wait.code, "W_NOTICE_PENDING");
 });
 
-test("§4.7: a key revoked after its act was applied is not honoured; a moderator's approval then waits out its window", () => {
+test("§4.7: a key revoked after its act was applied is not honoured; a moderator's approval then raises the operator alert", () => {
   const t = fs.mkdtempSync(path.join(os.tmpdir(), "owner-approval-"));
   try {
     const key = OwnerAuth.makeKey("ES256", { kid: "owner-phone" });
@@ -4812,8 +4947,10 @@ test("§4.7: a key revoked after its act was applied is not honoured; a moderato
     assert.deepEqual(after, [], "an approve signed by a revoked key is still honoured");
     assert.equal(ownerRun({ acts: after }).state, "held");
     const fallback = ownerRun({ acts: after, decisions: [approval()] });
-    assert.equal(fallback.kind, "wait", "with the owner's approval gone, a moderator's approval published with no window");
+    // 6.32.0: no window, so it publishes, and the operator alert still goes.
+    assert.equal(fallback.state, "published", `${fallback.kind} ${fallback.wait?.code ?? ""}`);
     assert.ok(fallback.alert, "the moderator's approval raised no operator alert");
+    assert.equal(ownerRun({ acts: live }).alert, null, "the owner's own approval raised an alert");
 
     // Revoked by status in the pin, and an act record that does not verify.
     assert.deepEqual(readGitState(t, { pin: OwnerAuth.pinOf([{ ...key.pinKey, status: "revoked" }]), markersOverride: {} }).ownerApprovals, []);
@@ -4829,7 +4966,7 @@ test("MIG-10 (review finding 9): the owner's approve of the alert's held record 
   const lineHash = "ab".repeat(8);
   const alert = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: "2026-09-26T08:00:00Z", delivered_at: "2026-09-26T09:00:00Z", run: "1/1", token_hash: lineHash, held_decision_id: OWNER_HELD, digest: FULL };
   const held = heldRecord({ reasons: ["R_FIRST_BINDING"] });
-  const args = { verdict: "pass", lineHash, records: [held], alerts: new Map([[FP, alert]]), denied: new Set(), ids: { repository_id: P.rid, repository_owner_id: P.oid }, pluginId: P.id, fingerprint: "f".repeat(16) };
+  const args = { verdict: "pass", lineHash, records: [held], alerts: new Map([[FP, alert]]), denied: new Set(), ids: { repository_id: P.rid, repository_owner_id: P.oid }, pluginId: P.id, fingerprint: "f".repeat(16), windowHours: WINDOW_H };
   const before = firstBindingCleared(args);
   assert.equal(before.by, "approved");
   assert.notEqual(before.windowEndsAt, alert.delivered_at);
@@ -4837,6 +4974,14 @@ test("MIG-10 (review finding 9): the owner's approve of the alert's held record 
   assert.equal(after.windowEndsAt, alert.delivered_at, "the owner's approve did not end the MIG-10 window");
   const other = firstBindingCleared({ ...args, ownerApprovals: [ownerAct({ digest: `${FP}${"0".repeat(48)}` })] });
   assert.notEqual(other.windowEndsAt, alert.delivered_at, "an approve of another digest ended the window");
+});
+
+test("TRUST-32 (re-review of #512, nit 3): a binding approved together with R_DOM_ACCESS_HOLD keeps its 6 h for later tags, though the window is 0", () => {
+  const lineHash = "ab".repeat(8);
+  const alert = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: "2026-09-26T08:00:00Z", delivered_at: "2026-09-26T09:00:00Z", run: "1/1", token_hash: lineHash, held_decision_id: OWNER_HELD };
+  const args = (reasons) => ({ verdict: "pass", lineHash, records: [heldRecord({ reasons })], alerts: new Map([[FP, alert]]), denied: new Set(), ids: { repository_id: P.rid, repository_owner_id: P.oid }, pluginId: P.id, fingerprint: "f".repeat(16), windowHours: 0 });
+  assert.equal(firstBindingCleared(args(["R_FIRST_BINDING"])).windowEndsAt, alert.delivered_at, "a plain first binding kept a window at 0");
+  assert.equal(firstBindingCleared(args(["R_FIRST_BINDING", "R_DOM_ACCESS_HOLD"])).windowEndsAt, "2026-09-26T15:00:00Z", "R_DOM_ACCESS_HOLD's 6 h was dropped for a later tag");
 });
 
 test("MIG-10 (review finding 2): the owner's approve of a first binding covers a later tag, which waits for it to land instead of being held again", () => {

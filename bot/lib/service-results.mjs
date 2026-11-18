@@ -86,10 +86,13 @@ export function resultBody(plan, landed = {}) {
     if (plan.alert) {
       // TRUST-14's first read of an event: the composer knows whether the
       // channel reported delivery, and TRUST-32 names the two waits.
+      // Since contract 6.32.0 the window is 0 and a named alert rides a
+      // publication, not a wait; this is reached only at a non-zero window.
+      const hours = Number.isFinite(wait.window_hours) ? wait.window_hours : OPERATOR_WINDOW_HOURS;
       if (isTime(landed.deliveredAt)) {
         wait.code = "W_OPERATOR_WINDOW";
-        wait.cause = `TRUST-32: the operator alert was delivered at ${landed.deliveredAt}; the ${OPERATOR_WINDOW_HOURS}-hour objection window runs from there, unless an operator answers it with an OK`;
-        wait.window_ends_at = iso(new Date(new Date(landed.deliveredAt).getTime() + OPERATOR_WINDOW_HOURS * HOUR_MS));
+        wait.cause = `TRUST-32: the operator alert was delivered at ${landed.deliveredAt}; the ${hours}-hour objection window runs from there, unless an operator answers it with an OK`;
+        wait.window_ends_at = iso(new Date(new Date(landed.deliveredAt).getTime() + hours * HOUR_MS));
       } else {
         wait.code = "W_ALERT_UNDELIVERED";
         wait.cause = "TRUST-32: the channel reported no delivery of the operator alert, so nothing publishes";

@@ -82,6 +82,7 @@ import { isTime } from "../../tools/lib/time.mjs";
 import { decisionId, submissionKey } from "./decisions.mjs";
 import { ID_PATTERN } from "../../tools/lib/ids.mjs";
 import { SEMVER_PATTERN } from "../../tools/lib/semver.mjs";
+import { isFirstPartyId, loadFirstParty } from "../../tools/lib/first-party.mjs";
 
 const ID_RE = new RegExp(ID_PATTERN);
 const SEMVER_RE = new RegExp(SEMVER_PATTERN);
@@ -116,8 +117,37 @@ const DIGEST_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*:[0-9a-f]{64}$/;
  * this run, or no binding line at all — waits it (`noticeExempt`).
  */
 export const UPDATE_WINDOW_HOURS = 6;
-/** TRUST-32 / DEC-6: the operator objection window, counted from reported delivery. */
-export const OPERATOR_WINDOW_HOURS = 6;
+/**
+ * TRUST-32 / DEC-6: the operator objection window, counted from reported
+ * delivery.
+ *
+ * **0 since contract 6.32.0** (the owner's over-security cleanup of
+ * 2026-11-18, report row "После одобрения смены владельца плагина релиз ждёт
+ * 6 ч"). An approved change of hands publishes in the run that reads the
+ * approval, and TRUST-14's alert still goes out in that same run, carrying the
+ * fingerprint, digest, held record and binding a deny (TRUST-33) or a revert
+ * (MOD-52) names — the plugins service's buttons, not this bot's. The channel
+ * not reporting delivery (`W_ALERT_UNDELIVERED`) no longer holds the release;
+ * an undelivered alert is the alert job's own red. `W_OPERATOR_WINDOW` stays
+ * in the vocabulary and is unused at 0; the machinery below is kept, and
+ * tested at a non-zero `windowHours`, so the number is the only thing a
+ * reinstated window would change.
+ */
+export const OPERATOR_WINDOW_HOURS = 0;
+/**
+ * TRUST-32 per held code, since contract 6.32.0 (review of #512, M3). The
+ * owner decided the 0 for an approved CHANGE OF HANDS only; an approval that
+ * clears `R_DOM_ACCESS_HOLD` keeps the 6-hour window, because `dom_access` is
+ * the risky class and nobody decided to shorten its window. A release waits
+ * the longest window any of its held codes names; a code not here waits
+ * `OPERATOR_WINDOW_HOURS`.
+ */
+export const OPERATOR_WINDOW_HOURS_BY_CODE = Object.freeze({ R_DOM_ACCESS_HOLD: 6 });
+
+/** The operator window for a release held under these codes (TRUST-32). */
+export function operatorWindowFor(codes = []) {
+  return Math.max(OPERATOR_WINDOW_HOURS, ...[...new Set(codes)].map((c) => OPERATOR_WINDOW_HOURS_BY_CODE[c] ?? OPERATOR_WINDOW_HOURS));
+}
 /**
  * TRUST-32 since contract 5.8.0: while the operator window runs, the wait's
  * `earliest_retry_at` is a retry hint at most this far after the report, and
@@ -317,7 +347,11 @@ export function readGitState(root, { markersOverride = null, pin = null } = {}) 
   // The owner's approve acts (operator-acts design §4.7), each verified under
   // the pin from THIS checkout and honoured only while its key is active.
   const ownerApprovals = ownerApprovalsAt(root, { pin: pin ?? loadPin() });
-  return { root, records: records.map((r) => r.doc).filter(Boolean), alerts, denied, oks, markers, ownerApprovals };
+  // Contract 6.32.0: Astra's own GitHub ids (policy/first-party.json), for
+  // MIG-10's first-party exemption. A file that does not load is no first
+  // party at all, so every first binding is held as before.
+  const firstParty = loadFirstParty(root).ids;
+  return { root, records: records.map((r) => r.doc).filter(Boolean), alerts, denied, oks, markers, ownerApprovals, firstParty };
 }
 
 function readJsonDir(dir) {
@@ -529,7 +563,46 @@ function ownFile(ownerFile, ids) {
     && typeof ownerFile.commit === "string" && /^[0-9a-f]{40}$/.test(ownerFile.commit)
     && ownerFile.pull_request === false
     && isStr(ownerFile.author_id) && ownerFile.author_id === ids?.repository_owner_id
+    // GitHub verifies the COMMITTER's signature, never the author's (re-review
+    // of #512, blocker 1): the signer must be the owner too. A web-UI commit
+    // (committer web-flow) is a moderator's.
+    && isStr(ownerFile.committer_id) && ownerFile.committer_id === ids?.repository_owner_id
     && ownerFile.verified === true;
+}
+
+/**
+ * Contract 6.32.0 (the owner's report §1.14; POLICY §3.2): a first binding
+ * inside Astra's own accounts needs no moderator. The repository owner's
+ * NUMERIC GitHub id is in policy/first-party.json, and nobody outside that set
+ * is in the binding's history: the run's original actor is read and first
+ * party (and its triggering actor, when read, too), and every commit of the
+ * owner file (`owner_file.history`, which verify reads only for a first-party
+ * owner) carries a signature GitHub verified, from a first-party COMMITTER (the
+ * signer; the author link alone is an e-mail mapping), is linked to a first-party id and is
+ * tied to no pull request (ID-63: a stranger's merged pull request can carry
+ * a token the stranger minted). Never by login: `knice`
+ * (36719) is a stranger's account. Anything unread, or any third party, holds
+ * as before.
+ */
+export function firstPartyBinding({ ids, actor = null, ownerFile = null, firstParty = null }) {
+  const set = firstParty instanceof Set ? firstParty : null;
+  if (!set || !isFirstPartyId(ids?.repository_owner_id, set)) return false;
+  // The run's ORIGINAL actor, read and first party (review of #512, H1): a
+  // run with no actor read (no `run_id`) is not first party, and the
+  // triggering actor of a re-run is not who started it.
+  if (!isFirstPartyId(actor?.actor_id, set)) return false;
+  if (actor?.triggering_actor_id != null && !isFirstPartyId(actor.triggering_actor_id, set)) return false;
+  // EVERY commit of the owner file, not only the newest: a token a stranger
+  // committed before a transfer keeps the hold. Each is signed and verified
+  // (the author link is GitHub's mapping of the commit e-mail, which a write
+  // collaborator can set), linked to a first-party id, and from no pull
+  // request. The newest is ID-63's own read and must head that history.
+  const history = Array.isArray(ownerFile?.history) ? ownerFile.history : null;
+  if (!history || !history.length || history[0]?.commit !== ownerFile?.commit) return false;
+  return history.every((c) => typeof c?.commit === "string" && /^[0-9a-f]{40}$/.test(c.commit)
+    && c.verified === true && c.pull_request === false && isFirstPartyId(c.author_id, set)
+    // the signer, not only the linked author (re-review of #512, blocker 1)
+    && isFirstPartyId(c.committer_id, set));
 }
 
 /** The accounts whose own first binding needs no moderator (contract 6.7.0, MIG-10): what `compareActor` calls them. */
@@ -561,8 +634,9 @@ export const FIRST_BINDING_SELF_BASES = Object.freeze(["owner", "admin", "mainta
  *
  * @returns {{by: string, alert?: object, windowEndsAt?: string}|null}
  */
-export function firstBindingCleared({ actor, verdict, lineHash, records = [], alerts = null, denied = null, ids, pluginId, oks = null, fingerprint = null, ownerFile = null, ownerApprovals = [] }) {
+export function firstBindingCleared({ actor, verdict, lineHash, records = [], alerts = null, denied = null, ids, pluginId, oks = null, fingerprint = null, ownerFile = null, ownerApprovals = [], windowHours = OPERATOR_WINDOW_HOURS, firstParty = null }) {
   if (!lineHash || verdict !== "pass") return null;
+  if (firstPartyBinding({ ids, actor, ownerFile, firstParty })) return { by: "first_party" };
   // The self path needs the owner FILE to be the owner's too (ID-63): a
   // stranger's merged pull request can carry a token the stranger minted —
   // anyone can mint one for any repository id (ID-10, ID-13), so the service
@@ -601,7 +675,10 @@ export function firstBindingCleared({ actor, verdict, lineHash, records = [], al
     // digest ends this window as an OK record does.
     const okd = (oks?.get(fp) && okAnswers({ ok: oks.get(fp), record: alert, fingerprint: fp, digest: alert.digest, heldDecisionId: alert.held_decision_id }))
       || (ownerApprovals ?? []).some((a) => a?.target?.held_decision_id === alert.held_decision_id && a?.target?.digest === alert.digest && a?.target?.fingerprint === fp);
-    const windowEndsAt = okd ? alert.delivered_at : iso(new Date(new Date(alert.delivered_at).getTime() + OPERATOR_WINDOW_HOURS * HOUR_MS));
+    // A binding approved together with R_DOM_ACCESS_HOLD keeps that code's
+    // window for its later tags too (re-review of #512, nit 3).
+    const heldWindow = Math.max(windowHours, operatorWindowFor(held.reasons ?? []));
+    const windowEndsAt = okd ? alert.delivered_at : iso(new Date(new Date(alert.delivered_at).getTime() + heldWindow * HOUR_MS));
     return { by: "approved", alert, fingerprint: fp, windowEndsAt };
   }
   // The owner's own approve act of a first binding of this listing (review of
@@ -893,7 +970,11 @@ export function noticeElapsed({ notice, windowSeconds, bindingChanged, now }) {
  */
 export function operatorWindow({
   record, fingerprint, event, approvalDecidedAt, now, ok = null, hintFrom = now, digest = null, heldDecisionId = null, tokenHash = null,
+  windowHours = OPERATOR_WINDOW_HOURS,
 }) {
+  // Contract 6.32.0: with no window (0 hours) nothing here waits. The alert is
+  // still named on its first read, and the release publishes beside it.
+  const waits = windowHours > 0;
   // Contract 6.7.0: an alert record from 6.7.0 on binds the whole digest, and
   // one that names another digest under the same 16-hex label is an alert
   // about other bytes — this release's alert has not gone out. A record from
@@ -906,7 +987,7 @@ export function operatorWindow({
     // First read of this event: TRUST-14 names it, and this run cannot publish
     // it — the window is counted from a delivery that has not happened yet.
     return {
-      ok: false,
+      ok: !waits,
       name: {
         fingerprint, event, approval_decided_at: event === "approval" ? approvalDecidedAt : null,
         digest, held_decision_id: heldDecisionId,
@@ -917,6 +998,7 @@ export function operatorWindow({
     };
   }
   if (!isTime(record.delivered_at)) {
+    if (!waits) return { ok: true, name: null, wait: null };
     return {
       ok: false,
       name: null,
@@ -928,14 +1010,14 @@ export function operatorWindow({
   // ends `W_ALERT_UNDELIVERED`, and the deny record, the stop and every other
   // wait are decided elsewhere and before.
   if (okAnswers({ ok, record, fingerprint, digest, heldDecisionId })) return { ok: true, name: null, wait: null, okd: true };
-  const due = new Date(record.delivered_at).getTime() + OPERATOR_WINDOW_HOURS * HOUR_MS;
+  const due = new Date(record.delivered_at).getTime() + windowHours * HOUR_MS;
   if (due > new Date(now).getTime()) {
     return {
       ok: false,
       name: null,
       wait: {
         code: "W_OPERATOR_WINDOW",
-        cause: `TRUST-32: the alert was delivered at ${record.delivered_at}; the ${OPERATOR_WINDOW_HOURS}-hour operator objection window is still running, unless an operator answers it with an OK`,
+        cause: `TRUST-32: the alert was delivered at ${record.delivered_at}; the ${windowHours}-hour operator objection window is still running, unless an operator answers it with an OK`,
         earliest: operatorRetryHint({ windowEndsAt: iso(new Date(due)), from: hintFrom }),
         window_ends_at: iso(new Date(due)),
       },
@@ -1045,6 +1127,10 @@ export function decideSubmission(input) {
   const startedAt = input.startedAt ?? now;
   const sid = lease.submission_id;
   const shadowed = input.shadow === true || input.ask?.shadow === true || input.ask?.verdict === "shadow";
+  // TRUST-32's window: a test of the window machinery passes one; otherwise
+  // it is the change-of-hands 0 here, and the approval's own held codes pick
+  // the window below (`operatorWindowFor`; R_DOM_ACCESS_HOLD keeps 6 h).
+  const windowHours = input.operatorWindowHours ?? OPERATOR_WINDOW_HOURS;
 
   const plan = (kind, fields) => finishPlan({
     submission_id: sid,
@@ -1338,7 +1424,8 @@ export function decideSubmission(input) {
     if (binding.outcome === "one") {
       firstCleared = firstBindingCleared({
         actor: verified.actor, verdict, lineHash, records, alerts: git.alerts, denied: git.denied, oks: git.oks, ownerApprovals: git.ownerApprovals ?? [],
-        ids: identity, pluginId: verified.plugin_id, fingerprint: verified.fingerprint, ownerFile: verified.owner_file,
+        ids: identity, pluginId: verified.plugin_id, fingerprint: verified.fingerprint, ownerFile: verified.owner_file, windowHours,
+        firstParty: git.firstParty ?? null,
       });
       if (!firstCleared) heldCodes.push("R_FIRST_BINDING");
     }
@@ -1628,6 +1715,7 @@ export function decideSubmission(input) {
     });
   }
 
+  let publishAlert = null;
   if (approved) {
     // MIG-12 — evaluated before the notice read, and ignoring it.
     if (git.markers?.cutover === true && listingState?.state === "grandfathered" && binding.outcome === "none") {
@@ -1660,6 +1748,9 @@ export function decideSubmission(input) {
     // which an operator OK ends sooner (contract 5.8.0). The owner's own
     // approval is the operator's answer already: no alert, no window (§4.7).
     const event = "approval";
+    // Contract 6.32.0 (review of #512, M3): the window per held code — 0 for a
+    // change of hands, 6 h for an approval that clears R_DOM_ACCESS_HOLD.
+    const approvalWindow = input.operatorWindowHours ?? operatorWindowFor([...heldReasons, ...heldCodes]);
     const w = ownerApproved ? { ok: true, name: null, wait: null } : operatorWindow({
       record: git.alerts?.get(verified.fingerprint) ?? null,
       fingerprint: verified.fingerprint,
@@ -1671,12 +1762,15 @@ export function decideSubmission(input) {
       digest,
       heldDecisionId: honoured.held_decision_id ?? null,
       tokenHash: lineHash,
+      windowHours: approvalWindow,
     });
-    if (w.name) {
+    if (w.name && !w.ok) {
       return plan("wait", {
         // The composer decides between the two waits: `W_OPERATOR_WINDOW` from
         // the delivery the alert job reports, `W_ALERT_UNDELIVERED` without one.
-        wait: { code: "W_ALERT_UNDELIVERED", started_at: startedAt, cause: "TRUST-14: the operator alert goes out in this run", earliest_retry_at: nextRun() },
+        // `window_hours`: the composer counts the window with the number this
+        // plan was decided by, and never sends it (`resultBody` picks members).
+        wait: { code: "W_ALERT_UNDELIVERED", started_at: startedAt, cause: "TRUST-14: the operator alert goes out in this run", earliest_retry_at: nextRun(), window_hours: approvalWindow },
         alert: w.name,
         reasons,
         derived: derivedFacts,
@@ -1687,6 +1781,10 @@ export function decideSubmission(input) {
         earliest: w.wait.earliest, windowEndsAt: w.wait.window_ends_at ?? null, reasons, derived: derivedFacts,
       });
     }
+    // Contract 6.32.0 (no window): the alert this run names goes out beside
+    // the publication, and `publish` writes its record when the channel
+    // reports delivery.
+    if (w.name) publishAlert = w.name;
   }
 
   // ID-40 and ID-64: a bound publication writes the identity record, and the
@@ -1715,6 +1813,9 @@ export function decideSubmission(input) {
     derived: derivedFacts,
     listing: derived,
     identity_records: identityRecords,
+    // Contract 6.32.0: TRUST-14's alert for an approved change of hands, named
+    // in the run that publishes it (no operator window).
+    ...(publishAlert ? { alert: publishAlert } : {}),
     record: {
       ...baseRecord,
       decided_at: startedAt,

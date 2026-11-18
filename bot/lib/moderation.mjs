@@ -253,7 +253,29 @@ export const APPEAL_RESPONSE_DAYS = 7;
 // number and the document must also say that a takedown above it waits for an
 // operator. So reg.61a could not land half of itself, and nothing can take
 // half of it back.
-export const TAKEDOWN_BOUND = 3;
+//
+// **10 since contract 6.32.0** (the owner's over-security cleanup of
+// 2026-11-18, report row "Снятие плагинов"), POLICY.md §7 with it. Three a
+// day held a real cleanup day behind the window; ten still caps a compromised
+// panel's day, and `TAKEDOWN_ALERT_AT` below pages the owner, with the ids a
+// revert names, from the fourth withdrawal of a day on.
+//
+// Not done here, and why: the report also excludes an ADMIN's SAFETY takedown
+// from the count. A service decision carries `category` and a `moderator`
+// handle and nothing that says the deciding account is an admin (BOT-80's
+// allowlist, `schema/moderation-work-v2.json`), and an unsigned role the
+// service asserts is exactly what a compromised panel would assert. The
+// exclusion waits for the plugins service to send that fact in a form this
+// bot can verify (an owner-signed operator act, as `confirm` is).
+export const TAKEDOWN_BOUND = 10;
+
+/**
+ * Contract 6.32.0: above this many listed plugin ids withdrawn in the trailing
+ * 24 hours, a moderation run that withdrew one more pages the owner, naming
+ * the ids it withdrew, which are what a MOD-52 revert names. Below the bound
+ * it holds nothing; it is the alarm that replaced the old bound of 3.
+ */
+export const TAKEDOWN_ALERT_AT = 3;
 
 // ── the owner's approved-update window, which POLICY.md §8 publishes ───────
 //

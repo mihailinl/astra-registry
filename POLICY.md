@@ -265,17 +265,19 @@ is true for everything except `warn`, `stops_installed()` only for `disable`.
 
 ### The takedown bound
 
-**At most three listed plugins are taken away in any trailing 24 hours before
-the next takedown waits.** Past that, a takedown decided through the plugins
+**At most 10 listed plugins are taken away in any trailing 24 hours before
+the next takedown waits** (3 until contract 6.32.0). Past that, a takedown decided through the plugins
 service — a moderator's yank, delist or revocation, `block_install` and
 `disable` included, and an author's own yank or removal request — is held, and
 goes by itself in the first moderation run after the trailing 24 hours make
 room for it, oldest first. An operator can release it at once, as a
 break-glass act; nothing waits for one. It caps what a compromised moderation
 panel, or a compromised service behind it, could withdraw in one day; the price
-is that on a day more than three plugins have to go, the fourth waits for the
-window. A withdrawal the operator makes by hand is already a person's act, and
-counts like any other.
+is that on a day more than ten plugins have to go, the eleventh waits for the
+window. From the fourth withdrawal of a day on, the operator is alerted at
+once, with the plugins each moderation run took away, so a wrong takedown can
+be reverted. A withdrawal the operator makes by hand is already a person's act,
+and counts like any other.
 
 What counts toward the takedown bound is read from this repository's git history,
 whatever route a withdrawal took: every listed plugin delisted or yanked, and
@@ -288,8 +290,8 @@ order to test withdrawals, which is excluded by its reserved id.
 Author actions count toward the takedown bound on purpose. A yank or a removal
 request takes a plugin away exactly as a moderator's takedown does, and a bound
 that ignored them would let a compromised service withdraw through them without
-limit. The plugins service lets each account spend at most one of the three in
-a day, so filling the bound with author actions alone takes three different
+limit. The plugins service caps how many of them each account may spend in a
+day, so filling the bound with author actions alone takes several different
 accounts — and your own yank or removal request waits behind the bound only on a
 day it is already full.
 

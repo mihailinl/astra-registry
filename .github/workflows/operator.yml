@@ -140,7 +140,9 @@ jobs:
         run: |
           set -euo pipefail
           node tools/validate.mjs --allow-staging
-          node tools/selftest.mjs
+          # No tools/selftest.mjs since contract 6.32.0 (review of #512, M5):
+          # a red case in the registry's own test suite must never block a
+          # deny or a revert. It gates pull requests (`registry-selftest`).
           node bot/moderation.mjs --check
 
       - name: Commit once, and push
