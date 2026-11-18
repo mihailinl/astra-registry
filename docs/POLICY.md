@@ -470,8 +470,11 @@ with a check. Since contract 3.0.0 an approval there clears only a change of han
   nobody: it waits for no notice, only for a stop and the checks (since
   contract 5.8.0). An approval clears a hold and nothing
   else.
-- **Every approval is shown to an operator, and waits for nothing after
-  that** (since contract 6.32.0, the operator window is **0 hours**). The
+- **Every approval is shown to an operator, and an approved change of hands
+  waits for nothing after that** (since contract 6.32.0, for a change of
+  hands the operator window is **0 hours**; an approval that clears
+  `R_DOM_ACCESS_HOLD` still waits **6 hours** after the alert is reported
+  delivered, or until an operator OK, as below until 6.31). The
   alert goes out in the run that publishes the approved release, and names
   the release's fingerprint, whole digest, held record and binding, which is
   what a deny or a revert of it names. Before publication a deny record

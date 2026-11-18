@@ -3317,7 +3317,16 @@ test("R_DOM_ACCESS_HOLD: the first-party SDK repository's ids are exempt on the 
 // An approval clears it exactly as it clears a change of hands, and every
 // window an approval waits on this path still applies after it: BOT-28's
 // notice and TRUST-14's operator alert and window. No `P_DELAY_*` (DEC-19).
-test("R_DOM_ACCESS_HOLD: a moderator's approval clears it on the service path, after the windows every approval waits", () => {
+test("R_DOM_ACCESS_HOLD: a moderator's approval clears it on the service path, after the windows every approval waits — its operator window stays 6 h (6.32.0)", async () => {
+  // Contract 6.32.0 (review of #512, M3): the owner's 0 is for a change of
+  // hands; an approval clearing R_DOM_ACCESS_HOLD keeps 6 h, at the module's
+  // own table and no test override. Watched red: with the approval's window
+  // not taken from the table, the run an hour after delivery publishes.
+  const { OPERATOR_WINDOW_HOURS_BY_CODE, operatorWindowFor } = await import("../lib/service-decide.mjs");
+  assert.equal(OPERATOR_WINDOW_HOURS_BY_CODE.R_DOM_ACCESS_HOLD, 6);
+  assert.equal(operatorWindowFor(["R_DOM_ACCESS_HOLD"]), 6);
+  assert.equal(operatorWindowFor(["R_IDENTITY_CHANGED", "R_DOM_ACCESS_HOLD"]), 6, "the longest window of the held codes");
+  for (const code of ["R_IDENTITY_CHANGED", "R_BINDING_CHANGED", "R_FIRST_BINDING"]) assert.equal(operatorWindowFor([code]), 0, `${code} is a change of hands`);
   const held = domRun({ previous: ["tools", "dom_access"] });
   assert.equal(held.state, "held");
   const rec = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: approval().decided_at, delivered_at: "2026-09-26T11:00:00Z", run: "1/1" };
@@ -3328,7 +3337,6 @@ test("R_DOM_ACCESS_HOLD: a moderator's approval clears it on the service path, a
       ask: ask({ gates: { stop_status: "no_stop", decisions: [approval()] }, notice }),
       git: { records: [baseline(DOM_STRANGER), heldRecord({ ...DOM_STRANGER, reasons: ["R_DOM_ACCESS_HOLD"] })], alerts },
       now,
-      windowHours: WINDOW_H,
     },
   });
   assert.equal(approvedRunOf({ notice: null }).wait?.code, "W_NOTICE_PENDING", "an approved dom_access release skipped BOT-28's notice");

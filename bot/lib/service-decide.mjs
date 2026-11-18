@@ -135,6 +135,20 @@ export const UPDATE_WINDOW_HOURS = 6;
  */
 export const OPERATOR_WINDOW_HOURS = 0;
 /**
+ * TRUST-32 per held code, since contract 6.32.0 (review of #512, M3). The
+ * owner decided the 0 for an approved CHANGE OF HANDS only; an approval that
+ * clears `R_DOM_ACCESS_HOLD` keeps the 6-hour window, because `dom_access` is
+ * the risky class and nobody decided to shorten its window. A release waits
+ * the longest window any of its held codes names; a code not here waits
+ * `OPERATOR_WINDOW_HOURS`.
+ */
+export const OPERATOR_WINDOW_HOURS_BY_CODE = Object.freeze({ R_DOM_ACCESS_HOLD: 6 });
+
+/** The operator window for a release held under these codes (TRUST-32). */
+export function operatorWindowFor(codes = []) {
+  return Math.max(OPERATOR_WINDOW_HOURS, ...[...new Set(codes)].map((c) => OPERATOR_WINDOW_HOURS_BY_CODE[c] ?? OPERATOR_WINDOW_HOURS));
+}
+/**
  * TRUST-32 since contract 5.8.0: while the operator window runs, the wait's
  * `earliest_retry_at` is a retry hint at most this far after the report, and
  * never later than the window's end, which travels as `window_ends_at`. BOT-60
@@ -1103,8 +1117,9 @@ export function decideSubmission(input) {
   const startedAt = input.startedAt ?? now;
   const sid = lease.submission_id;
   const shadowed = input.shadow === true || input.ask?.shadow === true || input.ask?.verdict === "shadow";
-  // TRUST-32's window, from the one constant; a test of the window machinery
-  // passes a non-zero one, since contract 6.32.0 sets it to 0.
+  // TRUST-32's window: a test of the window machinery passes one; otherwise
+  // it is the change-of-hands 0 here, and the approval's own held codes pick
+  // the window below (`operatorWindowFor`; R_DOM_ACCESS_HOLD keeps 6 h).
   const windowHours = input.operatorWindowHours ?? OPERATOR_WINDOW_HOURS;
 
   const plan = (kind, fields) => finishPlan({
@@ -1723,6 +1738,9 @@ export function decideSubmission(input) {
     // which an operator OK ends sooner (contract 5.8.0). The owner's own
     // approval is the operator's answer already: no alert, no window (§4.7).
     const event = "approval";
+    // Contract 6.32.0 (review of #512, M3): the window per held code — 0 for a
+    // change of hands, 6 h for an approval that clears R_DOM_ACCESS_HOLD.
+    const approvalWindow = input.operatorWindowHours ?? operatorWindowFor([...heldReasons, ...heldCodes]);
     const w = ownerApproved ? { ok: true, name: null, wait: null } : operatorWindow({
       record: git.alerts?.get(verified.fingerprint) ?? null,
       fingerprint: verified.fingerprint,
@@ -1734,7 +1752,7 @@ export function decideSubmission(input) {
       digest,
       heldDecisionId: honoured.held_decision_id ?? null,
       tokenHash: lineHash,
-      windowHours,
+      windowHours: approvalWindow,
     });
     if (w.name && !w.ok) {
       return plan("wait", {
@@ -1742,7 +1760,7 @@ export function decideSubmission(input) {
         // the delivery the alert job reports, `W_ALERT_UNDELIVERED` without one.
         // `window_hours`: the composer counts the window with the number this
         // plan was decided by, and never sends it (`resultBody` picks members).
-        wait: { code: "W_ALERT_UNDELIVERED", started_at: startedAt, cause: "TRUST-14: the operator alert goes out in this run", earliest_retry_at: nextRun(), window_hours: windowHours },
+        wait: { code: "W_ALERT_UNDELIVERED", started_at: startedAt, cause: "TRUST-14: the operator alert goes out in this run", earliest_retry_at: nextRun(), window_hours: approvalWindow },
         alert: w.name,
         reasons,
         derived: derivedFacts,
