@@ -3,7 +3,7 @@
   "signatures": [
     {
       "key_id": "astra-root-2026a",
-      "sig": "fGXTj3KTQQsMhEPTsCxi8h1hwHAEYo61xB0SxDzMFlbQGEvuPM2PF5TzXZzNXkLUvDTuRCk/5+fVLjhLWUNRBA=="
+      "sig": "YDgu9aodp4n3kZU7pBA8m3mWsMzE9jwiX8vzNF0esWxk7izjd3bOVUS882h/iQyic26cMYI5YwAKPmgAOqZVDA=="
     }
   ],
   "signed": {
@@ -16,7 +16,7 @@
         "public_key": "qrNK87ZsLPQQK9IUJYk+Q3nFUjBCDVTxD/DgPipcvK8="
       }
     ],
-    "issued_at": "2026-11-05T14:03:56Z",
+    "issued_at": "2026-11-18T13:31:48Z",
     "kind_keys": [
       {
         "alg": "ed25519",
@@ -119,10 +119,11 @@
       "e3329df252a46d747676cb540ae4b986af68a3ad",
       "c3f342469d186ef48458992930bf1b7c583c78d4",
       "9864f03bafb52a7de5215ff92376eeefa7331431",
-      "b6e9140d53060585c70280e979b58202f34966ba"
+      "b6e9140d53060585c70280e979b58202f34966ba",
+      "468a9731577f28055cec8009411dce75bf52908c"
     ],
     "schema": "astra.registry.trust/1",
-    "serial": 5
+    "serial": 6
   }
 }
 
