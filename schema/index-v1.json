@@ -318,6 +318,14 @@
           },
           "uniqueItems": true
         },
+        "low_tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true,
+          "description": "The tools the release declares Low in `[tools.danger]`, copied byte for byte from the version record wherever it carries them, and absent wherever it does not. OPTIONAL, and a member of `astra.registry.index/1` itself, like `review`: shipped clients carry it inside the signature and ignore it. A `reviewed` release carrying it was reviewed with exactly these tools named."
+        },
         "permissions": {
           "type": "object",
           "additionalProperties": true

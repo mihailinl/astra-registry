@@ -3325,6 +3325,43 @@ await test("B1 — the service path's check lists and decides the union of every
   assert(d.reasons.some((x) => x.code === "R_DOM_ACCESS_HOLD"), "not held by R_DOM_ACCESS_HOLD");
 });
 
+// ── the tools `[tools.danger]` declares Low reach the version record ──────────
+//
+// Astra #377 runs a Low tool of a `reviewed` release without asking, so the
+// record keeps the list a review has to name (compileReview). It is the union
+// over the release's bundles, like `capabilities`, and absent when empty, so a
+// release declaring none derives exactly the record it did before the member.
+//
+// Watched failing: with derive.mjs's `low_tools` line removed, both paths'
+// records lose the member; with `releaseAuthority` reading the first bundle's
+// list only, the reversed asset order loses `wipe`.
+const LOW_ON = (os, tools) => conformingAsset({ os, tomlTail: ["[tools.danger]", ...tools.map((t) => `${t} = "low"`), 'nuke = "high"', ""] });
+
+await test("low tools: the issue path writes the union of the bundles' Low tools, sorted, and omits the member when there are none", async () => {
+  for (const assets of [[LOW_ON("linux", ["roll"]), LOW_ON("windows", ["wipe", "roll"])], [LOW_ON("windows", ["wipe", "roll"]), LOW_ON("linux", ["roll"])]]) {
+    const r = await run({ assets, root: registryWith({}) });
+    assertEqual(errorCodes(r).length, 0, JSON.stringify(errorCodes(r)));
+    assertEqual(JSON.stringify(r.derived.version.low_tools), JSON.stringify(["roll", "wipe"]), "the record's Low tools");
+  }
+  const none = await run({ assets: [conformingAsset({ os: "linux" })], root: registryWith({}) });
+  assertEqual(errorCodes(none).length, 0, JSON.stringify(errorCodes(none)));
+  assert(!Object.hasOwn(none.derived.version, "low_tools"), "a release declaring no Low tool carries no member");
+  const highOnly = await run({ assets: [conformingAsset({ os: "linux", tomlTail: ["[tools.danger]", 'nuke = "high"', ""] })], root: registryWith({}) });
+  assert(!Object.hasOwn(highOnly.derived.version, "low_tools"), "a declaration that is not Low is not recorded");
+});
+
+await test("low tools: the service path's check writes them into the listing handed to the publish job", async () => {
+  const { v, assetsDir } = await verifyRun({ assets: [LOW_ON("linux", ["wipe", "roll"])] });
+  assertEqual(v.outcome, "ok", JSON.stringify(v.findings));
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-check-"));
+  scratch.push(out);
+  const { facts, derived } = await checkFacts({ submissionId: SVC_SID, assetsDir: path.join(assetsDir, SVC_SID), verified: v, out, root: REPO_ROOT });
+  assertEqual(facts.findings.filter((f) => f.level === "error").length, 0, JSON.stringify(facts.findings));
+  assertEqual(JSON.stringify(derived.version.low_tools), JSON.stringify(["roll", "wipe"]));
+  const written = JSON.parse(fs.readFileSync(path.join(out, "listing", "plugins", "dice-roller", "versions", "0.2.0.json"), "utf8"));
+  assertEqual(JSON.stringify(written.low_tools), JSON.stringify(["roll", "wipe"]), "the listing handed to the publish job");
+});
+
 await test("check: a reserved id is refused on the service path too", async () => {
   const asset = conformingAsset({ id: "moderation" });
   const { v, assetsDir } = await verifyRun({ assets: [asset] });

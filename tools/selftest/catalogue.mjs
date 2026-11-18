@@ -449,6 +449,57 @@ export async function run() {
       "schema/index-v1.json accepts a review mark outside the two this registry writes, so it does not declare the member");
   });
 
+  // ── the tools a release declares Low (`[tools.danger]`, Astra #377) ─────────
+  //
+  // Astra runs a Low tool of a `reviewed` release without asking, so clients
+  // and the panel are shown the list the review covered. The copy is the
+  // review mark's: byte for byte where the record carries it, absent where it
+  // does not, so no record without it moves a byte of `signed.plugins`. The
+  // validator holds the record's one written form (sorted, no blank name).
+  //
+  // Watched: deleting the `low_tools` spread in `releaseRecord` turns the first
+  // assertion red; deleting `low_tools` from schema/index-v1.json's release
+  // turns the schema one red (additionalProperties); deleting the sortedness
+  // check in tools/validate.mjs turns the last one red.
+  await test("the generator copies each version record's low_tools into releases[], absent stays absent, and the validator holds them sorted", async () => {
+    const dir = path.join(tmp, "low-tools-copy");
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.cpSync(path.join(REPO_ROOT, "tests/fixtures/id-collision/plugins/dice-roller"),
+      path.join(dir, "plugins", "dice-roller"), { recursive: true });
+    const versions = path.join(dir, "plugins", "dice-roller", "versions");
+    const base = JSON.parse(fs.readFileSync(path.join(versions, "1.0.0.json"), "utf8"));
+    const at = (v, lowTools) => {
+      const doc = JSON.parse(JSON.stringify(base).replaceAll("1.0.0", v));
+      if (lowTools !== undefined) doc.low_tools = lowTools;
+      fs.writeFileSync(path.join(versions, `${v}.json`), stableStringify(doc));
+    };
+    at("1.1.0", ["roll", "wipe"]);
+
+    const doc = buildIndex({ root: dir, serial: 1 });
+    const entry = doc.signed.plugins.find((p) => p.id === "dice-roller");
+    assert(entry, "the fixture listing is not in its own catalogue");
+    const lows = Object.fromEntries(entry.releases.map((r) => [r.version, Object.hasOwn(r, "low_tools") ? r.low_tools : "<absent>"]));
+    assertEqual(JSON.stringify(lows), JSON.stringify({ "1.1.0": ["roll", "wipe"], "1.0.0": "<absent>" }),
+      "the catalogue's releases do not carry each version record's low_tools as the record has it");
+    const schema = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "schema/index-v1.json"), "utf8"));
+    const errs = validateSchema(schema, doc);
+    assert(errs.length === 0, `schema/index-v1.json refuses a catalogue whose releases carry low_tools:\n` +
+      errs.map((e) => `${e.path} ${e.message}`).join("\n"));
+
+    const clean = await validateTree(dir);
+    assertEqual(errorsMatching(clean.report, "low_tools").length, 0,
+      `a sorted low_tools is refused: ${JSON.stringify(errorsMatching(clean.report, "low_tools"))}`);
+    at("1.1.0", ["wipe", "roll"]);
+    assert(errorsMatching((await validateTree(dir)).report, "low_tools is not sorted").length === 1,
+      "an unsorted low_tools is accepted");
+    at("1.1.0", ["roll", "  "]);
+    assert(errorsMatching((await validateTree(dir)).report, "empty after trimming").length === 1,
+      "a low_tools name that is blank after trimming is accepted");
+    at("1.1.0", ["roll", "roll"]);
+    assert(errorsMatching((await validateTree(dir)).report, "low_tools").length > 0,
+      "a low_tools that repeats a name is accepted (schema/version-v1.json uniqueItems)");
+  });
+
   // Client session, relayed by the coordinator on 2026-09-26 (C1): the mark is
   // a member INSIDE `astra.registry.index/1`, and the catalogue's schema value
   // does not move. That value is the only catalogue schema a shipped 0.2.x

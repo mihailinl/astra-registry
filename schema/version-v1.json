@@ -74,6 +74,14 @@
         ]
       }
     },
+    "low_tools": {
+      "type": "array",
+      "uniqueItems": true,
+      "minItems": 1,
+      "maxItems": 64,
+      "items": { "type": "string", "minLength": 1, "maxLength": 128 },
+      "description": "The tools this release's plugin.toml declares Low in `[tools.danger]` (`<tool> = \"low\"`), read by bot/manifest-probe with Astra's own rule (`ToolDangerDeclarations::read`, Astra #377), the union over the release's bundles, sorted. Astra runs a Low tool WITHOUT asking only when the release's review mark is `reviewed`, so a review covers this list: bot/lib/compile-decision.mjs `compileReview` moves a version carrying it to `reviewed` only when the service's M_REVIEW decision names exactly this set (`low_tools`), and leaves it `unreviewed` otherwise. Written only when non-empty; absent means the release declares no Low tool (or predates this member). Sorted and unique is held by tools/validate.mjs. tools/build-index.mjs copies it into the catalogue's `releases[].low_tools` byte for byte."
+    },
     "permissions": {
       "type": "object",
       "description": "The plugin's `[permissions]` section, derived from MANIFEST.json and copied through to the index unchanged. Phase 4 made this load-bearing: the daemon's granted set for a registry install is read out of the trust record written from these bytes, and §4.3's consent sheet is rendered from them before any download. The permission ids are the app's vocabulary, not this schema's — the registry ships ids and Astra ships the words, so an id this schema has never heard of is carried rather than rejected.",

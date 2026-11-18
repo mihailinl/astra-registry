@@ -376,6 +376,15 @@ export function deriveListing(input) {
   if (Number.isInteger(manifest.protocol)) version.protocol = manifest.protocol;
   if (facts.min_astra_version) version.min_astra_version = facts.min_astra_version;
   if (facts.capabilities.length) version.capabilities = [...facts.capabilities].sort();
+  // The tools `[tools.danger]` declares Low. Astra (#377) runs such a tool
+  // without asking once the release's review mark is `reviewed`, so the record
+  // keeps the list the review has to name (`compileReview` holds a version
+  // declaring Low tools at `unreviewed` until a decision names exactly these).
+  // Written only when non-empty: absent and empty are the same answer here,
+  // and an absent member keeps every existing record byte-identical.
+  if (Array.isArray(facts.low_tools) && facts.low_tools.length) {
+    version.low_tools = [...new Set(facts.low_tools.map(String))].sort();
+  }
   // `permissions` is written ALWAYS, and `{}` is a value rather than a reason
   // to omit the key. The line above may test a length; this one may not.
   //

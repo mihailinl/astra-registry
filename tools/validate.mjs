@@ -500,6 +500,21 @@ function checkVersionDoc(plugin, version, ctx) {
   for (const e of validateSchema(schemas.version, doc)) {
     report.error(where, `${e.path} ${e.message}`);
   }
+  // `low_tools` is a set the review is compared against (compileReview), and
+  // the record is its one written form: sorted, so two records of one set are
+  // one text, and no name that is blank after trimming, which Astra's own
+  // reader (`ToolDangerDeclarations::read`) never declares Low.
+  if (Array.isArray(doc.low_tools)) {
+    const names = doc.low_tools.map(String);
+    if ([...names].sort().join("\u0000") !== names.join("\u0000")) {
+      report.error(where, "low_tools is not sorted", "bot/lib/derive.mjs writes it sorted; a hand edit did not.");
+    }
+    const blank = names.filter((n) => n.trim() === "");
+    if (blank.length) {
+      report.error(where, "low_tools names a tool that is empty after trimming",
+        "Astra never declares such a name Low, so a review naming it would cover nothing.");
+    }
+  }
   // The permission words, which are the version record's display strings: the
   // consent sheet shows them before the user has agreed to anything.
   for (const [field, value] of displayStrings(doc)) {
