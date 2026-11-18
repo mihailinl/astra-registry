@@ -164,7 +164,14 @@ jobs:
   # where the signing key lives, and a job that runs on a pull request must not
   # be able to reach it. Splitting it out is what makes that structural rather
   # than a matter of remembering the `if:` on one step (registry plan RC-R0-1).
+  #
+  # Its check-run name is `registry-selftest`, unique in this repository
+  # (bot-checks.yml also has a job `check`), because it is the one status a
+  # ruleset on `main` requires: since contract 6.32.0 `bot/publish-apply.mjs`
+  # no longer runs `tools/selftest.mjs` on the publish path, so this job, on
+  # every pull request to `main`, is where the selftest gates a change.
   check:
+    name: registry-selftest
     runs-on: ubuntu-24.04
     # Measured p95 x3, minimum 10 (2026-11-10, last 200 runs: p95 4.3 min). Without it a hung
     # step held a runner for GitHub's default six hours.

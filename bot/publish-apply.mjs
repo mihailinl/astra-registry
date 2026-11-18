@@ -829,7 +829,13 @@ function registryChecks(root, log) {
     ["tools/build-index.mjs"],
     ["tools/build-index.mjs", "--check"],
     ["tools/validate.mjs", "--allow-staging"],
-    ["tools/selftest.mjs"],
+    // No `tools/selftest.mjs` since contract 6.32.0 (the owner's over-security
+    // cleanup of 2026-11-18, report row "Selftest блокирует весь пакет
+    // публикации"): a red case in the registry's own test suite held every
+    // author's release in the batch. It gates changes instead, as the required
+    // `registry-selftest` check on every pull request to `main`; the checks it
+    // ran over live data are `tools/validate.mjs`'s
+    // (`catalogueListingProblems`), which runs twice above.
   ];
   for (const step of steps) {
     log(`    ${step.join(" ")}`);
