@@ -462,7 +462,8 @@ export async function run() {
   // Watched: deleting the `low_tools` spread in `releaseRecord` turns the first
   // assertion red; deleting `low_tools` from schema/index-v1.json's release
   // turns the schema one red (additionalProperties); deleting the sortedness
-  // check in tools/validate.mjs turns the last one red.
+  // check in tools/validate.mjs turns the unsorted one red; putting
+  // `maxItems: 64` back on schema/version-v1.json turns the no-caps one red.
   await test("the generator copies each version record's low_tools into releases[], `[]` included, absent stays absent, and the validator holds them sorted", async () => {
     const dir = path.join(tmp, "low-tools-copy");
     fs.rmSync(dir, { recursive: true, force: true });
@@ -492,6 +493,11 @@ export async function run() {
     const clean = await validateTree(dir);
     assertEqual(errorsMatching(clean.report, "low_tools").length, 0,
       `a sorted low_tools is refused: ${JSON.stringify(errorsMatching(clean.report, "low_tools"))}`);
+    // No caps on the record: it is what the manifest declares, and the cap
+    // lives on the decision (an over-cap review leaves the version unreviewed).
+    at("1.1.0", Array.from({ length: 65 }, (_, i) => `t${String(i).padStart(2, "0")}`).concat(["z".repeat(200)]));
+    assertEqual(errorsMatching((await validateTree(dir)).report, "low_tools").length, 0,
+      "a long low_tools, or a long tool name, is refused on the record");
     at("1.1.0", ["wipe", "roll"]);
     assert(errorsMatching((await validateTree(dir)).report, "low_tools is not sorted").length === 1,
       "an unsorted low_tools is accepted");
