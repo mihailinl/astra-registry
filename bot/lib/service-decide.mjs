@@ -563,6 +563,10 @@ function ownFile(ownerFile, ids) {
     && typeof ownerFile.commit === "string" && /^[0-9a-f]{40}$/.test(ownerFile.commit)
     && ownerFile.pull_request === false
     && isStr(ownerFile.author_id) && ownerFile.author_id === ids?.repository_owner_id
+    // GitHub verifies the COMMITTER's signature, never the author's (re-review
+    // of #512, blocker 1): the signer must be the owner too. A web-UI commit
+    // (committer web-flow) is a moderator's.
+    && isStr(ownerFile.committer_id) && ownerFile.committer_id === ids?.repository_owner_id
     && ownerFile.verified === true;
 }
 
@@ -573,7 +577,8 @@ function ownFile(ownerFile, ids) {
  * is in the binding's history: the run's original actor is read and first
  * party (and its triggering actor, when read, too), and every commit of the
  * owner file (`owner_file.history`, which verify reads only for a first-party
- * owner) carries a verified signature, is linked to a first-party id and is
+ * owner) carries a signature GitHub verified, from a first-party COMMITTER (the
+ * signer; the author link alone is an e-mail mapping), is linked to a first-party id and is
  * tied to no pull request (ID-63: a stranger's merged pull request can carry
  * a token the stranger minted). Never by login: `knice`
  * (36719) is a stranger's account. Anything unread, or any third party, holds
@@ -595,7 +600,9 @@ export function firstPartyBinding({ ids, actor = null, ownerFile = null, firstPa
   const history = Array.isArray(ownerFile?.history) ? ownerFile.history : null;
   if (!history || !history.length || history[0]?.commit !== ownerFile?.commit) return false;
   return history.every((c) => typeof c?.commit === "string" && /^[0-9a-f]{40}$/.test(c.commit)
-    && c.verified === true && c.pull_request === false && isFirstPartyId(c.author_id, set));
+    && c.verified === true && c.pull_request === false && isFirstPartyId(c.author_id, set)
+    // the signer, not only the linked author (re-review of #512, blocker 1)
+    && isFirstPartyId(c.committer_id, set));
 }
 
 /** The accounts whose own first binding needs no moderator (contract 6.7.0, MIG-10): what `compareActor` calls them. */
@@ -668,7 +675,10 @@ export function firstBindingCleared({ actor, verdict, lineHash, records = [], al
     // digest ends this window as an OK record does.
     const okd = (oks?.get(fp) && okAnswers({ ok: oks.get(fp), record: alert, fingerprint: fp, digest: alert.digest, heldDecisionId: alert.held_decision_id }))
       || (ownerApprovals ?? []).some((a) => a?.target?.held_decision_id === alert.held_decision_id && a?.target?.digest === alert.digest && a?.target?.fingerprint === fp);
-    const windowEndsAt = okd ? alert.delivered_at : iso(new Date(new Date(alert.delivered_at).getTime() + windowHours * HOUR_MS));
+    // A binding approved together with R_DOM_ACCESS_HOLD keeps that code's
+    // window for its later tags too (re-review of #512, nit 3).
+    const heldWindow = Math.max(windowHours, operatorWindowFor(held.reasons ?? []));
+    const windowEndsAt = okd ? alert.delivered_at : iso(new Date(new Date(alert.delivered_at).getTime() + heldWindow * HOUR_MS));
     return { by: "approved", alert, fingerprint: fp, windowEndsAt };
   }
   // The owner's own approve act of a first binding of this listing (review of

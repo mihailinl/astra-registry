@@ -2831,7 +2831,7 @@ const fbVerified = (over = {}) => {
   const tag = over.tag ?? P.tag;
   const fp = submissionFingerprint({ repo: P.repo, tag, id: P.id, version, commit: P.commit, digests: DIGESTS });
   // The owner file: the owner's own direct commit unless a case says otherwise (ID-63).
-  return verified({ binding: FB_LINE, owner_file: { commit: "9".repeat(40), pull_request: false, author_id: P.oid, verified: true }, version, tag, fingerprint: fp, ...over });
+  return verified({ binding: FB_LINE, owner_file: { commit: "9".repeat(40), pull_request: false, author_id: P.oid, committer_id: P.oid, verified: true }, version, tag, fingerprint: fp, ...over });
 };
 const fbRun = ({ actor = null, version, tag, verdict = "pass", records = [baseline()], alerts = new Map(), denied = new Set(), listingState = { state: "grandfathered" }, windowHours, firstParty, ownerFile } = {}) => decideWith({
   ...(tag ? { lease: { tag } } : {}),
@@ -2895,23 +2895,25 @@ test("6.7.0 (MIG-10, ID-63): the owner's build over a stranger's merged owner fi
     ask: ask({ verdict: "pass", gates: { stop_status: "no_stop", decisions: [] }, notice: { kind: "first", status: "pending" } }),
     git: git({ existing: existing(), listingState: { state: "grandfathered" }, records: [baseline()] }),
   });
-  const stranger = run({ commit: "9".repeat(40), pull_request: true, author_id: "700000555", verified: true });
+  const stranger = run({ commit: "9".repeat(40), pull_request: true, author_id: "700000555", committer_id: "700000555", verified: true });
   assert.ok(heldCodesOf(stranger).includes("R_FIRST_BINDING"), "the owner's build over a stranger's merged owner file bound the listing");
   for (const [what, file] of [
-    ["a pull request the owner authored", { commit: "9".repeat(40), pull_request: true, author_id: P.oid, verified: true }],
-    ["a direct commit by another account", { commit: "9".repeat(40), pull_request: false, author_id: "700000555", verified: true }],
+    ["a pull request the owner authored", { commit: "9".repeat(40), pull_request: true, author_id: P.oid, committer_id: P.oid, verified: true }],
+    ["a direct commit by another account", { commit: "9".repeat(40), pull_request: false, author_id: "700000555", committer_id: "700000555", verified: true }],
     ["a commit GitHub links to no account", { commit: "9".repeat(40), pull_request: false, author_id: null, verified: true }],
     ["an owner file nobody read", null],
-    ["no commit", { commit: null, pull_request: false, author_id: P.oid, verified: true }],
+    ["no commit", { commit: null, pull_request: false, author_id: P.oid, committer_id: P.oid, verified: true }],
     // Re-review of #480: the owner's noreply e-mail set by a write
     // collaborator, or a forged patch applied with `git am`: linked to the
     // owner, unsigned.
-    ["an unsigned commit linked to the owner by its e-mail", { commit: "9".repeat(40), pull_request: false, author_id: P.oid, verified: false }],
-    ["a commit whose signature GitHub did not answer", { commit: "9".repeat(40), pull_request: false, author_id: P.oid }],
+    ["a commit authored as the owner and signed by another account (its committer)", { commit: "9".repeat(40), pull_request: false, author_id: P.oid, committer_id: "700000555", verified: true }],
+    ["a web-flow commit authored as the owner", { commit: "9".repeat(40), pull_request: false, author_id: P.oid, committer_id: "19864447", verified: true }],
+    ["an unsigned commit linked to the owner by its e-mail", { commit: "9".repeat(40), pull_request: false, author_id: P.oid, committer_id: P.oid, verified: false }],
+    ["a commit whose signature GitHub did not answer", { commit: "9".repeat(40), pull_request: false, author_id: P.oid, committer_id: P.oid }],
   ]) {
     assert.ok(heldCodesOf(run(file)).includes("R_FIRST_BINDING"), `${what} cleared the first binding`);
   }
-  const own = run({ commit: "9".repeat(40), pull_request: false, author_id: P.oid, verified: true });
+  const own = run({ commit: "9".repeat(40), pull_request: false, author_id: P.oid, committer_id: P.oid, verified: true });
   assert.equal(own.state, "published", `the owner's own verified direct commit did not clear: ${JSON.stringify(heldCodesOf(own))}`);
 });
 
@@ -2931,7 +2933,7 @@ test("6.32.0 (MIG-10): a first binding whose repository owner is a first-party n
   assert.deepEqual([...real.ids].sort(), ["114572819", "193032699", "280318216"], "policy/first-party.json is not the verified set");
   // The owner file's whole history (review of #512, H1): each commit signed,
   // linked to a first-party id and from no pull request; the newest heads it.
-  const commitOf = (id, over = {}) => ({ commit: "9".repeat(40), pull_request: false, author_id: id, verified: true, ...over });
+  const commitOf = (id, over = {}) => ({ commit: "9".repeat(40), pull_request: false, author_id: id, committer_id: id, verified: true, ...over });
   const ownerFileOf = (id, older = []) => ({ ...commitOf(id), history: [commitOf(id), ...older] });
   const actorOf = (id, over = {}) => ({ actor_id: id, triggering_actor_id: id, floor_days: 0, privileged: false, basis: "not_shown", ...over });
   const cleared = (id, over = {}) => firstBindingCleared({
@@ -2953,6 +2955,11 @@ test("6.32.0 (MIG-10): a first binding whose repository owner is a first-party n
     assert.equal(cleared(id, { ownerFile: ownerFileOf(id, [commitOf(stranger, { commit: "8".repeat(40) })]) }), null, `${id}: an older stranger's owner-file commit cleared`);
     assert.equal(cleared(id, { ownerFile: ownerFileOf(id, [commitOf(id, { commit: "8".repeat(40), verified: false })]) }), null, `${id}: an older unsigned owner-file commit cleared`);
     assert.deepEqual(cleared(id, { ownerFile: ownerFileOf(id, [commitOf(id, { commit: "8".repeat(40) })]) }), { by: "first_party" }, `${id}: an all-first-party history was held`);
+    // re-review of #512, blocker 1: GitHub verifies the COMMITTER's signature, so an author link alone proves nothing
+    assert.equal(cleared(id, { ownerFile: { ...ownerFileOf(id), history: [{ ...commitOf(id), committer_id: stranger }] } }), null, `${id}: a commit authored as first party and signed by a stranger cleared`);
+    assert.equal(cleared(id, { ownerFile: ownerFileOf(id, [commitOf(id, { commit: "8".repeat(40), committer_id: stranger })]) }), null, `${id}: an older commit signed by a stranger cleared`);
+    assert.equal(cleared(id, { ownerFile: { ...ownerFileOf(id), history: [{ ...commitOf(id), committer_id: "19864447" }] } }), null, `${id}: a web-flow commit cleared (a moderator's)`);
+    assert.equal(cleared(id, { ownerFile: { ...ownerFileOf(id), history: [{ ...commitOf(id), committer_id: null }] } }), null, `${id}: a commit with no linked committer cleared`);
     assert.equal(cleared(id, { ownerFile: { ...commitOf(id) } }), null, `${id}: an owner file with no history read cleared`);
     assert.equal(cleared(id, { ownerFile: { ...commitOf(id), history: [commitOf(id, { commit: "7".repeat(40) })] } }), null, `${id}: a history not headed by ID-63's newest commit cleared`);
     assert.equal(cleared(id, { ownerFile: null }), null, `${id}: an unread owner file cleared`);
@@ -4967,6 +4974,14 @@ test("MIG-10 (review finding 9): the owner's approve of the alert's held record 
   assert.equal(after.windowEndsAt, alert.delivered_at, "the owner's approve did not end the MIG-10 window");
   const other = firstBindingCleared({ ...args, ownerApprovals: [ownerAct({ digest: `${FP}${"0".repeat(48)}` })] });
   assert.notEqual(other.windowEndsAt, alert.delivered_at, "an approve of another digest ended the window");
+});
+
+test("TRUST-32 (re-review of #512, nit 3): a binding approved together with R_DOM_ACCESS_HOLD keeps its 6 h for later tags, though the window is 0", () => {
+  const lineHash = "ab".repeat(8);
+  const alert = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: "2026-09-26T08:00:00Z", delivered_at: "2026-09-26T09:00:00Z", run: "1/1", token_hash: lineHash, held_decision_id: OWNER_HELD };
+  const args = (reasons) => ({ verdict: "pass", lineHash, records: [heldRecord({ reasons })], alerts: new Map([[FP, alert]]), denied: new Set(), ids: { repository_id: P.rid, repository_owner_id: P.oid }, pluginId: P.id, fingerprint: "f".repeat(16), windowHours: 0 });
+  assert.equal(firstBindingCleared(args(["R_FIRST_BINDING"])).windowEndsAt, alert.delivered_at, "a plain first binding kept a window at 0");
+  assert.equal(firstBindingCleared(args(["R_FIRST_BINDING", "R_DOM_ACCESS_HOLD"])).windowEndsAt, "2026-09-26T15:00:00Z", "R_DOM_ACCESS_HOLD's 6 h was dropped for a later tag");
 });
 
 test("MIG-10 (review finding 2): the owner's approve of a first binding covers a later tag, which waits for it to land instead of being held again", () => {

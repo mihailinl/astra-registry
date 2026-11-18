@@ -1119,7 +1119,7 @@ await test("ID-63's two reads: the owner-file commit, and whether a pull request
   const listUrl = `${API}/repositories/1203676452/commits` +
     `?sha=${"a".repeat(40)}&path=.well-known%2Fastra-plugin-owner&per_page=1`;
   const withPull = stubFetch({
-    [listUrl]: { status: 200, body: JSON.stringify([{ sha: "b".repeat(40) }]) },
+    [listUrl]: { status: 200, body: JSON.stringify([{ sha: "b".repeat(40), author: { id: 193032699 }, committer: { id: 19864447 } }]) },
     [`${API}/repositories/1203676452/commits/${"b".repeat(40)}/pulls`]: {
       status: 200, body: JSON.stringify([{ number: 17 }]),
     },
@@ -1127,6 +1127,8 @@ await test("ID-63's two reads: the owner-file commit, and whether a pull request
   const last = await gh.lastCommitTouching(1203676452, "a".repeat(40), ".well-known/astra-plugin-owner", { fetchImpl: withPull });
   assertEqual(last.status, "found", last.reason);
   assertEqual(last.commit, "b".repeat(40), "the newest commit touching the file up to the attested one");
+  // re-review of #512, blocker 1: the signer is read beside the linked author, as a separate id
+  assertEqual(`${last.author_id}/${last.committer_id}`, "193032699/19864447", "the linked author and the committer (the signer)");
   const pulls = await gh.pullsForCommit(1203676452, "b".repeat(40), { fetchImpl: withPull });
   assertEqual(pulls.status, "found", pulls.reason);
   assertEqual(pulls.pulls.join(","), "17", "GitHub ties it to #17");
@@ -3047,7 +3049,7 @@ async function verifyRun({
     workflowRun: async () => ({ status: "found", reason: "HTTP 200", triggering_actor_id: actorId, actor_id: actorId, triggering_actor_login: "a-pusher" }),
     firstParty,
     commitsTouching: commitsTouching ?? (async () => ({ status: "found", reason: "HTTP 200", truncated: false,
-      commits: [{ commit: "9".repeat(40), author_id: FIXTURE_OWNER_ID, verified: true }, { commit: "8".repeat(40), author_id: "700000555", verified: false }] })),
+      commits: [{ commit: "9".repeat(40), author_id: FIXTURE_OWNER_ID, committer_id: FIXTURE_OWNER_ID, verified: true }, { commit: "8".repeat(40), author_id: "700000555", committer_id: "700000556", verified: false }] })),
     collaboratorPermission: async () => permission,
     publicOrgMember: async (...args) => { asked?.push(args); return membership; },
   });
@@ -3168,9 +3170,9 @@ await test("verify: a first-party owner's owner-file history and original actor 
   const token = "Abcdefghijklmnopqrstuv0123";
   const own = await verifyRun({ assets: [conformingAsset()], ownerFile: `astra-binding: ${token}\n`, firstParty: new Set([FIXTURE_OWNER_ID]) });
   assertEqual(JSON.stringify(own.v.owner_file.history), JSON.stringify([
-    { commit: "9".repeat(40), author_id: FIXTURE_OWNER_ID, verified: true, pull_request: true },
-    { commit: "8".repeat(40), author_id: "700000555", verified: false, pull_request: true },
-  ]), "the owner file's history, every commit");
+    { commit: "9".repeat(40), author_id: FIXTURE_OWNER_ID, committer_id: FIXTURE_OWNER_ID, verified: true, pull_request: true },
+    { commit: "8".repeat(40), author_id: "700000555", committer_id: "700000556", verified: false, pull_request: true },
+  ]), "the owner file's history, every commit, with its signer (re-review of #512, blocker 1)");
   assertEqual(own.v.actor.actor_id, FIXTURE_OWNER_ID, "the run's original actor");
   let asked = 0;
   const other = await verifyRun({ assets: [conformingAsset()], ownerFile: `astra-binding: ${token}\n`,

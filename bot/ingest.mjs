@@ -1093,7 +1093,7 @@ async function ownerFileHistory(repositoryId, attested, deps = {}) {
     if (!c.commit) return null;
     const pulls = await (deps.pullsForCommit ?? gh.pullsForCommit)(repositoryId, c.commit);
     if (pulls?.status !== "found") return null;
-    out.push({ commit: c.commit, author_id: c.author_id ?? null, verified: c.verified === true, pull_request: pulls.pulls.length > 0 });
+    out.push({ commit: c.commit, author_id: c.author_id ?? null, committer_id: c.committer_id ?? null, verified: c.verified === true, pull_request: pulls.pulls.length > 0 });
   }
   return out;
 }
@@ -1312,7 +1312,7 @@ export async function verifyFacts(opts, deps = {}) {
       if (pulls.status !== "found") return out("wait", { code: "W_GITHUB_RATE_LIMITED", reason: `ID-63: ${pulls.reason}` });
       pr = pulls.pulls.length > 0;
     }
-    ownerFile = { commit: last.commit, pull_request: pr, author_id: last.author_id ?? null, verified: last.verified === true };
+    ownerFile = { commit: last.commit, pull_request: pr, author_id: last.author_id ?? null, committer_id: last.committer_id ?? null, verified: last.verified === true };
     // Contract 6.32.0 (MIG-10 (c)): for a first-party owner, every commit of
     // the owner file, each with its pull-request answer, so one stranger
     // anywhere in that history keeps the hold. Read only where it can matter;
