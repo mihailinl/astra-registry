@@ -871,6 +871,43 @@ test("A9: a record naming OTHER ids does not excuse the change", () => {
   assert.deepEqual(codes(detect({ root: dir })), ["A9_IDENTITY_CHANGED_NO_DECISION"]);
 });
 
+test("A9: ID-64 — a publication's sibling listing, rebound to the same ids in the same commit, is that decision's", () => {
+  const identity = (id, over = {}) => ({
+    schema: "astra.registry.identity/1", plugin_id: id, repository_id: "111",
+    repository_owner_id: "222", repo: "example/alpha", token_hash: "c".repeat(64), ...over,
+  });
+  // cb52dbafcfb4's shape: alpha is published, and beta — named for the same repository by MIG-20's baseline
+  // record, or by an identity record of its own — is rebound beside it.
+  const migration = {
+    decided_at: "2026-01-01T00:00:00Z", actor: "bot", trigger: "migration", plugin_id: "beta", version: "1.0.0",
+    repo: "example/alpha", tag: "v1.0.0", state: "published", repository_id: "111", repository_owner_id: "222",
+  };
+  const baselineBeta = (dir) => { record(dir, migration); commit(dir, "registry: beta's baseline record", "2026-01-02T00:00:00Z"); };
+  for (const [what, before, beta, alarms] of [
+    ["a sibling by its baseline record", baselineBeta, identity("beta"), false],
+    ["a sibling by its identity record", (dir) => {
+      write(dir, "plugins/beta/identity.json", identity("beta", { token_hash: "d".repeat(64) }));
+      commit(dir, "registry: beta bound before", "2026-01-02T00:00:00Z");
+    }, identity("beta"), false], // only the rebinding commit is judged here; the earlier hand-written one alarms on its own
+    ["no sibling: beta named no repository", () => {}, identity("beta"), true],
+    ["a sibling rebound to OTHER ids", baselineBeta, identity("beta", { repository_owner_id: "999" }), true],
+  ]) {
+    const dir = estate();
+    baseline(dir);
+    before(dir);
+    write(dir, "plugins/alpha/identity.json", identity("alpha"));
+    write(dir, "plugins/beta/identity.json", beta);
+    version_(dir, "alpha", "1.1.0");
+    record(dir, {
+      decided_at: "2026-01-03T00:00:00Z", actor: "bot", trigger: "issue", plugin_id: "alpha", version: "1.1.0",
+      repo: "example/alpha", tag: "v1.1.0", state: "published", repository_id: "111", repository_owner_id: "222",
+    });
+    const sha = commit(dir, "registry: publish alpha, and rebind beta", "2026-01-03T00:00:00Z");
+    const mine = detect({ root: dir }).findings.filter((f) => f.code === "A9_IDENTITY_CHANGED_NO_DECISION" && f.hex === sha);
+    assert.equal(mine.length, alarms ? 1 : 0, `${what}: ${JSON.stringify(mine)}`);
+  }
+});
+
 test("A9: a `source.repo` change with no decision, and a README change without one", () => {
   const dir = estate();
   baseline(dir);
