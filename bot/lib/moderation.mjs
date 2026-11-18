@@ -609,6 +609,35 @@ export function checkEntry(doc, where = "<entry>", { cutoverAt = null } = {}) {
     if (doc.previous_category !== undefined) bad(`${doc.action} is not a correct, so it may not carry previous_category`);
   }
 
+  // ── what a review records about Low tools ────────────────────────────────
+  //
+  // Astra (#377) runs a `reviewed` release's `[tools.danger]` Low tools
+  // without asking, so a review entry records, per version it moved, the Low
+  // tools that version was reviewed with: `{ "<version>": ["a", "b"] }`, only
+  // versions the entry names, each list sorted, unique and non-empty, and the
+  // member absent when no moved version declares any.
+  if (doc.low_tools !== undefined) {
+    if (doc.action !== "review") {
+      bad(`${doc.action} reviews nothing, so it may not carry low_tools`);
+    } else if (!doc.low_tools || typeof doc.low_tools !== "object" || Array.isArray(doc.low_tools)
+      || Object.keys(doc.low_tools).length === 0) {
+      bad("low_tools, when present, must be a non-empty object of version -> the Low tools it was reviewed with");
+    } else {
+      const named = Array.isArray(doc.versions) ? doc.versions : [];
+      for (const [version, tools] of Object.entries(doc.low_tools)) {
+        if (!named.includes(version)) bad(`low_tools names ${JSON.stringify(version)}, which this review's versions do not`);
+        // No trim and no caps: the list is the record's, which the probe read
+        // by Astra's rule, and a stricter reading here would make compileReview
+        // THROW on an entry it composed from a set it accepted.
+        const ok = Array.isArray(tools) && tools.length > 0
+          && tools.every((t) => typeof t === "string" && t !== "")
+          && new Set(tools).size === tools.length
+          && [...tools].sort().join("\u0000") === tools.join("\u0000");
+        if (!ok) bad(`low_tools.${version} must be a sorted list of distinct, non-empty tool names`);
+      }
+    }
+  }
+
   if (doc.action === "review") {
     if (doc.versions === undefined) bad("a review must name the versions it marked, as versions (MOD-56)");
     if (doc.category === undefined) bad("a review must carry its category, review_passed (§7.2)");
@@ -679,7 +708,7 @@ export function checkEntry(doc, where = "<entry>", { cutoverAt = null } = {}) {
 export const ENTRY_MEMBERS = [
   "$comment", "date", "action", "plugin", "versions", "reason", "advisory", "appeal",
   "category", "reverses", "appeal_of", "outcome", "service_decision_id", "declared_interest",
-  "corrects", "previous_category",
+  "corrects", "previous_category", "low_tools",
 ];
 
 /**

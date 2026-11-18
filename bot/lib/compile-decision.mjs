@@ -278,7 +278,7 @@ export const ENTRY_ALLOWLIST = Object.freeze({
   moderator: Object.freeze([
     "service_decision_id", "code", "category", "plugin_id", "versions", "decided_at",
     "reason", "reverses", "appeal_of", "outcome", "severity", "action",
-    "moderator", "declared_interest", "corrects",
+    "moderator", "declared_interest", "corrects", "low_tools",
   ]),
   author: Object.freeze([
     "service_decision_id", "code", "category", "plugin_id", "versions", "decided_at", "reason",
@@ -1316,6 +1316,23 @@ function compileYank(root, d, listing, { decidedAt, date, reason, batch = null }
  *
  * A version named twice moves once: two identical edits would be harmless on
  * the tree and a lie in the log entry, which would name one version twice.
+ *
+ * **A version whose record declares Low tools moves only when the review names
+ * them.** Astra (#377) runs a tool its release declares `"low"` in
+ * `[tools.danger]` WITHOUT asking once the release is `reviewed`, so a review
+ * that never saw the list would unlock `wipe = "low"` unseen. The record keeps
+ * the list (`low_tools`, written by ingest), and a version carrying it moves
+ * only when the decision's `low_tools` is that set, in any order; otherwise it
+ * stays `unreviewed` — Astra then asks before every tool, which is safe — and
+ * is stuck like a yanked one, with a sentence naming the version and its tools.
+ * A record with `low_tools: []` (probed, none declared) moves exactly as
+ * before, whatever the decision carries. So does a record with NO member
+ * (published before ingest read `[tools.danger]`; records are immutable and
+ * never re-probed): it stays reviewable as it always was, and the label adds
+ * no Low-tool trust, because Astra honours a declared Low tool only when the
+ * signed index entry carries `low_tools` and lists it — an absent member
+ * grants nothing, so its `reviewed` still means "asks before every tool".
+ * The log entry records, per moved version, the tools it was reviewed with.
  */
 function compileReview(root, d, listing, { decidedAt, date, reason, batch = null }) {
   const named = [...new Set(Array.isArray(d.versions) ? d.versions : [])];
@@ -1326,25 +1343,59 @@ function compileReview(root, d, listing, { decidedAt, date, reason, batch = null
       "nobody can check");
   }
 
+  // `low_tools` is not in schema/moderation-work-v{1,2}.json yet: that schema
+  // is held to the token file's `service_decisions[].of[]`, which the contract
+  // writes (bot/tests/moderation-run.test.mjs), so its shape is checked here
+  // until the contract names it. Malformed routes to `target_changed`, as a
+  // malformed `versions` does: it names what the review covers.
+  if (d.low_tools !== undefined && !wellFormedLowTools(d.low_tools)) {
+    return refuse(d, "target_changed",
+      "low_tools, when present, must be a list of at most 64 distinct tool names, each 1 to 128 characters; this " +
+      "one is not, so it cannot say which Low tools this review covered");
+  }
+  const reviewedWith = lowToolSet(d.low_tools);
   const movable = [];
   const stuck = [];
+  const unnamed = [];
+  const lowTools = {};
   for (const version of named) {
     const record = listing.versions.find((v) => v.version === version);
     const key = `${listing.id}@${version}`;
     const gone = batch?.unlisted.has(listing.id) || batch?.yanked.has(key) || batch?.reviewed.has(key);
     if (!record || !listing.listed || record.doc?.yanked === true || record.doc?.[REVIEW_MEMBER] === REVIEWED || gone) {
       stuck.push(version);
-    } else {
-      movable.push(version);
+      continue;
     }
+    // Absent (never probed) and `[]` (probed, none) both read as no Low tool
+    // here: neither lets Astra skip a question (see the docblock above).
+    const declared = lowToolSet(record.doc?.low_tools);
+    if (declared.length > 0) {
+      if (declared.join("\u0000") !== reviewedWith.join("\u0000")) {
+        unnamed.push(
+          `${version} declares Low tools [${declared.join(", ")}]; the review ` +
+          (reviewedWith.length ? `named [${reviewedWith.join(", ")}]` : "did not name them"),
+        );
+        continue;
+      }
+      lowTools[version] = declared;
+    }
+    movable.push(version);
   }
 
   if (movable.length === 0) {
+    const parts = [];
+    if (stuck.length) {
+      parts.push(`${stuck.join(", ")} of ${listing.id} ${stuck.length === 1 ? "is" : "are"} not on this tree, yanked, ` +
+        "already reviewed, or of a listing whose record is `unlisted`");
+    }
+    if (unnamed.length) {
+      parts.push(`of ${listing.id}, ${unnamed.join("; ")}. Astra runs a reviewed release's Low tools without asking, ` +
+        "so a review moves such a version only when its decision's `low_tools` names exactly that set");
+    }
     return refuse(d, "target_changed",
-      `${stuck.join(", ")} of ${listing.id} ${stuck.length === 1 ? "is" : "are"} not on this tree, yanked, already ` +
-      "reviewed, or of a listing whose record is `unlisted`, so this review can move no version (MOD-56). The " +
-      "service refuses the same at the served catalogue's `Index-Source-Commit` (MOD-10), so one reaching the " +
-      "bot means the tree moved between the service's read and this run");
+      `${parts.join("; and ")}, so this review can move no version (MOD-56). The service refuses the same at the ` +
+      "served catalogue's `Index-Source-Commit` (MOD-10), so one reaching the bot means the tree moved between " +
+      "the service's read and this run" + (unnamed.length ? ", or the service did not send the version's Low tools" : ""));
   }
 
   const entry = {
@@ -1356,6 +1407,9 @@ function compileReview(root, d, listing, { decidedAt, date, reason, batch = null
     category: REVIEW_CATEGORY,
     service_decision_id: d.service_decision_id,
     ...(d.declared_interest !== undefined ? { declared_interest: d.declared_interest } : {}),
+    // Per moved version, the Low tools it was reviewed with; absent when no
+    // moved version declares any, so every other review entry is unchanged.
+    ...(Object.keys(lowTools).length ? { low_tools: lowTools } : {}),
   };
 
   return {
@@ -1375,6 +1429,21 @@ function compileReview(root, d, listing, { decidedAt, date, reason, batch = null
     // entry naming the version is the other half.
     trailers: { "Service-Decision": d.service_decision_id, "Decided-At": decidedAt },
   };
+}
+
+/**
+ * A `low_tools` list as a set: sorted, unique, strings only. A member that is
+ * not an array is the empty set — `wellFormedLowTools` refused a malformed
+ * decision's before it reached here, and the record's is held by
+ * tools/validate.mjs.
+ */
+function wellFormedLowTools(value) {
+  return Array.isArray(value) && value.length <= 64 && new Set(value).size === value.length
+    && value.every((t) => typeof t === "string" && t.length >= 1 && t.length <= 128);
+}
+
+function lowToolSet(value) {
+  return Array.isArray(value) ? [...new Set(value.filter((t) => typeof t === "string"))].sort() : [];
 }
 
 /** `M_DELIST` and a bound `A_REMOVAL_REQUEST` (§7.2; FLOW-28). */

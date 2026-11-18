@@ -449,6 +449,113 @@ export async function run() {
       "schema/index-v1.json accepts a review mark outside the two this registry writes, so it does not declare the member");
   });
 
+  // ── the tools a release declares Low (`[tools.danger]`, Astra #377) ─────────
+  //
+  // Astra runs a Low tool of a `reviewed` release without asking, so clients
+  // and the panel are shown the list the review covered. The copy is the
+  // review mark's: byte for byte where the record carries it, `[]` included
+  // (present = probed; Astra honours a Low tool only where the index lists it),
+  // absent where it does not, so no record without it moves a byte of
+  // `signed.plugins`. The
+  // validator holds the record's one written form (sorted, no blank name).
+  //
+  // Watched: deleting the `low_tools` spread in `releaseRecord` turns the first
+  // assertion red; deleting `low_tools` from schema/index-v1.json's release
+  // turns the schema one red (additionalProperties); deleting the sortedness
+  // check in tools/validate.mjs turns the unsorted one red; putting
+  // `maxItems: 64` back on schema/version-v1.json turns the no-caps one red.
+  await test("the generator copies each version record's low_tools into releases[], `[]` included, absent stays absent, and the validator holds them sorted and no more", async () => {
+    const dir = path.join(tmp, "low-tools-copy");
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.cpSync(path.join(REPO_ROOT, "tests/fixtures/id-collision/plugins/dice-roller"),
+      path.join(dir, "plugins", "dice-roller"), { recursive: true });
+    const versions = path.join(dir, "plugins", "dice-roller", "versions");
+    const base = JSON.parse(fs.readFileSync(path.join(versions, "1.0.0.json"), "utf8"));
+    const at = (v, lowTools) => {
+      const doc = JSON.parse(JSON.stringify(base).replaceAll("1.0.0", v));
+      if (lowTools !== undefined) doc.low_tools = lowTools;
+      fs.writeFileSync(path.join(versions, `${v}.json`), stableStringify(doc));
+    };
+    at("1.1.0", ["roll", "wipe"]);
+    at("1.2.0", []);
+
+    const doc = buildIndex({ root: dir, serial: 1 });
+    const entry = doc.signed.plugins.find((p) => p.id === "dice-roller");
+    assert(entry, "the fixture listing is not in its own catalogue");
+    const lows = Object.fromEntries(entry.releases.map((r) => [r.version, Object.hasOwn(r, "low_tools") ? r.low_tools : "<absent>"]));
+    assertEqual(JSON.stringify(lows), JSON.stringify({ "1.2.0": [], "1.1.0": ["roll", "wipe"], "1.0.0": "<absent>" }),
+      "the catalogue's releases do not carry each version record's low_tools as the record has it");
+    const schema = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "schema/index-v1.json"), "utf8"));
+    const errs = validateSchema(schema, doc);
+    assert(errs.length === 0, `schema/index-v1.json refuses a catalogue whose releases carry low_tools:\n` +
+      errs.map((e) => `${e.path} ${e.message}`).join("\n"));
+
+    const clean = await validateTree(dir);
+    assertEqual(errorsMatching(clean.report, "low_tools").length, 0,
+      `a sorted low_tools is refused: ${JSON.stringify(errorsMatching(clean.report, "low_tools"))}`);
+    // No caps on the record: it is what the manifest declares, and the cap
+    // lives on the decision (an over-cap review leaves the version unreviewed).
+    at("1.1.0", Array.from({ length: 65 }, (_, i) => `t${String(i).padStart(2, "0")}`).concat(["z".repeat(200)]));
+    assertEqual(errorsMatching((await validateTree(dir)).report, "low_tools").length, 0,
+      "a long low_tools, or a long tool name, is refused on the record");
+    at("1.1.0", ["wipe", "roll"]);
+    assert(errorsMatching((await validateTree(dir)).report, "low_tools is not sorted").length === 1,
+      "an unsorted low_tools is accepted");
+    // Which names count is the probe's (Astra's rule, in Rust); JS's trim
+    // strips U+FEFF and Rust's does not, so the validator does not re-judge.
+    at("1.1.0", ["roll", "\uFEFF"]);
+    assertEqual(errorsMatching((await validateTree(dir)).report, "low_tools").length, 0,
+      "a name Astra reads as Low (U+FEFF, kept by Rust's trim) is refused on the record");
+    at("1.1.0", ["roll", "roll"]);
+    assert(errorsMatching((await validateTree(dir)).report, "low_tools").length > 0,
+      "a low_tools that repeats a name is accepted (schema/version-v1.json uniqueItems)");
+  });
+
+  // A reviewed record's Low tools were named by its review, checked on the tree
+  // as it stands (tools/validate.mjs `checkReviewedLowTools`), so a commit that
+  // adds or widens `low_tools` on an already-reviewed record is refused before
+  // build-index signs it, not alarmed by A11 after.
+  //
+  // Watched: deleting the `report.error` in `checkReviewedLowTools` turns the
+  // first assertion red.
+  await test("a reviewed record with Low tools needs a review entry recording exactly them; an old reviewed record with none is untouched", async () => {
+    const dir = path.join(tmp, "low-tools-reviewed");
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.cpSync(path.join(REPO_ROOT, "tests/fixtures/id-collision/plugins/dice-roller"),
+      path.join(dir, "plugins", "dice-roller"), { recursive: true });
+    const versions = path.join(dir, "plugins", "dice-roller", "versions");
+    const base = JSON.parse(fs.readFileSync(path.join(versions, "1.0.0.json"), "utf8"));
+    const at = (v, over) => fs.writeFileSync(path.join(versions, `${v}.json`),
+      stableStringify({ ...JSON.parse(JSON.stringify(base).replaceAll("1.0.0", v)), ...over }));
+    const entry = (lowTools) => {
+      fs.mkdirSync(path.join(dir, "bot", "moderation"), { recursive: true });
+      fs.writeFileSync(path.join(dir, "bot", "moderation", "2026-09-20-dice-roller-review.json"), stableStringify({
+        date: "2026-09-20", action: "review", plugin: "dice-roller", versions: ["1.1.0"],
+        reason: "A moderator read this version's manifest and its Low tools and found nothing wrong.",
+        category: "review_passed", service_decision_id: "0192f3a4-5b6c-7d8e-9f01-234567890abc",
+        ...(lowTools ? { low_tools: { "1.1.0": lowTools } } : {}),
+      }));
+    };
+    const refused = async () => errorsMatching((await validateTree(dir)).report, "declares Low tools");
+
+    at("1.0.0", { review: "reviewed" }); // old, reviewed, never probed: untouched
+    at("1.1.0", { review: "reviewed", low_tools: ["roll", "wipe"] });
+    assertEqual((await refused()).length, 1, "a reviewed record with Low tools and no review entry at all is accepted");
+    entry(undefined);
+    assertEqual((await refused()).length, 1, "a review entry recording no Low tools is accepted as having named them");
+    entry(["roll"]);
+    assertEqual((await refused()).length, 1, "a review entry recording another set is accepted as having named them");
+    entry(["roll", "wipe"]);
+    const ok = await refused();
+    assertEqual(ok.length, 0, `a review entry recording exactly the set is refused: ${JSON.stringify(ok)}`);
+    at("1.1.0", { review: "reviewed", low_tools: ["nuke", "roll", "wipe"] });
+    assertEqual((await refused()).length, 1, "a reviewed record's low_tools widened past its review is accepted");
+    at("1.1.0", { review: "reviewed", low_tools: [] });
+    assertEqual((await refused()).length, 0, "`[]` names no Low tool and needs no review naming one");
+    at("1.1.0", { review: "unreviewed", low_tools: ["roll", "wipe", "nuke"] });
+    assertEqual((await refused()).length, 0, "an unreviewed record grants nothing and needs no entry");
+  });
+
   // Client session, relayed by the coordinator on 2026-09-26 (C1): the mark is
   // a member INSIDE `astra.registry.index/1`, and the catalogue's schema value
   // does not move. That value is the only catalogue schema a shipped 0.2.x

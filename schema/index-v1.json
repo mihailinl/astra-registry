@@ -324,6 +324,14 @@
           },
           "uniqueItems": true
         },
+        "low_tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true,
+          "description": "The tools the release declares Low in `[tools.danger]`, copied byte for byte from the version record wherever it carries them, `[]` included, and absent wherever it does not. Present means the release was probed (`[]`: it declares none); ABSENT means it was never probed, and a client must honour no declared Low tool for it. Astra runs a Low tool without asking only when this member lists it and the release's `review` is `reviewed`. OPTIONAL, and a member of `astra.registry.index/1` itself, like `review`: shipped clients carry it inside the signature and ignore it."
+        },
         "permissions": {
           "type": "object",
           "additionalProperties": true

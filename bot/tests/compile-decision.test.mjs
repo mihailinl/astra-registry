@@ -1205,6 +1205,115 @@ test("M_REVIEW that can move nothing is `target_changed`, and composes nothing (
   }
 });
 
+// ── M_REVIEW and the tools a release declares Low (Astra #377) ───────────────
+//
+// Astra runs a `reviewed` release's `[tools.danger]` Low tools without asking,
+// so a version whose record carries `low_tools` moves only when the decision
+// names exactly that set; otherwise it stays `unreviewed` and is stuck like a
+// yanked one. A record without the member moves exactly as before.
+//
+// Watched failing: with the `declared.length > 0` branch removed from
+// compileReview, the "without them" and "mismatched" cases move 1.5.0; with
+// `low_tools` dropped from ENTRY_ALLOWLIST.moderator, the exact-set case is
+// refused (the decision's list never reaches the compiler); with the log
+// entry's spread removed, the logged-tools assertion fails.
+function lowEstate() {
+  return reviewEstate({ extra: {
+    "plugins/widgets/versions/1.5.0.json": { ...marked("widgets", "1.5.0", "unreviewed"), low_tools: ["roll", "wipe"] },
+  } });
+}
+
+// A record with no member was never probed; Astra honours no Low tool for
+// it, so its review adds no Low-tool trust and it stays reviewable as before.
+// `[]` was probed and declares none. Both move whatever the decision carries.
+// Watched failing: with `declared.length > 0` changed to `record.doc?.low_tools
+// !== undefined`, the `[]` record (1.6.0) is stuck.
+test("M_REVIEW: a record without low_tools, or with [], moves as before, whether the decision names Low tools or not", () => {
+  const root = reviewEstate({ extra: {
+    "plugins/widgets/versions/1.6.0.json": { ...marked("widgets", "1.6.0", "unreviewed"), low_tools: [] },
+  } });
+  for (const version of ["1.1.0", "1.6.0"]) {
+    for (const over of [{}, { low_tools: ["roll"] }, { low_tools: [] }]) {
+      const r = compileDecision(review({ versions: [version], ...over }), { root });
+      assert.equal(r.outcome, "compiled", `${version} ${JSON.stringify(over)}: ${JSON.stringify(r.why ?? r)}`);
+      assert.deepEqual(r.edits.map((e) => e.file), [`plugins/widgets/versions/${version}.json`]);
+      assert.ok(!Object.hasOwn(r.log[0].doc, "low_tools"), "a review moving no Low-tool version logs none");
+    }
+  }
+});
+
+test("M_REVIEW: a version declaring Low tools is not reviewed by a decision that does not name them, and the reason names them", () => {
+  const root = lowEstate();
+  const r = compileDecision(review({ versions: ["1.5.0"] }), { root });
+  assert.equal(r.outcome, "refused", JSON.stringify(r));
+  assert.equal(r.refusal, "target_changed");
+  assert.match(r.why, /1\.5\.0 declares Low tools \[roll, wipe\]; the review did not name them/);
+  assert.deepEqual([r.edits, r.log], [[], []]);
+  // Beside a version that can move, it is stuck: the other moves, it does not.
+  const both = compileDecision(review({ versions: ["1.1.0", "1.5.0"] }), { root });
+  assert.equal(both.outcome, "compiled", JSON.stringify(both.why ?? both));
+  assert.deepEqual(both.edits.map((e) => e.file), ["plugins/widgets/versions/1.1.0.json"]);
+  assert.deepEqual(both.log[0].doc.versions, ["1.1.0"]);
+});
+
+test("M_REVIEW: a mismatched Low-tool set does not review the version", () => {
+  const root = lowEstate();
+  for (const named of [["roll"], ["roll", "wipe", "nuke"], ["wipe", "nuke"]]) {
+    const r = compileDecision(review({ versions: ["1.5.0"], low_tools: named }), { root });
+    assert.equal(r.outcome, "refused", `${JSON.stringify(named)}: ${JSON.stringify(r)}`);
+    assert.equal(r.refusal, "target_changed");
+    assert.ok(r.why.includes("declares Low tools [roll, wipe]; the review named ["), r.why);
+    assert.deepEqual(r.edits, []);
+  }
+});
+
+test("M_REVIEW: a malformed low_tools is `target_changed`, and moves nothing", () => {
+  const root = lowEstate();
+  for (const bad of ["roll", ["roll", "roll"], [""], [7], ["x".repeat(129)], Array.from({ length: 65 }, (_, i) => `t${i}`)]) {
+    const r = compileDecision(review({ versions: ["1.1.0"], low_tools: bad }), { root });
+    assert.equal(r.outcome, "refused", `${JSON.stringify(bad).slice(0, 40)}: ${JSON.stringify(r)}`);
+    assert.equal(r.refusal, "target_changed");
+    assert.deepEqual(r.edits, []);
+  }
+});
+
+test("M_REVIEW: the exact Low-tool set, in any order, reviews the version and the log records it", () => {
+  const root = lowEstate();
+  for (const named of [["roll", "wipe"], ["wipe", "roll"]]) {
+    const r = compileDecision(review({ versions: ["1.1.0", "1.5.0"], low_tools: named }), { root });
+    assert.equal(r.outcome, "compiled", `${JSON.stringify(named)}: ${JSON.stringify(r.why ?? r)}`);
+    assert.deepEqual(r.edits.map((e) => e.file),
+      ["plugins/widgets/versions/1.1.0.json", "plugins/widgets/versions/1.5.0.json"]);
+    assert.deepEqual(r.log[0].doc.versions, ["1.1.0", "1.5.0"]);
+    assert.deepEqual(r.log[0].doc.low_tools, { "1.5.0": ["roll", "wipe"] },
+      "the entry records the Low tools each moved version was reviewed with, and only those that declare any");
+    assert.deepEqual(checkEntry(r.log[0].doc), [], "the log refuses the entry the compiler wrote");
+  }
+});
+
+test("the moderation log holds a review's low_tools to its shape", () => {
+  const base = { date: "2026-09-20", action: "review", plugin: "widgets", versions: ["1.5.0"], reason: REVIEW_REASON,
+    category: "review_passed", service_decision_id: SDI };
+  assert.deepEqual(checkEntry({ ...base, low_tools: { "1.5.0": ["roll", "wipe"] } }), []);
+  // A name Rust's trim keeps and JS's strips (U+FEFF) is Astra's to judge, and
+  // it judged it Low; refusing it here would make compileReview throw.
+  assert.deepEqual(checkEntry({ ...base, low_tools: { "1.5.0": ["roll", "\uFEFF"] } }), []);
+  for (const [what, low_tools, extra] of [
+    ["unsorted", { "1.5.0": ["wipe", "roll"] }],
+    ["repeated", { "1.5.0": ["roll", "roll"] }],
+    ["empty list", { "1.5.0": [] }],
+    ["empty name", { "1.5.0": [""] }],
+    ["a version the entry does not name", { "1.1.0": ["roll"] }],
+    ["a list, not an object", ["roll"]],
+    ["an empty object", {}],
+    ["on a yank", { "1.5.0": ["roll"] }, { action: "yank", category: undefined, service_decision_id: undefined }],
+  ]) {
+    const doc = { ...base, ...(extra ?? {}), low_tools };
+    for (const k of Object.keys(doc)) if (doc[k] === undefined) delete doc[k];
+    assert.ok(checkEntry(doc).some((p) => p.includes("low_tools")), `${what}: ${JSON.stringify(checkEntry(doc))}`);
+  }
+});
+
 test("a version named twice moves once, and a mark this registry does not know is not `reviewed`", () => {
   const root = reviewEstate({ extra: { "plugins/widgets/versions/1.4.0.json": marked("widgets", "1.4.0", "pending") } });
   const r = compileDecision(review({ versions: ["1.1.0", "1.1.0", "1.4.0"] }), { root });

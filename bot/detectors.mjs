@@ -852,6 +852,15 @@ function sourceChangedIn(git, sha, file) {
  *   3. a version record added at or after 3.0.0's landing commit whose
  *      `review` is absent or not `unreviewed` — `A11_ADDED_NOT_UNREVIEWED`.
  *
+ * And two about `low_tools` (Astra #377: a reviewed release's Low tools run
+ * without asking, and only where the signed index lists them):
+ *
+ *   4. a committed record's `low_tools` changed, removed, or added after the
+ *      record was — `A11_LOW_TOOLS_CHANGED`;
+ *   5. a record with a non-empty `low_tools` marked `reviewed` by a commit
+ *      whose `review` entry does not record exactly that set as
+ *      `low_tools[<version>]` — `A11_REVIEWED_LOW_TOOLS_UNNAMED`.
+ *
  * **Clauses 1 and 2 are judged per commit, on what that commit changed
  * itself,** because the row asks what a COMMIT adds and carries. A non-merge
  * is read against its parent; a merge only on its own resolution
@@ -1027,6 +1036,10 @@ const markOf = (read) => (read.doc && Object.hasOwn(read.doc, "review")
   : { has: false, value: undefined });
 const sameMark = (a, b) => a.has === b.has && (!a.has || JSON.stringify(a.value) === JSON.stringify(b.value));
 const describeMark = (m) => (m.has ? JSON.stringify(m.value) : "absent");
+const lowToolsOf = (read) => (read.doc && Object.hasOwn(read.doc, "low_tools")
+  ? { has: true, value: read.doc.low_tools }
+  : { has: false, value: undefined });
+const sameLowTools = sameMark;
 
 /** The moderation-log entries a commit adds — its own additions, for a merge. */
 function addedLogEntries(git, sha, changes) {
@@ -1051,6 +1064,25 @@ function judgeReview(git, { sha, file, status, before, after, entries }, finding
     });
     return;
   }
+  // ── `low_tools` is written once, by the commit that adds the record ──────
+  //
+  // Astra honours a declared Low tool only where the signed index lists it,
+  // and present-or-absent is "probed or never probed", so a later commit that
+  // changes, removes or back-fills the member rewrites what a review covered
+  // (or what Astra may run without asking). Any such change alarms.
+  const lowWas = lowToolsOf(before);
+  const lowNow = after.present ? lowToolsOf(after) : { has: false, value: undefined };
+  if (!sameLowTools(lowWas, lowNow)) {
+    findings.push({
+      detector: "A11",
+      code: "A11_LOW_TOOLS_CHANGED",
+      message: `${sha.slice(0, 12)} ${after.present ? "changed" : "deleted"} ${file}'s low_tools from ` +
+        `${describeMark(lowWas)} to ${describeMark(lowNow)}; the member is written once, when the record is ` +
+        "added, and a review and Astra both read it as what the bundle was probed to declare",
+      plugin_id: id,
+      hex: sha,
+    });
+  }
   const was = markOf(before);
   const now = after.present ? markOf(after) : { has: false, value: undefined };
   if (!after.present) {
@@ -1067,9 +1099,32 @@ function judgeReview(git, { sha, file, status, before, after, entries }, finding
   }
   if (sameMark(was, now)) return;
   if (now.has && now.value === REVIEWED) {
-    const named = entries.some((e) => e.action === "review" && e.plugin === id
+    const naming = entries.filter((e) => e.action === "review" && e.plugin === id
       && Array.isArray(e.versions) && e.versions.includes(version));
+    const named = naming.length > 0;
     const trailer = SERVICE_DECISION_TRAILER.test(git.message(sha) ?? "");
+    // A version declaring Low tools is reviewed only with them named: the
+    // entry's `low_tools[version]` is the set compileReview compared.
+    const declared = lowNow.has && Array.isArray(lowNow.value) ? lowNow.value : [];
+    if (named && trailer && declared.length > 0) {
+      const want = JSON.stringify([...declared].sort());
+      const covered = naming.some((e) => {
+        const logged = e.low_tools?.[version];
+        return Array.isArray(logged) && JSON.stringify([...logged].sort()) === want;
+      });
+      if (!covered) {
+        findings.push({
+          detector: "A11",
+          code: "A11_REVIEWED_LOW_TOOLS_UNNAMED",
+          message: `${sha.slice(0, 12)} marked ${file} reviewed, and it declares Low tools ${want}, but the ` +
+            `moderation-log \`review\` entry naming ${version} does not record exactly those as its low_tools; ` +
+            "Astra runs a reviewed release's Low tools without asking, so the review must name them",
+          plugin_id: id,
+          hex: sha,
+        });
+      }
+      return;
+    }
     if (named && trailer) return;
     findings.push({
       detector: "A11",
