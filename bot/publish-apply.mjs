@@ -452,6 +452,42 @@ export function refuseVersionRegressions(root, reportDir, rels) {
  * publication this workflow exists to perform had never once run to completion.
  * `path.relative` cannot produce that, which is half of why this is here.
  */
+/**
+ * ID-64's sibling test, on main's tree as it stands before this report: does listing `id` already name
+ * `repositoryId`, by its identity record or by a MIG-20 baseline (`migration`) record? The same rule as
+ * service-decide's `siblingsOf`, read here without importing the decide job (this module stays small).
+ */
+function namesRepositoryOnMain(root, id, repositoryId) {
+  const want = String(repositoryId);
+  try {
+    const ident = JSON.parse(fs.readFileSync(path.join(root, "plugins", id, "identity.json"), "utf8"));
+    if (String(ident?.repository_id) === want) return true;
+  } catch {
+    /* no identity record */
+  }
+  const walk = (d) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(d, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+    for (const e of entries) {
+      const full = path.join(d, e.name);
+      if (e.isDirectory()) { if (walk(full)) return true; continue; }
+      if (!e.isFile() || !e.name.endsWith(".json")) continue;
+      try {
+        const r = JSON.parse(fs.readFileSync(full, "utf8"));
+        if (r?.trigger === "migration" && r.plugin_id === id && String(r.repository_id) === want) return true;
+      } catch {
+        /* not a record */
+      }
+    }
+    return false;
+  };
+  return walk(path.join(root, "log", "decisions"));
+}
+
 export function applyReport(root, reportDir, state) {
   const servicePath = state.servicePath === true;
   // Only `plugins/` and `state/` are copied, and that is not tidiness: the
@@ -521,18 +557,45 @@ export function applyReport(root, reportDir, state) {
   }
 
   refuseVersionRegressions(root, reportDir, rels);
-  // ID-40: an identity record changes only in a publishing commit.
-  if (rels.some((r) => IDENTITY_FILE.test(r))) {
-    const published = rels.filter((r) => DECISION_RECORD_FILE.test(r)).some((r) => {
+  // ID-40 and ID-64: an identity record changes only in a publishing commit, and only for the listing that commit
+  // publishes or for a SIBLING of it — a listing that already names the same repository id, by its identity record
+  // or by MIG-20's baseline record — which the same commit rebinds to the same ids (service-decide writes them
+  // together). Until 2026-11-18 any `published` record let any identity record through; now each one must be its
+  // own listing's, or a sibling's naming exactly the ids of the publication beside it.
+  const identities = rels.filter((r) => IDENTITY_FILE.test(r));
+  if (identities.length) {
+    const published = rels.filter((r) => DECISION_RECORD_FILE.test(r)).map((r) => {
       try {
-        return JSON.parse(fs.readFileSync(path.join(reportDir, r), "utf8"))?.state === "published";
+        return JSON.parse(fs.readFileSync(path.join(reportDir, r), "utf8"));
       } catch {
-        return false;
+        return null;
       }
-    });
-    if (!published) {
-      const at = rels.find((r) => IDENTITY_FILE.test(r));
+    }).filter((d) => d?.state === "published");
+    if (!published.length) {
+      const at = identities[0];
       throw new Refusal(`${at} is written with no \`published\` decision record beside it; an identity record changes only in a publishing commit (ID-40)`, { file: at });
+    }
+    const sameIds = (d, doc) => ["repository_id", "repository_owner_id"].every((k) => d[k] === undefined || String(d[k]) === String(doc[k]));
+    for (const at of identities) {
+      const id = IDENTITY_FILE.exec(at)[1];
+      let doc;
+      try {
+        doc = JSON.parse(fs.readFileSync(path.join(reportDir, at), "utf8"));
+      } catch {
+        throw new Refusal(`${at} is not readable JSON (ID-40)`, { file: at });
+      }
+      const own = published.filter((d) => d.plugin_id === id);
+      if (own.length) {
+        if (!own.some((d) => sameIds(d, doc))) {
+          throw new Refusal(`${at} names repository ${doc.repository_id}/${doc.repository_owner_id}, and the \`published\` record for ${id} names another; an identity record binds the repository its publication came from (ID-40; ID-41)`, { file: at });
+        }
+        continue;
+      }
+      const sibling = published.some((d) => d.repository_id !== undefined && d.repository_owner_id !== undefined &&
+        sameIds(d, doc) && namesRepositoryOnMain(root, id, d.repository_id));
+      if (!sibling) {
+        throw new Refusal(`${at} is written beside \`published\` records for ${[...new Set(published.map((d) => d.plugin_id))].join(", ")}, none for ${id}, and ${id} is not a listing already naming that publication's repository id; an identity record changes only in its own listing's publishing commit, or a sibling's (ID-40; ID-64)`, { file: at });
+      }
     }
   }
   const unrecorded = recordRequirementProblems({ root, reportDir, rels });

@@ -3227,3 +3227,12 @@ test("commit C: config.yml's first link and every how-to-report page name MOD-54
   }
   assert.equal(bad.join("\n"), "", "a spelling of MOD-54's report page that is neither the bare page nor ?plugin=");
 });
+
+// The alert record's members are said twice: the writer's ALERT_MEMBERS (bot/lib/service-publish.mjs, with
+// schema/alert-v1.json) and priv-scan's list. 6.7.0 added three to the writer only, and the coverage canary was
+// red for two days on the first approval alert (edef85bf45fc). One list, read twice, is the fix.
+test("priv-scan's alert-record members are the writer's ALERT_MEMBERS", async () => {
+  const { DOCUMENT_MEMBERS } = await import("../../tools/lib/priv-rules.mjs");
+  const { ALERT_MEMBERS } = await import("../lib/service-publish.mjs");
+  assert.deepEqual([...DOCUMENT_MEMBERS["alert-record"].members].sort(), [...ALERT_MEMBERS].sort());
+});
