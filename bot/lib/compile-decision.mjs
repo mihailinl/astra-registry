@@ -238,9 +238,9 @@ export const ACCOUNT_LEVEL_CATEGORIES = Object.freeze(["account_compromise", "ac
  *
  * `KNICE-TECH` is a login the organisation freed when it renamed itself
  * MINICE-AI, which means anybody may register it. `policy/reserved-ids.json`
- * carries the one repository under it that still has to validate
- * (`KNICE-TECH/astra-chess`, frozen and unlisted) and says in its own note why
- * the OWNER is deliberately not in `first_party_owners`. The literal is here
+ * carried `KNICE-TECH/astra-chess` until M-T6.3 step 3 (2026-11-18) relisted
+ * astra-chess from MINICE-AI; no repository under the login validates now, and
+ * the file's note says why the OWNER was never in `first_party_owners`. The literal is here
  * rather than read out of that file because the two say different things: that
  * file says which repository names may list under a reserved prefix, and this
  * says which owner no relist may put back into the catalogue.

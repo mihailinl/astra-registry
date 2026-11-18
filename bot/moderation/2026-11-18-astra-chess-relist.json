@@ -1,0 +1,7 @@
+{
+  "$comment": "M-T6.3 step 3 (OPEN-OWNER-10), a security commit. Step 2 is done: astra-chess 0.1.19 was published from MINICE-AI/astra-chess on 2026-11-16 (decision 7f08758f5ea6e7e029b5c484ac3fc155, an approval, commit cb52dbafcfb4), which moved source.repo off the freed KNICE-TECH login. Every earlier version is yanked. DEC-17: installed copies carry a pin to KNICE-TECH/astra-chess and strand there until reinstalled.",
+  "date": "2026-11-18",
+  "action": "relist",
+  "plugin": "astra-chess",
+  "reason": "Re-released from MINICE-AI/astra-chess and approved as an identity change. Copies installed from the old repository keep running but are offered no update until reinstalled."
+}
