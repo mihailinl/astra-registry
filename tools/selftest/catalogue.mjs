@@ -511,6 +511,51 @@ export async function run() {
       "a low_tools that repeats a name is accepted (schema/version-v1.json uniqueItems)");
   });
 
+  // A reviewed record's Low tools were named by its review, checked on the tree
+  // as it stands (tools/validate.mjs `checkReviewedLowTools`), so a commit that
+  // adds or widens `low_tools` on an already-reviewed record is refused before
+  // build-index signs it, not alarmed by A11 after.
+  //
+  // Watched: deleting the `report.error` in `checkReviewedLowTools` turns the
+  // first assertion red.
+  await test("a reviewed record with Low tools needs a review entry recording exactly them; an old reviewed record with none is untouched", async () => {
+    const dir = path.join(tmp, "low-tools-reviewed");
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.cpSync(path.join(REPO_ROOT, "tests/fixtures/id-collision/plugins/dice-roller"),
+      path.join(dir, "plugins", "dice-roller"), { recursive: true });
+    const versions = path.join(dir, "plugins", "dice-roller", "versions");
+    const base = JSON.parse(fs.readFileSync(path.join(versions, "1.0.0.json"), "utf8"));
+    const at = (v, over) => fs.writeFileSync(path.join(versions, `${v}.json`),
+      stableStringify({ ...JSON.parse(JSON.stringify(base).replaceAll("1.0.0", v)), ...over }));
+    const entry = (lowTools) => {
+      fs.mkdirSync(path.join(dir, "bot", "moderation"), { recursive: true });
+      fs.writeFileSync(path.join(dir, "bot", "moderation", "2026-09-20-dice-roller-review.json"), stableStringify({
+        date: "2026-09-20", action: "review", plugin: "dice-roller", versions: ["1.1.0"],
+        reason: "A moderator read this version's manifest and its Low tools and found nothing wrong.",
+        category: "review_passed", service_decision_id: "0192f3a4-5b6c-7d8e-9f01-234567890abc",
+        ...(lowTools ? { low_tools: { "1.1.0": lowTools } } : {}),
+      }));
+    };
+    const refused = async () => errorsMatching((await validateTree(dir)).report, "declares Low tools");
+
+    at("1.0.0", { review: "reviewed" }); // old, reviewed, never probed: untouched
+    at("1.1.0", { review: "reviewed", low_tools: ["roll", "wipe"] });
+    assertEqual((await refused()).length, 1, "a reviewed record with Low tools and no review entry at all is accepted");
+    entry(undefined);
+    assertEqual((await refused()).length, 1, "a review entry recording no Low tools is accepted as having named them");
+    entry(["roll"]);
+    assertEqual((await refused()).length, 1, "a review entry recording another set is accepted as having named them");
+    entry(["roll", "wipe"]);
+    const ok = await refused();
+    assertEqual(ok.length, 0, `a review entry recording exactly the set is refused: ${JSON.stringify(ok)}`);
+    at("1.1.0", { review: "reviewed", low_tools: ["nuke", "roll", "wipe"] });
+    assertEqual((await refused()).length, 1, "a reviewed record's low_tools widened past its review is accepted");
+    at("1.1.0", { review: "reviewed", low_tools: [] });
+    assertEqual((await refused()).length, 0, "`[]` names no Low tool and needs no review naming one");
+    at("1.1.0", { review: "unreviewed", low_tools: ["roll", "wipe", "nuke"] });
+    assertEqual((await refused()).length, 0, "an unreviewed record grants nothing and needs no entry");
+  });
+
   // Client session, relayed by the coordinator on 2026-09-26 (C1): the mark is
   // a member INSIDE `astra.registry.index/1`, and the catalogue's schema value
   // does not move. That value is the only catalogue schema a shipped 0.2.x

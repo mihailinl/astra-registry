@@ -2600,6 +2600,49 @@ export function checkRecords(ctx, sources, records = loadRecords(ctx.root, sourc
 }
 
 /**
+ * A `reviewed` record that declares Low tools carries a review that named them.
+ *
+ * Astra (#377) runs a reviewed release's Low tools without asking, wherever the
+ * signed index lists them, and tools/build-index.mjs copies `low_tools` into
+ * that index from the record as it stands. compileReview writes the mark only
+ * beside a log entry recording the exact set, and detector A11 alarms on any
+ * later change to the member — but only once the change is on `main`, after
+ * the index was built from it. A commit that adds or widens `low_tools` on an
+ * already-reviewed record (an old record gaining `["wipe"]`) would be signed
+ * first and alarmed second.
+ *
+ * So the tree is held to it as it stands, with no history: every record with
+ * `review: "reviewed"` and a non-empty `low_tools` needs a moderation-log
+ * `review` entry for its plugin naming the version whose `low_tools[<version>]`
+ * is that set. A record with no member, or `[]`, is untouched: Astra honours
+ * no Low tool it does not list.
+ */
+export function checkReviewedLowTools(plugins, ctx) {
+  const { report } = ctx;
+  let entries = null;
+  const setOf = (list) => JSON.stringify([...new Set(list.map(String))].sort());
+  for (const plugin of plugins) {
+    for (const version of plugin.versions) {
+      const doc = version.doc;
+      if (!doc || typeof doc !== "object" || doc.review !== "reviewed") continue;
+      if (!Array.isArray(doc.low_tools) || doc.low_tools.length === 0) continue;
+      entries ??= loadModerationEntries({ root: ctx.root }).entries;
+      const want = setOf(doc.low_tools);
+      const covered = entries.some((e) => e?.action === "review" && e.plugin === doc.id
+        && Array.isArray(e.versions) && e.versions.includes(doc.version)
+        && Array.isArray(e.low_tools?.[doc.version]) && setOf(e.low_tools[doc.version]) === want);
+      if (!covered) {
+        report.error(version.file,
+          `is reviewed and declares Low tools ${want}, and no moderation-log review entry records exactly those ` +
+          `as low_tools[${JSON.stringify(doc.version)}]`,
+          "Astra runs a reviewed release's Low tools without asking, so the review has to have named them. A " +
+          "`low_tools` added to or widened on a reviewed record is a list nobody reviewed; leave the record as it was published.");
+      }
+    }
+  }
+}
+
+/**
  * BOT-34's second Check clause: n versions yanked under an `A_YANK`, n records.
  *
  * NO PER-RECORD SCHEMA CAN EXPRESS THIS, and that is not a limitation of the
@@ -3311,6 +3354,7 @@ export async function runValidation(opts) {
       if (version.doc && typeof version.doc === "object") checkVersionDoc(plugin, version, ctx);
     }
   }
+  checkReviewedLowTools(usable, ctx);
   checkSquatting(usable, ctx);
   checkListingLanguage(usable, ctx);
   checkBaselineMarker(usable, ctx);
