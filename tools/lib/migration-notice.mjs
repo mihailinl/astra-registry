@@ -44,6 +44,7 @@ import path from "node:path";
 import { isTime } from "./time.mjs";
 import { REPO_ROOT, loadSchemas } from "./sources.mjs";
 import { NOTICE_DIR, NOTICE_NAME, NOTICE_SCHEMA, noticeMarkerProblems } from "../validate.mjs";
+import { loadFirstParty } from "./first-party.mjs";
 
 /** The template, one file, three rounds. */
 export const NOTICE_DOC = "docs/migration-notice.md";
@@ -330,23 +331,21 @@ const lower = (s) => String(s ?? "").toLowerCase();
 
 /**
  * MIG-13's recipients on a tree: every account holding a listed plugin with
- * no identity record whose owner no `astra_team` publisher record speaks for.
+ * no identity record whose owner is not one of Astra's own accounts.
+ *
+ * Since contract 6.32.0 (review of #512, L9) "Astra's own" is
+ * policy/first-party.json's logins, each pinned there to its numeric id, and
+ * no longer any publisher record that says `astra_team`: a record is typed by
+ * whoever writes it. The decision grants nothing either way — it only spares
+ * an account the migration notice — but one rule for "ours" is one place to
+ * be wrong.
  * One issue per account, in the repository of its EARLIEST listing (the
  * least `added_at`, then the id), naming every one of its listings.
  *
  * @returns {{account: string, target: string, listings: {id: string, repo: string, added_at: string}[]}[]}
  */
 export function recipients(root = REPO_ROOT) {
-  const team = new Set();
-  const pubDir = path.join(root, "publishers");
-  if (fs.existsSync(pubDir)) {
-    for (const f of fs.readdirSync(pubDir).filter((n) => n.endsWith(".json"))) {
-      const p = JSON.parse(fs.readFileSync(path.join(pubDir, f), "utf8"));
-      if (p.tier !== "astra_team") continue;
-      team.add(lower(p.owner));
-      for (const c of p.covers ?? []) team.add(lower(c));
-    }
-  }
+  const team = new Set([...loadFirstParty(root).logins.values()].map(lower));
   const byAccount = new Map();
   const pluginsDir = path.join(root, "plugins");
   for (const id of fs.readdirSync(pluginsDir).sort()) {

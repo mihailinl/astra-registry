@@ -1807,7 +1807,8 @@ function concurrentPush(origin, files, message, when) {
  * The real gates are held to refusing by their own suites; here the question
  * is only whether the redo runs every one, and stops on a red one.
  */
-const GATE_STUBS = ["tools/build-index.mjs", "tools/build-revocations.mjs", "tools/validate.mjs", "tools/selftest.mjs", "bot/moderation.mjs"];
+// No tools/selftest.mjs since contract 6.32.0 (review of #512, M5): the gates a landing job runs are these four.
+const GATE_STUBS = ["tools/build-index.mjs", "tools/build-revocations.mjs", "tools/validate.mjs", "bot/moderation.mjs"];
 function withGateStubs(root) {
   const ran = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-gates-")), "ran.txt");
   tmpRoots.push(path.dirname(ran));
@@ -2022,7 +2023,7 @@ test("the redo inside `apply` runs every gate the gate steps run, over the compi
     .map((l) => /^\s+(ASTRA_[A-Z_]+): (\$\{\{.*\}\})\s*$/.exec(l)).filter(Boolean).map((m) => [m[1], m[2]]));
   const gateLines = (block) => block.map((l) => l.trim()).filter((l) => /^node (tools|bot)\//.test(l));
   const want = [...gateLines(stepBlock("documents")), ...gateLines(stepBlock("rules"))];
-  assert.ok(want.length >= 5, `the gate steps run ${want.length} lines; the reader lost them`);
+  assert.ok(want.length >= 4, `the gate steps run ${want.length} lines; the reader lost them`);   // 4 since 6.32.0: no selftest
   const apply = applyStep().split("\n");
   const from = apply.findIndex((l) => /^\s*redo\(\) \{/.test(l));
   assert.ok(from >= 0, "the `apply` step has no `redo` function");

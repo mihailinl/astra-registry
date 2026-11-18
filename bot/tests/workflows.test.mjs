@@ -440,6 +440,25 @@ test("every workflow step that gates on tools/validate.mjs passes the same flags
 // `validate.mjs`, `build-index.mjs --check` and `selftest.mjs` — every rule this
 // registry holds a publication to. An escape hatch CI can reach is not an escape
 // hatch, it is the behaviour, so the one place it may appear is a test file.
+// Contract 6.32.0 (the owner's report; review of #512, M5): the registry's
+// own test suite gates pull requests (`registry-selftest`, build-index.yml)
+// and never a job that lands a publication, a takedown, a revert or an
+// operator act, where one red case would hold every author's work.
+// Watched red: the line restored in operator.yml's rules step.
+test("no job that pushes to main runs tools/selftest.mjs; build-index.yml's registry-selftest does", () => {
+  const offenders = [];
+  for (const name of ["operator.yml", "plugins-moderation.yml", "plugins-ingest.yml"]) {
+    read(name).split("\n").forEach((line, i) => {
+      if (line.trim().startsWith("#")) return;
+      if (/node\s+(\S*\/)?tools\/selftest\.mjs/.test(line)) offenders.push(`${name}:${i + 1}`);
+    });
+  }
+  assert.deepEqual(offenders, [], "a job that pushes to main runs the registry's own test suite");
+  const gate = read("build-index.yml");
+  assert.match(gate, /\n {4}name: registry-selftest\n/, "build-index.yml's check job is not named registry-selftest");
+  assert.match(gate, /node tools\/selftest\.mjs/, "registry-selftest does not run the selftest");
+});
+
 test("no workflow turns the publish path's own checks off", () => {
   const offenders = [];
   for (const name of files) {
@@ -547,8 +566,28 @@ const ALERT_EVENTS = new Map([
   ["alarm-drill.yml/drill", "BOT-86's weekly drill pages every week, and its start signal follows a delivered alarm"],
   ["operator.yml/alert", "each refused operator act is somebody with dispatch access trying; each one pages"],
   ["passkey-pins.yml/alert", "each key a pull request adds to the owner's passkey pin is a fingerprint he must compare; each one pages"],
+  ["plugins-moderation.yml/takedown-alert", "TRUST-26 since 6.32.0: every run that takes the day past three withdrawals pages, with the ids a revert names"],
 ]);
 const STATE_SPARSE = [".github/actions/alert-state", "bot/alert.mjs", "bot/lib/alert-verdict.mjs", "bot/lib/alert-checks.mjs", "tools/lib/ids.mjs"];
+
+// Contract 6.32.0 (review of #512, M6): TRUST-26's takedown alarm pages on
+// every run that takes the day past three withdrawals — its own event job,
+// after the push, and nothing of it rides `settled`, whose once-per-state
+// memory would swallow the second page. Watched red: the env line moved back
+// into `settled`.
+test("TRUST_26's takedown alarm is its own event job after the push, never `settled`'s", () => {
+  const jobs = allJobs();
+  const own = jobs.find((j) => j.file === "plugins-moderation.yml" && j.job === "takedown-alert");
+  assert.ok(own, "plugins-moderation.yml has no takedown-alert job");
+  const lines = code(own).join("\n");
+  assert.match(lines, /needs: commit\b/);
+  assert.match(lines, /ASTRA_TAKEDOWN_ALERT: \$\{\{ needs\.commit\.outputs\.takedown_alert \}\}/);
+  assert.match(lines, /needs\.commit\.outputs\.takedown_alert != '\[\]'/, "it runs on a run that withdrew nothing past the alarm");
+  assert.doesNotMatch(lines, /^\s+state:\s/m, "an event is handed a state");
+  const settled = jobs.find((j) => j.file === "plugins-moderation.yml" && j.job === "settled");
+  assert.doesNotMatch(code(settled).join("\n"), /TAKEDOWN_ALERT/, "settled still carries the takedown alarm");
+  assert.ok(ALERT_EVENTS.has("plugins-moderation.yml/takedown-alert"));
+});
 
 test("R4: every alert job but the events takes its state only from a secret-less job's output, and hands it back to one", () => {
   const jobs = allJobs();

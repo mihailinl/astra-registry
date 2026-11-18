@@ -2911,8 +2911,9 @@ export async function main(argv = [], {
     if (commit.message) fs.writeFileSync(messageFile, commit.message);
     fs.writeFileSync(path.join(out, "paths.txt"), commit.paths.length ? `${commit.paths.join("\n")}\n` : "");
     // R2: the deletions this commit makes, staged now, so the workflow's rules
-    // step — `tools/selftest.mjs` compares the index with the tree — reads the
-    // tree this commit will hold (`stageDeletions`).
+    // step reads the tree this commit will hold (`stageDeletions`; until
+    // contract 6.32.0 that step ran `tools/selftest.mjs`, which compares the
+    // index with the tree).
     stageDeletions(root, commit.paths);
     // An unclear deletion is an error: nobody can say what happened, and no
     // result will be posted until a person does. A hand cancellation is the
