@@ -185,9 +185,11 @@ function releaseRecord(doc) {
     ...(doc.protocol !== undefined ? { protocol: doc.protocol } : {}),
     ...(doc.min_astra_version !== undefined ? { min_astra_version: doc.min_astra_version } : {}),
     ...(doc.capabilities !== undefined ? { capabilities: [...doc.capabilities].sort() } : {}),
-    // The tools `[tools.danger]` declares Low, only where the record carries
-    // them; like `review` below, absent stays absent, so no record without the
-    // member changes a byte of `signed.plugins`.
+    // The tools `[tools.danger]` declares Low, wherever the record carries the
+    // member, `[]` included: present is "probed" and absent is "never probed",
+    // and Astra honours a declared Low tool only where this member lists it.
+    // Like `review` below, absent stays absent and is never defaulted, so no
+    // record older than the member changes a byte of `signed.plugins`.
     ...(doc.low_tools !== undefined ? { low_tools: [...doc.low_tools] } : {}),
     ...(doc.permissions !== undefined ? { permissions: doc.permissions } : {}),
     ...(doc.changelog_url !== undefined ? { changelog_url: doc.changelog_url } : {}),

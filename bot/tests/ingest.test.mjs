@@ -3348,15 +3348,16 @@ await test("B1 — the service path's check lists and decides the union of every
 //
 // Astra #377 runs a Low tool of a `reviewed` release without asking, so the
 // record keeps the list a review has to name (compileReview). It is the union
-// over the release's bundles, like `capabilities`, and absent when empty, so a
-// release declaring none derives exactly the record it did before the member.
+// over the release's bundles, like `capabilities`, and it is written on every
+// new record, `[]` when none: present means probed, absent means never probed
+// (Astra honours a declared Low tool only where the signed index lists it).
 //
 // Watched failing: with derive.mjs's `low_tools` line removed, both paths'
-// records lose the member; with `releaseAuthority` reading the first bundle's
+// records lose the member (and `[]` is not written); with `releaseAuthority` reading the first bundle's
 // list only, the reversed asset order loses `wipe`.
 const LOW_ON = (os, tools) => conformingAsset({ os, tomlTail: ["[tools.danger]", ...tools.map((t) => `${t} = "low"`), 'nuke = "high"', ""] });
 
-await test("low tools: the issue path writes the union of the bundles' Low tools, sorted, and omits the member when there are none", async () => {
+await test("low tools: the issue path writes the union of the bundles' Low tools, sorted, and `[]` when there are none", async () => {
   for (const assets of [[LOW_ON("linux", ["roll"]), LOW_ON("windows", ["wipe", "roll"])], [LOW_ON("windows", ["wipe", "roll"]), LOW_ON("linux", ["roll"])]]) {
     const r = await run({ assets, root: registryWith({}) });
     assertEqual(errorCodes(r).length, 0, JSON.stringify(errorCodes(r)));
@@ -3364,9 +3365,9 @@ await test("low tools: the issue path writes the union of the bundles' Low tools
   }
   const none = await run({ assets: [conformingAsset({ os: "linux" })], root: registryWith({}) });
   assertEqual(errorCodes(none).length, 0, JSON.stringify(errorCodes(none)));
-  assert(!Object.hasOwn(none.derived.version, "low_tools"), "a release declaring no Low tool carries no member");
+  assertEqual(JSON.stringify(none.derived.version.low_tools), "[]", "a release declaring no Low tool is recorded as probed, with none");
   const highOnly = await run({ assets: [conformingAsset({ os: "linux", tomlTail: ["[tools.danger]", 'nuke = "high"', ""] })], root: registryWith({}) });
-  assert(!Object.hasOwn(highOnly.derived.version, "low_tools"), "a declaration that is not Low is not recorded");
+  assertEqual(JSON.stringify(highOnly.derived.version.low_tools), "[]", "a declaration that is not Low is not recorded");
 });
 
 await test("low tools: the service path's check writes them into the listing handed to the publish job", async () => {

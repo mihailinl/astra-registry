@@ -77,10 +77,9 @@
     "low_tools": {
       "type": "array",
       "uniqueItems": true,
-      "minItems": 1,
       "maxItems": 64,
       "items": { "type": "string", "minLength": 1, "maxLength": 128 },
-      "description": "The tools this release's plugin.toml declares Low in `[tools.danger]` (`<tool> = \"low\"`), read by bot/manifest-probe with Astra's own rule (`ToolDangerDeclarations::read`, Astra #377), the union over the release's bundles, sorted. Astra runs a Low tool WITHOUT asking only when the release's review mark is `reviewed`, so a review covers this list: bot/lib/compile-decision.mjs `compileReview` moves a version carrying it to `reviewed` only when the service's M_REVIEW decision names exactly this set (`low_tools`), and leaves it `unreviewed` otherwise. Written only when non-empty; absent means the release declares no Low tool (or predates this member). Sorted and unique is held by tools/validate.mjs. tools/build-index.mjs copies it into the catalogue's `releases[].low_tools` byte for byte."
+      "description": "The tools this release's plugin.toml declares Low in `[tools.danger]` (`<tool> = \"low\"`), read by bot/manifest-probe with Astra's own rule (`ToolDangerDeclarations::read`, Astra #377), the union over the release's bundles, sorted. Written on every version record ingest adds, `[]` when the release declares none: PRESENT means the release was probed for Low tools, ABSENT means it was never probed (a record older than this member; records are immutable and never re-probed), and a client must then honour no declared Low tool. Astra runs a Low tool without asking only when the signed index entry carries this member, lists the tool, and the review mark is `reviewed`; bot/lib/compile-decision.mjs `compileReview` moves a version with a non-empty list to `reviewed` only when the service's M_REVIEW decision names exactly this set. Sorted and unique is held by tools/validate.mjs. tools/build-index.mjs copies it into the catalogue's `releases[].low_tools` byte for byte, `[]` included."
     },
     "permissions": {
       "type": "object",

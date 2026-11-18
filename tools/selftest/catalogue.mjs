@@ -453,15 +453,17 @@ export async function run() {
   //
   // Astra runs a Low tool of a `reviewed` release without asking, so clients
   // and the panel are shown the list the review covered. The copy is the
-  // review mark's: byte for byte where the record carries it, absent where it
-  // does not, so no record without it moves a byte of `signed.plugins`. The
+  // review mark's: byte for byte where the record carries it, `[]` included
+  // (present = probed; Astra honours a Low tool only where the index lists it),
+  // absent where it does not, so no record without it moves a byte of
+  // `signed.plugins`. The
   // validator holds the record's one written form (sorted, no blank name).
   //
   // Watched: deleting the `low_tools` spread in `releaseRecord` turns the first
   // assertion red; deleting `low_tools` from schema/index-v1.json's release
   // turns the schema one red (additionalProperties); deleting the sortedness
   // check in tools/validate.mjs turns the last one red.
-  await test("the generator copies each version record's low_tools into releases[], absent stays absent, and the validator holds them sorted", async () => {
+  await test("the generator copies each version record's low_tools into releases[], `[]` included, absent stays absent, and the validator holds them sorted", async () => {
     const dir = path.join(tmp, "low-tools-copy");
     fs.rmSync(dir, { recursive: true, force: true });
     fs.cpSync(path.join(REPO_ROOT, "tests/fixtures/id-collision/plugins/dice-roller"),
@@ -474,12 +476,13 @@ export async function run() {
       fs.writeFileSync(path.join(versions, `${v}.json`), stableStringify(doc));
     };
     at("1.1.0", ["roll", "wipe"]);
+    at("1.2.0", []);
 
     const doc = buildIndex({ root: dir, serial: 1 });
     const entry = doc.signed.plugins.find((p) => p.id === "dice-roller");
     assert(entry, "the fixture listing is not in its own catalogue");
     const lows = Object.fromEntries(entry.releases.map((r) => [r.version, Object.hasOwn(r, "low_tools") ? r.low_tools : "<absent>"]));
-    assertEqual(JSON.stringify(lows), JSON.stringify({ "1.1.0": ["roll", "wipe"], "1.0.0": "<absent>" }),
+    assertEqual(JSON.stringify(lows), JSON.stringify({ "1.2.0": [], "1.1.0": ["roll", "wipe"], "1.0.0": "<absent>" }),
       "the catalogue's releases do not carry each version record's low_tools as the record has it");
     const schema = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "schema/index-v1.json"), "utf8"));
     const errs = validateSchema(schema, doc);
