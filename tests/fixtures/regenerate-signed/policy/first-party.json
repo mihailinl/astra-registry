@@ -1,0 +1,7 @@
+{
+  "schema": "astra.registry.first-party/1",
+  "$comment": "A fixture: the made-up fixture-owner's id is first party here, so its astra_team badge still joins (contract 6.32.0).",
+  "github_ids": {
+    "1000001": "fixture-owner (not a real account)"
+  }
+}

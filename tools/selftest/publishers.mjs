@@ -33,7 +33,7 @@ import {
 } from "../lib/sources.mjs";
 import { checkPublisherRecords, runValidation } from "../validate.mjs";
 import { NO_LISTING_FILE, proofNamesOwner, recheck } from "../../bot/recheck-publishers.mjs";
-import { test, assert, tmp as SUITE_TMP } from "./harness.mjs";
+import { test, assert, assertEqual, tmp as SUITE_TMP } from "./harness.mjs";
 import { TRUST31_COPY, trust31Covers, trust31Entries } from "./trust31.mjs";
 
 // ── gap 6: a record that reaches no listing ─────────────────────────────────
@@ -271,6 +271,8 @@ export async function run() {
     const tree = fs.mkdtempSync(path.join(SUITE_TMP, "astra-pub-gate-"));
     try {
       fs.cpSync(path.join(REPO_ROOT, "publishers"), path.join(tree, "publishers"), { recursive: true });
+      // The first-party ids too (contract 6.32.0), so the committed records' team tier stands.
+      fs.cpSync(path.join(REPO_ROOT, "policy"), path.join(tree, "policy"), { recursive: true });
       const pick = committedFiles.find((f) => f === "publishers/mihailinl.json") ?? committedFiles[0];
       const other = committedFiles.find((f) => f !== pick);
       const edit = (rel, change) => {
@@ -369,7 +371,9 @@ export async function run() {
       assert(repoOf("json-tools", "covered-org/json-tools") === false, "plugins/json-tools must be LISTED for the covers case");
       assert(repoOf("echo-stt", "withdrawn-owner/echo-stt") === true, "plugins/echo-stt must be UNLISTED for the withdrawal case");
       const record = (owner, over = {}) => fs.writeFileSync(path.join(tree, "publishers", `${owner}.json`), JSON.stringify({
-        schema: "astra.registry.publisher/1", owner, display_name: `Fixture ${owner}`, tier: "astra_team",
+        // `verified`, not `astra_team`: since contract 6.32.0 the team tier joins
+        // only first-party numeric ids, and these owners are made up.
+        schema: "astra.registry.publisher/1", owner, display_name: `Fixture ${owner}`, tier: "verified",
         verified_at: "2026-01-01", evidence: { kind: "first-party", note: "fixture" }, ...over,
       }, null, 2) + "\n");
       record("listed-owner");
@@ -641,7 +645,10 @@ export async function run() {
       moveTo("mihailinl");
       const own = tierOf();
       assertEqual(JSON.stringify(own && [own.tier, own.github_id]), JSON.stringify(["astra_team", 193032699]), "the first-party control lost its tier");
-      assertEqual(catalogueListingProblems(buildIndex({ root: tree, serial: 1 }).signed).length, 0, "the control catalogue breaks a per-listing rule");
+      // (Its artifacts still name the old repository, which INV-39 reports; the publisher rules are what this asks.)
+      const publisherProblems = catalogueListingProblems(buildIndex({ root: tree, serial: 1 }).signed)
+        .filter((x) => /publisher|github_id/.test(`${x.where} ${x.problem}`));
+      assertEqual(publisherProblems.length, 0, "the control catalogue breaks a publisher rule");
     } finally {
       fs.rmSync(tree, { recursive: true, force: true });
     }

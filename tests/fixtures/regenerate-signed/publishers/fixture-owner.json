@@ -2,6 +2,9 @@
   "$comment": "A fixture publisher record, so a regeneration has a `signed.publishers` member to produce and a badge to attach. Not a real account.",
   "schema": "astra.registry.publisher/1",
   "owner": "fixture-owner",
+  "owner_ids": {
+    "fixture-owner": "1000001"
+  },
   "display_name": "Fixture Owner",
   "description_text": "The account every listing in this fixture tree but one is published from",
   "tier": "astra_team",

@@ -2849,9 +2849,11 @@ export function checkPublisherRecords(ctx, loaded = loadPublishers(ctx.root)) {
   // Contract 6.32.0: `astra_team` is Astra's own, by numeric id and never by
   // login (policy/first-party.json). The generator already gives such a
   // record no badge; this says why, at the commit that writes it.
-  const firstParty = loadFirstParty(ctx.root);
-  for (const p of firstParty.problems) report.error(FIRST_PARTY_FILE, p);
-  for (const { file, doc } of publisherRecords(loaded.publishers)) {
+  // A tree-level rule: asked only where there is a tree (a caller judging
+  // records alone passes no root).
+  const firstParty = ctx.root ? loadFirstParty(ctx.root) : null;
+  for (const p of firstParty?.problems ?? []) report.error(FIRST_PARTY_FILE, p);
+  for (const { file, doc } of firstParty ? publisherRecords(loaded.publishers) : []) {
     if (doc?.tier !== "astra_team") continue;
     const id = ownerIdOf(doc, doc.owner);
     const covered = (Array.isArray(doc.covers) ? doc.covers : []).map((l) => [l, ownerIdOf(doc, l)]);
