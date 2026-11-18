@@ -4,7 +4,7 @@
   "id": "office-files",
   "version": "0.2.0",
   "published_at": "2026-11-12T04:35:59Z",
-  "review": "unreviewed",
+  "review": "reviewed",
   "release": {
     "kind": "github_release",
     "repo": "KnlCE/office-files",

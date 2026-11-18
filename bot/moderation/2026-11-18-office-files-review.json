@@ -1,0 +1,12 @@
+{
+  "date": "2026-11-18",
+  "action": "review",
+  "plugin": "office-files",
+  "versions": [
+    "0.2.0"
+  ],
+  "reason": "Версия прочитана, замечаний нет.",
+  "category": "review_passed",
+  "service_decision_id": "dd24fa3f-9374-4990-9df0-ccba49f27fe1",
+  "declared_interest": true
+}
