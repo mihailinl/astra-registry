@@ -420,6 +420,22 @@ export function publisherFor({ plugin, publishers, identity = null, firstParty =
 }
 
 /**
+ * `{owner_id}` for a listing's identity record (ID-77), or `{}`.
+ *
+ * The same kind of id as `signed.publishers[*].github_id` (ID-76), and held to
+ * the same shape: canonical base-10 and a safe integer, so that what the
+ * client compares is exactly the number GitHub issued. After an
+ * `M_IDENTITY_RESET` the identity record is gone, and so is this member.
+ *
+ * @param {object|null} identity the listing's `identity.json`, or null
+ * @returns {{owner_id?: number}}
+ */
+export function ownerIdEntry(identity) {
+  const id = canonicalGithubId(identity?.repository_owner_id);
+  return id !== null && Number.isSafeInteger(Number(id)) ? { owner_id: Number(id) } : {};
+}
+
+/**
  * The record's `owner_ids` entry for `login`, matched case-insensitively and
  * only when exactly one key matches (the same rule TRUST-25's join reads), or
  * null.
@@ -560,6 +576,15 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
       // read as "no badge", and a client that renders on the field merely
       // being present would badge everybody.
       ...(badge ? { publisher: badge.doc.owner } : {}),
+      // ID-77 (contract 6.34.0): the repository owner's GitHub numeric id, out
+      // of the listing's identity record (ID-40), inside the signature. Astra
+      // installs an update without asking only when this equals the id it
+      // recorded at install, and it never compares a login, because a freed
+      // login can be registered by somebody else. Absent on an unbound
+      // listing, and on a record whose id is not a canonical positive safe
+      // integer: absence makes the client ask, which is the failure that
+      // costs one prompt rather than one silent install.
+      ...ownerIdEntry(identityOf.get(plugin.dir) ?? null),
       downloads: 0,
       stars: 0,
       updated_at: latest.published_at,

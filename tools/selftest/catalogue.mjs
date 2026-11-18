@@ -367,8 +367,23 @@ export async function run() {
       console.log(`      (serial ${baseDoc.signed.serial} → ${serial}: the catalogue's version rose, so a difference publishes)`);
       return;
     }
+    // ID-77's introduction, and only that. The generator learned `owner_id`
+    // after 28 listings already had identity records, so the commit teaching
+    // it renders them differently at an unchanged serial, and nothing under
+    // plugins/ could honestly move with it. That content waits, as TRUST-28
+    // means it to: the signer carries the served catalogue until the next
+    // listing change raises the serial, and the owner ids publish then. The
+    // pass is for a base catalogue that carries no `owner_id` at all, i.e. one
+    // generated before the member existed; once any committed catalogue
+    // carries one, an equal-serial change of it is red like any other.
+    const beforeOwnerIds = baseDoc.signed.plugins.some((e) => Object.hasOwn(e, "owner_id"));
+    if (!beforeOwnerIds) {
+      console.log("      (the base catalogue predates `owner_id` (ID-77), so its first appearance is not compared; " +
+        "it publishes when the next listing change raises the serial)");
+    }
     const strip = (entry) => {
       const { publisher, ...rest } = entry;
+      if (!beforeOwnerIds) delete rest.owner_id;
       return rest;
     };
     const before = stableStringify(baseDoc.signed.plugins.map(strip)).split("\n");
@@ -509,6 +524,64 @@ export async function run() {
     at("1.1.0", ["roll", "roll"]);
     assert(errorsMatching((await validateTree(dir)).report, "low_tools").length > 0,
       "a low_tools that repeats a name is accepted (schema/version-v1.json uniqueItems)");
+  });
+
+  // ID-77 (contract 6.34.0): Astra installs an update without asking only
+  // when the entry's `owner_id` equals the repository owner's numeric id it
+  // recorded at install. So the member is the identity record's
+  // `repository_owner_id` exactly, as an integer, and it is absent wherever
+  // there is nothing trustworthy to compare: no identity record (unbound, or
+  // one an M_IDENTITY_RESET removed) and an id that is not a canonical
+  // positive safe integer. A present-but-wrong id would be worse than none,
+  // because absence makes the client ask.
+  //
+  // Watched: deleting the `ownerIdEntry` spread in `buildIndex` turns the
+  // first assertion red; replacing it with a bare
+  // `owner_id: Number(identity.repository_owner_id)` turns the malformed rows
+  // red; deleting `owner_id` from schema/index-v1.json's plugin turns the
+  // schema one red (additionalProperties).
+  await test("ID-77: a bound listing's entry carries its identity record's owner id as an integer; an unbound, reset or malformed one carries none", () => {
+    const dir = path.join(tmp, "owner-id");
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.cpSync(path.join(REPO_ROOT, "tests/fixtures/id-collision/plugins/dice-roller"),
+      path.join(dir, "plugins", "dice-roller"), { recursive: true });
+    const identityFile = path.join(dir, "plugins", "dice-roller", "identity.json");
+    // JSON.stringify, not stableStringify: the malformed rows include a number
+    // the canonical writer refuses, and the generator must survive reading one.
+    const bind = (ownerId) => fs.writeFileSync(identityFile, `${JSON.stringify({
+      schema: "astra.registry.identity/1", plugin_id: "dice-roller", repository_id: "1343092393",
+      repository_owner_id: ownerId, repo: "someone/dice-roller", token_hash: "c".repeat(16),
+    })}\n`);
+    const entryOf = () => buildIndex({ root: dir, serial: 1 }).signed.plugins.find((p) => p.id === "dice-roller");
+    const schema = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "schema/index-v1.json"), "utf8"));
+    const schemaErrors = (doc) => validateSchema(schema, doc).map((e) => `${e.path} ${e.message}`).join("\n");
+
+    const unbound = buildIndex({ root: dir, serial: 1 });
+    assert(!Object.hasOwn(unbound.signed.plugins.find((p) => p.id === "dice-roller"), "owner_id"),
+      "an unbound listing carries an owner_id");
+    assertEqual(schemaErrors(unbound), "", "schema/index-v1.json refuses a catalogue without owner_id");
+
+    bind("280318216");
+    const bound = buildIndex({ root: dir, serial: 1 });
+    assertEqual(JSON.stringify(bound.signed.plugins.find((p) => p.id === "dice-roller").owner_id), "280318216",
+      "a bound listing's entry does not carry its identity record's repository_owner_id as an integer");
+    assertEqual(schemaErrors(bound), "", "schema/index-v1.json refuses a catalogue with owner_id");
+    const asString = JSON.parse(JSON.stringify(bound));
+    asString.signed.plugins.find((p) => p.id === "dice-roller").owner_id = "280318216";
+    assert(validateSchema(schema, asString).length > 0, "schema/index-v1.json accepts owner_id as a string");
+    asString.signed.plugins.find((p) => p.id === "dice-roller").owner_id = 0;
+    assert(validateSchema(schema, asString).length > 0, "schema/index-v1.json accepts owner_id 0");
+
+    for (const bad of ["0280318216", "0", "-5", "28031821x", "", " 280318216", "9007199254740993", 280318216.5, null]) {
+      bind(bad);
+      assert(!Object.hasOwn(entryOf(), "owner_id"), `an identity record with repository_owner_id ${JSON.stringify(bad)} gave owner_id ${JSON.stringify(entryOf().owner_id)}`);
+    }
+
+    // An M_IDENTITY_RESET deletes the identity record; the member goes with it.
+    bind("280318216");
+    assert(Object.hasOwn(entryOf(), "owner_id"), "the reset control is not bound");
+    fs.rmSync(identityFile);
+    assert(!Object.hasOwn(entryOf(), "owner_id"), "a reset listing still carries the owner_id of the identity it no longer has");
   });
 
   // A reviewed record's Low tools were named by its review, checked on the tree
