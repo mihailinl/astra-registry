@@ -1282,11 +1282,14 @@ test("the moderation log holds a review's low_tools to its shape", () => {
   const base = { date: "2026-09-20", action: "review", plugin: "widgets", versions: ["1.5.0"], reason: REVIEW_REASON,
     category: "review_passed", service_decision_id: SDI };
   assert.deepEqual(checkEntry({ ...base, low_tools: { "1.5.0": ["roll", "wipe"] } }), []);
+  // A name Rust's trim keeps and JS's strips (U+FEFF) is Astra's to judge, and
+  // it judged it Low; refusing it here would make compileReview throw.
+  assert.deepEqual(checkEntry({ ...base, low_tools: { "1.5.0": ["roll", "\uFEFF"] } }), []);
   for (const [what, low_tools, extra] of [
     ["unsorted", { "1.5.0": ["wipe", "roll"] }],
     ["repeated", { "1.5.0": ["roll", "roll"] }],
     ["empty list", { "1.5.0": [] }],
-    ["blank name", { "1.5.0": [" "] }],
+    ["empty name", { "1.5.0": [""] }],
     ["a version the entry does not name", { "1.1.0": ["roll"] }],
     ["a list, not an object", ["roll"]],
     ["an empty object", {}],

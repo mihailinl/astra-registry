@@ -464,7 +464,7 @@ export async function run() {
   // turns the schema one red (additionalProperties); deleting the sortedness
   // check in tools/validate.mjs turns the unsorted one red; putting
   // `maxItems: 64` back on schema/version-v1.json turns the no-caps one red.
-  await test("the generator copies each version record's low_tools into releases[], `[]` included, absent stays absent, and the validator holds them sorted", async () => {
+  await test("the generator copies each version record's low_tools into releases[], `[]` included, absent stays absent, and the validator holds them sorted and no more", async () => {
     const dir = path.join(tmp, "low-tools-copy");
     fs.rmSync(dir, { recursive: true, force: true });
     fs.cpSync(path.join(REPO_ROOT, "tests/fixtures/id-collision/plugins/dice-roller"),
@@ -501,9 +501,11 @@ export async function run() {
     at("1.1.0", ["wipe", "roll"]);
     assert(errorsMatching((await validateTree(dir)).report, "low_tools is not sorted").length === 1,
       "an unsorted low_tools is accepted");
-    at("1.1.0", ["roll", "  "]);
-    assert(errorsMatching((await validateTree(dir)).report, "empty after trimming").length === 1,
-      "a low_tools name that is blank after trimming is accepted");
+    // Which names count is the probe's (Astra's rule, in Rust); JS's trim
+    // strips U+FEFF and Rust's does not, so the validator does not re-judge.
+    at("1.1.0", ["roll", "\uFEFF"]);
+    assertEqual(errorsMatching((await validateTree(dir)).report, "low_tools").length, 0,
+      "a name Astra reads as Low (U+FEFF, kept by Rust's trim) is refused on the record");
     at("1.1.0", ["roll", "roll"]);
     assert(errorsMatching((await validateTree(dir)).report, "low_tools").length > 0,
       "a low_tools that repeats a name is accepted (schema/version-v1.json uniqueItems)");

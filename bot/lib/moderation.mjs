@@ -604,11 +604,14 @@ export function checkEntry(doc, where = "<entry>", { cutoverAt = null } = {}) {
       const named = Array.isArray(doc.versions) ? doc.versions : [];
       for (const [version, tools] of Object.entries(doc.low_tools)) {
         if (!named.includes(version)) bad(`low_tools names ${JSON.stringify(version)}, which this review's versions do not`);
-        const ok = Array.isArray(tools) && tools.length > 0 && tools.length <= 64
-          && tools.every((t) => typeof t === "string" && t.trim() !== "" && t.length <= 128)
+        // No trim and no caps: the list is the record's, which the probe read
+        // by Astra's rule, and a stricter reading here would make compileReview
+        // THROW on an entry it composed from a set it accepted.
+        const ok = Array.isArray(tools) && tools.length > 0
+          && tools.every((t) => typeof t === "string" && t !== "")
           && new Set(tools).size === tools.length
           && [...tools].sort().join("\u0000") === tools.join("\u0000");
-        if (!ok) bad(`low_tools.${version} must be a sorted list of distinct, non-blank tool names (at most 64, each at most 128 chars)`);
+        if (!ok) bad(`low_tools.${version} must be a sorted list of distinct, non-empty tool names`);
       }
     }
   }
