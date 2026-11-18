@@ -983,7 +983,10 @@ export function compileDecision(entry, { root = REPO_ROOT, overBound = false, ba
         `${listing.id}'s latest listed version is covered by ${covered} (MOD-10). Relisting under a signed ` +
         "advisory would put a plugin back in the catalogue that installed copies are already refusing");
     }
-    if (!listing.bound && listing.id !== MIG25_UNBOUND_EXCEPTION) {
+    // MIG-25's exception holds only while the listing is still contained: since M-T6.3 step 3 (2026-11-18)
+    // astra-chess is released from MINICE-AI, and an UNBOUND astra-chess (say after an identity reset) is
+    // refused `relist_unbound` like any other listing, rather than falling through to nothing.
+    if (!listing.bound && !(listing.id === MIG25_UNBOUND_EXCEPTION && containedRepo(listing))) {
       return refuse(d, "relist_unbound",
         `${listing.id} has no identity record on \`main\`, so it has no bound release, and a release cannot lift ` +
         "`unlisted` by itself (MIG-27)");

@@ -914,7 +914,7 @@ export async function run() {
         `plugins/${dir} is listed from ${doc.source.repo}, a repository under the freed login KNICE-TECH, which anybody can register`);
     }
     // knice-chess is the one, and a guard over a set needs its floor.
-    assert(underFreed >= 1, "no listing under KNICE-TECH is on the tree, so the permanent guard is asserting about nothing; if knice-chess was deleted, delete this floor with it");
+    assert(underFreed >= 1, "no listing under KNICE-TECH is on the tree, so the permanent guard is asserting about nothing; if knice-chess was deleted, or its source.repo moved off KNICE-TECH, delete this floor with it");
     assert(reservedPrefixViolation("astra-anything", "someone-else/x", real)?.prefix === "astra-",
       "policy/reserved-ids.json admits everybody; the prefix is no longer reserved");
     // MOD-16's staging repository (registry plan M-T2.1): the staging listing is
