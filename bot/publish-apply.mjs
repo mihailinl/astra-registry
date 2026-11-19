@@ -62,6 +62,7 @@ import { invalidId, unsafePathComponent } from "../tools/lib/ids.mjs";
 import { readTree, treeProblems } from "../tools/lib/tree-modes.mjs";
 import { PIN_REL, REVOKED_DIR, canonicalBody, keyByCredential, loadPin, pinRefusal } from "./lib/operator-act.mjs";
 import { baselineNamesRepository } from "./lib/identity.mjs";
+import { claimsVoiding } from "./lib/decisions.mjs";
 
 export const EXIT = { ok: 0, refused: 1, broke: 2, conflict: 3 };
 
@@ -184,6 +185,11 @@ export function recordFileProblem(reportDir, rel) {
   // MIG-20's baseline writes `migration` records once, by bot/baseline.mjs, never through a publication; and ID-64
   // reads them as who is a sibling of whom, so one carried in a report could make a listing a sibling of anything.
   if (doc.trigger === "migration") return `${rel} is a \`migration\` record; only MIG-20's baseline writes those, never a publication (ID-64)`;
+  // DEC-7's voiding record ends a listing's baseline (`effectiveBaseline`): it lifts TRUST-23's
+  // `B_REPOSITORY_RECYCLED` and, under ID-64, drops the listing as a sibling. Only the moderation run writes one,
+  // for an applied `M_IDENTITY_RESET`; validate checks a voiding record's shape, not who wrote it, so a well-formed
+  // one carried in a publication report would void any listing's baseline. Anything that claims to be one is refused.
+  if (claimsVoiding(doc)) return `${rel} is an identity-reset (voiding) record; only the moderation run writes those, never a publication (DEC-7; M_IDENTITY_RESET)`;
   const at = typeof doc.decided_at === "string" ? doc.decided_at : "";
   if (at.slice(0, 4) !== m[1] || at.slice(5, 7) !== m[2]) {
     return `${rel}: decided_at ${at} files it under log/decisions/${at.slice(0, 4)}/${at.slice(5, 7)}, not here`;

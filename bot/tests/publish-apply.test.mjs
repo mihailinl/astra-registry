@@ -34,7 +34,7 @@ import {
   run,
 } from "../publish-apply.mjs";
 import { readTree, treeModeProblems } from "../../tools/lib/tree-modes.mjs";
-import { composeVoidingRecord } from "../lib/decisions.mjs";
+import { composeVoidingRecord, decisionId } from "../lib/decisions.mjs";
 import { makeKey, pinOf } from "./fixtures/authenticator.mjs";
 
 const git = (cwd, ...args) =>
@@ -734,6 +734,33 @@ test("ID-64: a sibling listing's identity record lands beside its repository's p
       assert.equal(out.outcome, "refused", `${what} landed`);
       assert.match(out.refusals[0].message, /is not a listing already naming/, what);
     }
+  }
+});
+
+test("a publication report carrying an identity-reset (voiding) record is refused: only the moderation run writes one", () => {
+  // DEC-7's voiding record ends a baseline (effectiveBaseline): it lifts TRUST-23's B_REPOSITORY_RECYCLED and,
+  // since ID-64 asks effectiveBaseline, drops the listing as a sibling. validate checks its shape only, so a
+  // well-formed one carried in a publication report would void any listing's baseline.
+  const reset = (pluginId) => {
+    const { key, record } = composeVoidingRecord({
+      service_decision_id: "123e4567-e89b-42d3-a456-426614174000", plugin_id: pluginId,
+      decided_at: "2026-09-24T01:02:03Z", moderator: "mod-1",
+    });
+    return { schema: "astra.registry.decision/1", decision_id: decisionId(key), ...record };
+  };
+  for (const [what, doc] of [
+    ["another listing's voiding record", reset("beta")],
+    ["the published listing's own voiding record", reset("alpha")],
+    // claimsVoiding, not isVoidingRecord: a record that only looks like one is refused too, rather than waved
+    // through to a validator that would have to catch it.
+    ["a record claiming the reset's code alone", { ...recordDoc({ decision_id: "d".repeat(32) }), reasons: ["M_IDENTITY_RESET"] }],
+  ]) {
+    const e = estate();
+    const rep = withRecord(report(e.dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", recordDoc());
+    withRecord(rep, "ingest-report-0", doc);
+    const out = run({ root: e.one, reports: rep, watchState: path.join(e.dir, "none"), skipChecks: true, servicePath: true, log: quiet });
+    assert.equal(out.outcome, "refused", `${what} landed`);
+    assert.match(out.refusals[0].message, /identity-reset \(voiding\) record; only the moderation run writes those/, what);
   }
 });
 
