@@ -1650,3 +1650,50 @@ test("a pin that fails its own rules approves nothing at the push (review findin
   const r = run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, servicePath: true, pin: broken, log: quiet });
   assert.equal(r.outcome, "refused", "an owner-approved release was pushed under a pin that fails its own rules");
 });
+
+// MIG-27 (review of #521, finding 2): a publication never lists or delists.
+// `unlisted` is read off the main each attempt lands on, so an `M_DELIST`
+// that lands between the decide job and this one stays.
+test("a delist that lands on main between decide and apply stays delisted", () => {
+  const { dir, one, two, bare } = estate();
+  write(two, "plugins/alpha/plugin.json", '{"id":"alpha"}\n');
+  write(two, "plugins/alpha/versions/0.1.0.json", '{"version":"0.1.0"}\n');
+  git(two, "add", "-A");
+  git(two, "commit", "-m", "alpha, listed");
+  git(two, "push", "origin", "HEAD:main");
+  // The decide job read main here: alpha listed, so its report carries no `unlisted`.
+  const reports = report(dir, "ingest-report-0", { id: "alpha", version: "0.2.0", listing: '{\n  "id": "alpha",\n  "name": "Alpha"\n}\n' });
+  // Then a moderator's delist lands, before the publish job runs.
+  write(two, "plugins/alpha/plugin.json", '{"id":"alpha","unlisted":true}\n');
+  git(two, "add", "-A");
+  git(two, "commit", "-m", "registry: moderation (M_DELIST)");
+  git(two, "push", "origin", "HEAD:main");
+
+  const result = run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, log: quiet });
+  assert.equal(result.outcome, "committed");
+  assert.ok(result.attempts >= 2, "the stale checkout's push was refused and the report re-applied on the delisted main");
+  const landed = JSON.parse(git(bare, "show", "main:plugins/alpha/plugin.json"));
+  assert.equal(landed.unlisted, true, "the publication relisted a plugin delisted under it");
+  assert.equal(landed.name, "Alpha", "the rest of the report's plugin.json landed");
+  assert.equal(git(bare, "show", "main:plugins/alpha/versions/0.2.0.json"), '{"version":"0.2.0"}');
+});
+
+test("a publication never delists a listed plugin, and a new listing is unlisted only as the staging id", () => {
+  const { dir, one, bare } = estate();
+  write(one, "plugins/beta/plugin.json", '{"id":"beta"}\n');
+  write(one, "plugins/beta/versions/0.1.0.json", '{"version":"0.1.0"}\n');
+  write(one, "policy/reserved-ids.json", '{"staging_listing_id":"astra-withdrawal-canary"}\n');
+  git(one, "add", "-A");
+  git(one, "commit", "-m", "beta, listed, and the staging id");
+  git(one, "push", "origin", "HEAD:main");
+  report(dir, "ingest-report-0", { id: "beta", version: "0.2.0", listing: '{"id":"beta","unlisted":true}\n' });
+  report(dir, "ingest-report-1", { id: "gamma", version: "0.1.0", listing: '{"id":"gamma","unlisted":true}\n' });
+  const reports = report(dir, "ingest-report-2", { id: "astra-withdrawal-canary", version: "0.1.0", listing: '{"id":"astra-withdrawal-canary"}\n' });
+
+  const result = run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, log: quiet });
+  assert.equal(result.outcome, "committed");
+  const at = (id) => JSON.parse(git(bare, "show", `main:plugins/${id}/plugin.json`));
+  assert.equal(at("beta").unlisted, undefined, "a publication delisted a listed plugin");
+  assert.equal(at("gamma").unlisted, undefined, "a new listing landed unlisted");
+  assert.equal(at("astra-withdrawal-canary").unlisted, true, "the staging listing landed listed");
+});

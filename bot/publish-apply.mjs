@@ -63,6 +63,7 @@ import { readTree, treeProblems } from "../tools/lib/tree-modes.mjs";
 import { PIN_REL, REVOKED_DIR, canonicalBody, keyByCredential, loadPin, pinRefusal } from "./lib/operator-act.mjs";
 import { baselineNamesRepository } from "./lib/identity.mjs";
 import { claimsVoiding } from "./lib/decisions.mjs";
+import { publicationUnlisted, stagingListingIdAt } from "../tools/lib/reserved.mjs";
 
 export const EXIT = { ok: 0, refused: 1, broke: 2, conflict: 3 };
 
@@ -633,6 +634,33 @@ export function applyReport(root, reportDir, state) {
     if (idOfPath(rel) === null) throw new Refusal(`${rel}: has no id`, { file: rel });
   }
 
+  // MIG-27: a publication never lists or delists. `unlisted` is the tree's,
+  // read HERE, on every attempt, against the main this attempt is applied to:
+  // an `M_DELIST` that lands between the decide job and this one would
+  // otherwise be undone by a plugin.json the report carried from before it
+  // (review of #521, finding 2). A new listing is unlisted only when it is
+  // MOD-16's staging id. Read and checked before anything is written.
+  const stagingId = stagingListingIdAt(root);
+  const pluginDocs = new Map();
+  for (const rel of rels) {
+    const m = /^plugins\/([^/]+)\/plugin\.json$/.exec(rel);
+    if (!m) continue;
+    const read = (file, whose) => {
+      try {
+        return JSON.parse(fs.readFileSync(file, "utf8"));
+      } catch (e) {
+        throw new Refusal(`${rel} ${whose} is not JSON (${e.message})`, { file: rel });
+      }
+    };
+    const doc = read(path.join(reportDir, rel), "in the report");
+    const target = path.join(root, rel);
+    const onTree = fs.existsSync(target) ? read(target, "on main") : null;
+    const unlisted = publicationUnlisted({ onTree, id: m[1], stagingId });
+    if ((doc?.unlisted === true) === unlisted) continue;
+    const { unlisted: _fromReport, ...rest } = doc;
+    pluginDocs.set(rel, `${JSON.stringify(unlisted ? { ...rest, unlisted: true } : rest, null, 2)}\n`);
+  }
+
   for (const rel of rels) {
     const target = path.join(root, rel);
     if (DECISION_RECORD_FILE.test(rel)) {
@@ -647,7 +675,8 @@ export function applyReport(root, reportDir, state) {
       continue;
     }
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.copyFileSync(path.join(reportDir, rel), target);
+    if (pluginDocs.has(rel)) fs.writeFileSync(target, pluginDocs.get(rel));
+    else fs.copyFileSync(path.join(reportDir, rel), target);
     if (!ALERT_FILE.test(rel)) state.touchedIds.add(idOfPath(rel));
     if (QUEUE_FILE.test(rel)) state.queued.push(rel);
     state.changed = true;

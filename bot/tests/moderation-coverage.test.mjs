@@ -276,6 +276,31 @@ test("a delist in the same commit as its log entry is green, and without it red"
   assert.equal(mod(f.dir, { mode: "commits" }).status, "green");
 });
 
+test("a relist without a relist entry is red, and a moderation commit that writes one is green (review of #521)", () => {
+  // A publication never removes `unlisted` (publicationUnlisted); a commit
+  // that does without the entry is a defect or a hand edit, and leaves the
+  // transparency log calling a listed plugin withdrawn.
+  const f = fixture("walk-relist")
+    .write("plugins/a/plugin.json", listing("a", { unlisted: true }))
+    .write("bot/moderation/2026-09-01-a-delist.json", entry("2026-09-01", "a", "delist"))
+    .commit("a, delisted with its entry")
+    .landTools();
+  f.write("plugins/a/plugin.json", listing("a")).commit("registry: publish (plugins ingest)");
+  const red = mod(f.dir, { mode: "commits" });
+  assert.match(codesOf(red), /MOD_COMMIT_UNCOVERED/);
+  assert.match(JSON.stringify(red), /relisted a/);
+
+  const g = fixture("walk-relist-logged")
+    .write("plugins/a/plugin.json", listing("a", { unlisted: true }))
+    .write("bot/moderation/2026-09-01-a-delist.json", entry("2026-09-01", "a", "delist"))
+    .commit("a, delisted with its entry")
+    .landTools();
+  g.write("plugins/a/plugin.json", listing("a"))
+    .write("bot/moderation/2026-09-03-a-relist.json", entry("2026-09-03", "a", "relist", { category: "error" }))
+    .commit("registry: moderation (M_RELIST)");
+  assert.equal(mod(g.dir, { mode: "commits" }).status, "green");
+});
+
 test("a listing CREATED unlisted is not a delist", () => {
   // Reading only the child would make every new unlisted listing look like an
   // unlogged takedown, which is what an operator does when they land a plugin
