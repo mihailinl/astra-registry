@@ -372,18 +372,20 @@ export async function run() {
     // it renders them differently at an unchanged serial, and nothing under
     // plugins/ could honestly move with it. That content waits, as TRUST-28
     // means it to: the signer carries the served catalogue until the next
-    // listing change raises the serial, and the owner ids publish then. The
-    // pass is for a base catalogue that carries no `owner_id` at all, i.e. one
-    // generated before the member existed; once any committed catalogue
-    // carries one, an equal-serial change of it is red like any other.
-    const beforeOwnerIds = baseDoc.signed.plugins.some((e) => Object.hasOwn(e, "owner_id"));
-    if (!beforeOwnerIds) {
+    // listing change raises the serial, and the owner ids publish then.
+    // `baseHasOwnerIds` is whether the base catalogue already carries any
+    // `owner_id`. Only when it carries none (it was generated before the
+    // member existed) is the member left out of the comparison; once any
+    // committed catalogue carries one, an equal-serial change of it is red
+    // like any other.
+    const baseHasOwnerIds = baseDoc.signed.plugins.some((e) => Object.hasOwn(e, "owner_id"));
+    if (!baseHasOwnerIds) {
       console.log("      (the base catalogue predates `owner_id` (ID-77), so its first appearance is not compared; " +
         "it publishes when the next listing change raises the serial)");
     }
     const strip = (entry) => {
       const { publisher, ...rest } = entry;
-      if (!beforeOwnerIds) delete rest.owner_id;
+      if (!baseHasOwnerIds) delete rest.owner_id;
       return rest;
     };
     const before = stableStringify(baseDoc.signed.plugins.map(strip)).split("\n");
