@@ -153,6 +153,9 @@ jobs:
       hexes: ${{ steps.sign.outputs.hexes }}
       committed: ${{ steps.commit.outputs.committed }}
       signed_sha: ${{ steps.commit.outputs.signed_sha }}
+      # What `export-assert` asks its questions at: the same commit this job
+      # signed, not whatever `main` says by the time that job starts.
+      source_commit: ${{ steps.source.outputs.sha }}
     steps:
       # main's head at run start, with the whole history: D3's serials are
       # `rev-list --count` and a shallow clone counts what it was given, which
@@ -403,6 +406,55 @@ jobs:
         if: steps.assemble.outputs.deploy == 'true'
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
 
+  # ── export-assert: Phase 2's pre-sign assertion, asked and never enforced ──
+  #
+  # plugin-phase2-design-2026-11-19 §4 step 4 will make signing wait on two
+  # facts about the Source-Commit: its plugins/** and log/** digest is the
+  # plugins service's export (`state_sha256`, tools/lib/export-state.mjs), and
+  # every change to them since the last signing came from the bot. Until the
+  # export is live and the staging replay agrees with it (§6 step 2), they are
+  # asked HERE, after `publish` and beside it: `publish` does not wait for this
+  # job, so its answer can page and cannot hold a signature back. A "no" is a
+  # red status with a fixed code, folded into the run's one verdict below.
+  #
+  # It holds a bot OIDC token and nothing else: `contents: read`, no secret, no
+  # artifact, no alarm credential (bot/tests/workflows.test.mjs names it as
+  # the one job outside the bot workflows that may mint one). The token is
+  # minted only when `ASTRA_EXPORT_URL` is set, and only for a URL under the
+  # service's API base; unset, the export comparison reads "not asked".
+  export-assert:
+    needs: publish
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    environment: plugins-service
+    permissions:
+      contents: read
+      id-token: write
+    timeout-minutes: 10
+    outputs:
+      status: ${{ steps.assert.outputs.status }}
+      codes: ${{ steps.assert.outputs.codes }}
+      hexes: ${{ steps.assert.outputs.hexes }}
+    steps:
+      # Full history: (c) walks every commit since `signed`'s previous
+      # Source-Commit, and the serial is a `rev-list --count`.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.publish.outputs.source_commit }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+
+      - name: The export, the digest and the authors at the Source-Commit (reported, never enforced)
+        id: assert
+        env:
+          ASTRA_EXPORT_URL: ${{ vars.ASTRA_EXPORT_URL }}
+          SOURCE_COMMIT: ${{ needs.publish.outputs.source_commit }}
+        run: node tools/signer/export-assert.mjs --source-commit "$SOURCE_COMMIT"
+
   # ── alert-state: R4's memory for `alert`, restored without the alarm credential ──
   #
   # The Actions cache is restored HERE, in a job with no environment, no
@@ -447,7 +499,7 @@ jobs:
   # old bytes because it could not be regenerated. Nothing is red, and clients
   # are being served something nobody is producing any more.
   alert:
-    needs: [publish, pages, alert-state]
+    needs: [publish, pages, export-assert, alert-state]
     if: always() && !cancelled()
     runs-on: ubuntu-24.04
     environment: alerts
@@ -497,9 +549,9 @@ jobs:
       # deleted from this workflow and forgotten here pages rather than going
       # quiet: a named job whose variables are absent is a job that did not
       # report, which is red.
-      - name: The verdict, from what the two jobs above reported
+      - name: The verdict, from what the three jobs above reported
         env:
-          ASTRA_SIGNER_JOBS: publish pages
+          ASTRA_SIGNER_JOBS: publish pages export-assert
           PUBLISH_RESULT: ${{ needs.publish.result }}
           PUBLISH_STATUS: ${{ needs.publish.outputs.status }}
           PUBLISH_CODES: ${{ needs.publish.outputs.codes }}
@@ -508,6 +560,10 @@ jobs:
           PAGES_STATUS: ${{ needs.pages.outputs.status }}
           PAGES_CODES: ${{ needs.pages.outputs.codes }}
           PAGES_HEXES: ${{ needs.pages.outputs.hexes }}
+          EXPORT_ASSERT_RESULT: ${{ needs.export-assert.result }}
+          EXPORT_ASSERT_STATUS: ${{ needs.export-assert.outputs.status }}
+          EXPORT_ASSERT_CODES: ${{ needs.export-assert.outputs.codes }}
+          EXPORT_ASSERT_HEXES: ${{ needs.export-assert.outputs.hexes }}
         run: node tools/signer/verdict.mjs --out verdict.json --check signer
 
       - uses: ./.github/actions/alert

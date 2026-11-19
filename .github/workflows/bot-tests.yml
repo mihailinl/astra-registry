@@ -579,8 +579,9 @@ jobs:
 
       # Phase 2 (plugin-phase2-design-2026-11-19): `state_sha256` against the
       # vector the plugins service implements it from; the replay harness that
-      # proves an export reproduces main, on a fixture history. Real git
-      # repositories; no network.
-      - name: Phase 2's export digest and replay harness
+      # proves an export reproduces main, on a fixture history; and sign.yml's
+      # assert-only export check, which reports and never holds a signature.
+      # Real git repositories, a fake service and a fake token; no network.
+      - name: Phase 2's export digest, replay harness and assert-only check
         if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
-        run: node --test bot/tests/export-state.test.mjs bot/tests/export-replay.test.mjs
+        run: node --test bot/tests/export-state.test.mjs bot/tests/export-replay.test.mjs bot/tests/export-assert.test.mjs

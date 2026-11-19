@@ -2548,10 +2548,20 @@ test("every job in a bot workflow declares what it does about an OIDC token", ()
 // `plugins-service`. An OIDC token minted in a job the service's audience
 // would accept, from a workflow nobody is holding to BOT-1, is the boundary
 // gone by a different door.
+//
+// One job is named as the exception, and held below to the rule's purpose
+// rather than to its letter: Phase 2 step 2 (plugin-phase2-design-2026-11-19
+// §4) has `sign.yml`'s `export-assert` fetch the service's export with a bot
+// token, because the export is the service speaking to the registry's own
+// signer. It is excused by file AND job name, so a second job beside it, or
+// the same job name in another file, is still an offender.
+const EXPORT_ASSERT = Object.freeze({ file: SIGNER, job: "export-assert" });
+const isExportAssert = (j) => j.file === EXPORT_ASSERT.file && j.job === EXPORT_ASSERT.job;
+
 test("`id-token: write` outside the bot workflows never sits beside plugins-service", () => {
   const present = botWorkflows();
   const offenders = allJobs()
-    .filter((j) => !present.includes(j.file) && mintsToken(j) && namesService(j))
+    .filter((j) => !present.includes(j.file) && !isExportAssert(j) && mintsToken(j) && namesService(j))
     .map((j) => where(j));
   assert.equal(
     offenders.join(", "),
@@ -2566,6 +2576,40 @@ test("`id-token: write` outside the bot workflows never sits beside plugins-serv
     `no job outside ${present.join(", ")} declares id-token: write, and sign.yml's pages job did on ` +
     `2026-09-20; this rule is passing by finding nothing`,
   );
+});
+
+// The exception above, held to BOT-1's sentence: a job that holds a bot token
+// holds nothing else. `contents: read` and the token, no stored secret, no
+// artifact either way, no cache, no push, no alarm credential, and the one
+// script it runs is the assertion. Watched by adding `contents: write`, a
+// `secrets.` read or an upload to the job: each is named below.
+test("sign.yml's export-assert holds a bot token and nothing else", () => {
+  const job = jobOf(EXPORT_ASSERT.file, EXPORT_ASSERT.job);
+  assert.ok(mintsToken(job), `${where(job)} no longer mints a token; drop the exception above with it`);
+  assert.ok(code(job).some((l) => /^\s{4}environment:\s*plugins-service\s*$/.test(l)),
+    `${where(job)} mints a bot token outside \`environment: plugins-service\`, which bot/lib/oidc.mjs refuses`);
+  const lines = code(job);
+  const at = lines.findIndex((l) => /^\s{4}permissions:\s*$/.test(l));
+  assert.ok(at >= 0, `${where(job)} has no permissions block`);
+  const permissions = [];
+  for (let i = at + 1; i < lines.length && /^\s{6}\S/.test(lines[i]); i++) permissions.push(lines[i].trim());
+  assert.deepEqual(permissions.sort(), ["contents: read", "id-token: write"],
+    `${where(job)} asks for more than \`contents: read\` and the token`);
+  const FORBIDDEN = [
+    [/secrets\./, "a stored secret"],
+    [/actions\/(upload|download)-artifact/, "an artifact"],
+    [/actions\/cache/, "a cache"],
+    [/git push|--step\s+commit/, "a push"],
+    [/ASTRA_ALERT_/, "the alarm channel's credential"],
+    [/persist-credentials:\s*true/, "a persisted checkout credential"],
+  ];
+  const body = code(job).join("\n");
+  const held = FORBIDDEN.filter(([re]) => re.test(body)).map(([, what]) => what);
+  assert.deepEqual(held, [], `${where(job)} holds ${held.join(", ")} beside a bot token (BOT-1)`);
+  const runs = code(job).filter((l) => /^\s+run:/.test(l)).map((l) => l.trim());
+  assert.deepEqual(runs, ['run: node tools/signer/export-assert.mjs --source-commit "$SOURCE_COMMIT"'],
+    `${where(job)} runs something besides the assertion`);
+  assert.ok(/persist-credentials:\s*false/.test(body), `${where(job)} checks out with its credential persisted`);
 });
 
 // The `bot-state` environment (B-T5.0, BOT-42), held by `load` and `remember`
