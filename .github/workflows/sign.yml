@@ -415,7 +415,9 @@ jobs:
   # export is live and the staging replay agrees with it (§6 step 2), they are
   # asked HERE, after `publish` and beside it: `publish` does not wait for this
   # job, so its answer can page and cannot hold a signature back. A "no" is a
-  # red status with a fixed code, folded into the run's one verdict below.
+  # red status with a fixed code, paged by `export-alert` below under its own
+  # check and its own state, keyed on the foreign commits alone, so that a new
+  # main head does not page again about a commit that already paged.
   #
   # It holds a bot OIDC token and nothing else: `contents: read`, no secret, no
   # artifact, no alarm credential (bot/tests/workflows.test.mjs names it as
@@ -430,7 +432,9 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    timeout-minutes: 10
+    # Short: this job shares `registry-signer`'s concurrency group, and the
+    # next signer run queues behind it.
+    timeout-minutes: 3
     outputs:
       status: ${{ steps.assert.outputs.status }}
       codes: ${{ steps.assert.outputs.codes }}
@@ -453,6 +457,9 @@ jobs:
         env:
           ASTRA_EXPORT_URL: ${{ vars.ASTRA_EXPORT_URL }}
           SOURCE_COMMIT: ${{ needs.publish.outputs.source_commit }}
+          # Read-only (`contents: read`): asks GitHub whether a non-bot commit
+          # is a merged pull request's, which is a note and not a page.
+          GITHUB_TOKEN: ${{ github.token }}
         run: node tools/signer/export-assert.mjs --source-commit "$SOURCE_COMMIT"
 
   # ── alert-state: R4's memory for `alert`, restored without the alarm credential ──
@@ -499,7 +506,7 @@ jobs:
   # old bytes because it could not be regenerated. Nothing is red, and clients
   # are being served something nobody is producing any more.
   alert:
-    needs: [publish, pages, export-assert, alert-state]
+    needs: [publish, pages, alert-state]
     if: always() && !cancelled()
     runs-on: ubuntu-24.04
     environment: alerts
@@ -549,9 +556,9 @@ jobs:
       # deleted from this workflow and forgotten here pages rather than going
       # quiet: a named job whose variables are absent is a job that did not
       # report, which is red.
-      - name: The verdict, from what the three jobs above reported
+      - name: The verdict, from what the two jobs above reported
         env:
-          ASTRA_SIGNER_JOBS: publish pages export-assert
+          ASTRA_SIGNER_JOBS: publish pages
           PUBLISH_RESULT: ${{ needs.publish.result }}
           PUBLISH_STATUS: ${{ needs.publish.outputs.status }}
           PUBLISH_CODES: ${{ needs.publish.outputs.codes }}
@@ -560,10 +567,6 @@ jobs:
           PAGES_STATUS: ${{ needs.pages.outputs.status }}
           PAGES_CODES: ${{ needs.pages.outputs.codes }}
           PAGES_HEXES: ${{ needs.pages.outputs.hexes }}
-          EXPORT_ASSERT_RESULT: ${{ needs.export-assert.result }}
-          EXPORT_ASSERT_STATUS: ${{ needs.export-assert.outputs.status }}
-          EXPORT_ASSERT_CODES: ${{ needs.export-assert.outputs.codes }}
-          EXPORT_ASSERT_HEXES: ${{ needs.export-assert.outputs.hexes }}
         run: node tools/signer/verdict.mjs --out verdict.json --check signer
 
       - uses: ./.github/actions/alert
@@ -605,3 +608,127 @@ jobs:
           mode: save
           key: sign-alert
           state: ${{ needs.alert.outputs.next_state }}
+
+  # ── export-alert: `export-assert`'s own page, with its own memory ──────────
+  #
+  # Apart from `alert` on purpose. The signer's state keys a page on (code,
+  # hex) with the Source-Commit among the hexes, which is right for a carry and
+  # wrong here: a foreign commit stays in `export-assert`'s range until the next
+  # signing, and every new head would page about it again. This check,
+  # `signer-export`, keys on the foreign commits alone and never repeats a page
+  # (bot/alert.mjs NO_REPEAT_CHECKS): each commit pages once, a persistent
+  # outage pages once, and green after a page sends "resolved". The signer's
+  # heartbeat is `alert`'s; this one posts none.
+  export-alert-state:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: none
+    outputs:
+      state: ${{ steps.state.outputs.state }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert-state
+            bot/alert.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - uses: ./.github/actions/alert-state
+        id: state
+        with:
+          mode: restore
+          key: sign-export-alert
+
+  export-alert:
+    needs: [export-assert, export-alert-state]
+    if: always() && !cancelled()
+    runs-on: ubuntu-24.04
+    environment: alerts
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    outputs:
+      next_state: ${{ steps.alarm.outputs.next-state }}
+      state_changed: ${{ steps.alarm.outputs.state-changed }}
+    # The three channel secrets and the state key, and no ping URL: this job
+    # posts no heartbeat (attack M-5: a job maps only what it uses).
+    env:
+      ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+      ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+      ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      ASTRA_ALERT_STATE_HMAC_KEY: ${{ secrets.ASTRA_ALERT_STATE_HMAC_KEY }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert
+            bot/alert.mjs
+            bot/heartbeat.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+            tools/served-set/compose.mjs
+            tools/signer/verdict.mjs
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+
+      - name: The verdict, from what export-assert reported
+        env:
+          ASTRA_SIGNER_JOBS: export-assert
+          EXPORT_ASSERT_RESULT: ${{ needs.export-assert.result }}
+          EXPORT_ASSERT_STATUS: ${{ needs.export-assert.outputs.status }}
+          EXPORT_ASSERT_CODES: ${{ needs.export-assert.outputs.codes }}
+          EXPORT_ASSERT_HEXES: ${{ needs.export-assert.outputs.hexes }}
+        run: node tools/signer/verdict.mjs --out verdict.json --check signer-export
+
+      - uses: ./.github/actions/alert
+        id: alarm
+        with:
+          state: ${{ needs.export-alert-state.outputs.state }}
+          verdict: verdict.json
+          no-heartbeat-because: >-
+            the signer's ROLL-62 heartbeat is posted by this workflow's `alert`
+            job on every completed run; this job pages export-assert's findings only
+
+  export-alert-save:
+    needs: export-alert
+    if: always() && needs.export-alert.outputs.state_changed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: none
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert-state
+            bot/alert.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - uses: ./.github/actions/alert-state
+        with:
+          mode: save
+          key: sign-export-alert
+          state: ${{ needs.export-alert.outputs.next_state }}

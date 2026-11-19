@@ -2610,6 +2610,13 @@ test("sign.yml's export-assert holds a bot token and nothing else", () => {
   assert.deepEqual(runs, ['run: node tools/signer/export-assert.mjs --source-commit "$SOURCE_COMMIT"'],
     `${where(job)} runs something besides the assertion`);
   assert.ok(/persist-credentials:\s*false/.test(body), `${where(job)} checks out with its credential persisted`);
+  // Exactly the two pinned actions every job here uses, and nothing else: an
+  // action is code that runs beside the token.
+  const uses = code(job).filter((l) => /^\s+(- )?uses:/.test(l)).map((l) => l.trim().replace(/^- /, ""));
+  assert.deepEqual(uses, [
+    "uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4",
+    "uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4",
+  ], `${where(job)} uses an action besides the pinned checkout and setup-node`);
 });
 
 // The `bot-state` environment (B-T5.0, BOT-42), held by `load` and `remember`
