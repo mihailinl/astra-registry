@@ -13,6 +13,7 @@ import { cleanEnv, fixtureEnv } from "../lib/git-env.mjs";
 import { buildIndex, resolveSerial } from "../build-index.mjs";
 import { isShallow } from "../coverage/git.mjs";
 import { stableStringify } from "../lib/canonical.mjs";
+import { pluginsWithoutPublisher, withholdGainedOwnerIds } from "../signer/plan.mjs";
 import { validate as validateSchema } from "../lib/jsonschema.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { test, assert, assertEqual, neverAsk, tmp, validateTree, errorsMatching } from "./harness.mjs";
@@ -369,25 +370,16 @@ export async function run() {
     }
     // ID-77's introduction, and only that. The generator learned `owner_id` (6.34.0, then 6.35.2's effective
     // baseline) after listings already existed, so the commit teaching it renders them differently at an
-    // unchanged serial, and nothing under plugins/ could honestly move with it. That content waits, as
-    // TRUST-28 means it to: the signer carries the served catalogue until the next listing change raises the
-    // serial. So an entry GAINING `owner_id` where the base entry has none is not compared; an entry whose
-    // `owner_id` changes, or loses it, at an equal serial is red like any other difference.
-    const baseOwner = new Map(baseDoc.signed.plugins.map((e) => [e.id, Object.hasOwn(e, "owner_id")]));
-    const gained = [];
-    const strip = (entry, side) => {
-      const { publisher, ...rest } = entry;
-      if (side === "after" && Object.hasOwn(rest, "owner_id") && baseOwner.get(rest.id) === false) {
-        gained.push(rest.id);
-        delete rest.owner_id;
-      }
-      return rest;
-    };
-    const before = stableStringify(baseDoc.signed.plugins.map((e) => strip(e, "before"))).split("\n");
-    const after = stableStringify(buildIndex({ root: REPO_ROOT, serial }).signed.plugins.map((e) => strip(e, "after"))).split("\n");
-    if (gained.length) {
-      console.log(`      (${gained.length} entr${gained.length === 1 ? "y gains" : "ies gain"} \`owner_id\` (ID-77) at serial ${serial}; ` +
-        "not compared, it publishes when the next listing change raises the serial)");
+    // unchanged serial, and nothing under plugins/ could honestly move with it. The signer withholds the gain
+    // until the next listing change raises the serial (`withholdGainedOwnerIds`, the same function here), so
+    // an entry GAINING `owner_id` where the base entry has none is not compared; an entry whose `owner_id`
+    // changes, or loses it, at an equal serial is red like any other difference.
+    const held = withholdGainedOwnerIds(buildIndex({ root: REPO_ROOT, serial }), baseDoc);
+    const before = stableStringify(pluginsWithoutPublisher(baseDoc)).split("\n");
+    const after = stableStringify(pluginsWithoutPublisher(held.doc)).split("\n");
+    if (held.ids.length) {
+      console.log(`      (${held.ids.length} entr${held.ids.length === 1 ? "y gains" : "ies gain"} \`owner_id\` (ID-77) at serial ${serial}; ` +
+        "withheld by the signer until the next listing change raises the serial)");
     }
     let first = null;
     for (let i = 0; i < Math.max(before.length, after.length); i++) {

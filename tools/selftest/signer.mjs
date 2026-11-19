@@ -799,6 +799,61 @@ export async function run() {
     }
   });
 
+  await test("an entry that only gains owner_id at an equal serial is withheld, not carried, and pages nobody", async () => {
+    // ID-77's introduction (6.35.3): the generator learned `owner_id` after
+    // listings existed, so main renders them with it at the serial `signed`
+    // already holds. TRUST-28 forbids signing that content at that serial, and
+    // a carry pages on every run while the served copy ages towards expiry.
+    // The gain is withheld instead: the served content re-signs on schedule
+    // and `owner_id` publishes when the serial rises. Anything else that
+    // differs — an `owner_id` that changed — is still TRUST-28's carry.
+    const headList = signRevocations(
+      { signed: { schema: REVOCATIONS_SCHEMA, serial: 1, revocations: [] } },
+      { signer: signerFor(KEY_A), issuedAt: new Date("2026-09-19T00:00:00Z") },
+    );
+    const t = makeTree("owner-id-withheld");
+    t.addListing("dice-roller");
+    t.write("plugins/dice-roller/identity.json", `${JSON.stringify({
+      schema: "astra.registry.identity/1", plugin_id: "dice-roller", repository_id: "1343092393",
+      repository_owner_id: "280318216", repo: "someone/dice-roller",
+      token_hash: "c".repeat(16),
+    })}\n`);
+    const first = t.commit("a bound listing");
+    const built = buildIndex({ root: t.dir, serial: 1 });
+    assertEqual(built.signed.plugins[0].owner_id, 280318216, "the fixture's listing does not carry owner_id, so nothing below is tested");
+
+    const headWith = (ownerId) => {
+      const doc = structuredClone(built);
+      if (ownerId === undefined) delete doc.signed.plugins[0].owner_id;
+      else doc.signed.plugins[0].owner_id = ownerId;
+      const index = signIndex(doc, { signer: signerFor(KEY_A), issuedAt: new Date("2026-09-19T00:00:00Z") });
+      return headFrom({ index, revocations: headList, sha: first });
+    };
+
+    const before = headWith(undefined);
+    const soon = await planRun({ root: t.dir, sourceCommit: first, head: before, now: "2026-09-19T01:00:00Z" });
+    assertEqual(soon.documents.index.decision, "unchanged", `a gained owner_id was not withheld: ${JSON.stringify(soon.documents.index.reasons)}`);
+    assertEqual(soon.alerts.join("; "), "", "a withheld owner_id paged");
+    assert(soon.notes.some((n) => n.includes("withheld") && n.includes("dice-roller")), `no note names the withheld entry: ${soon.notes.join("; ")}`);
+
+    const later = await planRun({ root: t.dir, sourceCommit: first, head: before, now: "2026-09-19T21:00:00Z" });
+    assertEqual(later.documents.index.decision, "resign", "the served catalogue was not re-signed on schedule while owner_id was withheld");
+    assert(!Object.hasOwn(later.documents.index.candidate.signed.plugins[0], "owner_id"),
+      "the re-sign published owner_id at the served serial (TRUST-28)");
+
+    const changed = await planRun({ root: t.dir, sourceCommit: first, head: headWith(114572819), now: "2026-09-19T01:00:00Z" });
+    assertEqual(changed.documents.index.decision, "carry", "an owner_id that CHANGED at an equal serial was not carried");
+    assert(changed.documents.index.reasons.some((r) => r.includes("TRUST-28")), `${JSON.stringify(changed.documents.index.reasons)}`);
+    assertEqual(changed.alerts.length, 1, "a real TRUST-28 carry did not page");
+
+    t.addListing("second-plugin");
+    const second = t.commit("a second listing raises the serial");
+    const risen = await planRun({ root: t.dir, sourceCommit: second, head: before, now: "2026-09-19T01:00:00Z" });
+    assertEqual(risen.documents.index.decision, "changed", "a risen serial did not publish");
+    assertEqual(risen.documents.index.candidate.signed.plugins.find((p) => p.id === "dice-roller").owner_id, 280318216,
+      "owner_id stayed withheld after the serial rose");
+  });
+
   await test("a stale committed revocations.json on main does not stop a changed list", () => {
     // ROLL-12: `main:registry/v1/revocations.json` is an unsigned regeneration,
     // and between an advisory commit and the next `build-index` run it is
