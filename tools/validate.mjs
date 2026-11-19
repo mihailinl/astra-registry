@@ -38,7 +38,7 @@ import {
   unsafeDisplayText,
   unsafePathComponent,
 } from "./lib/ids.mjs";
-import { FIRST_PARTY_FILE, firstPartyClaimProblems, isFirstPartyRecord, loadFirstParty } from "./lib/first-party.mjs";
+import { FIRST_PARTY_FILE, firstPartyClaimProblems, isFirstPartyRecord, loadFirstParty, versionStandsUnderSource } from "./lib/first-party.mjs";
 import {
   ALERTS_DIR,
   BASELINE_FILE,
@@ -502,6 +502,19 @@ function checkVersionDoc(plugin, version, ctx) {
   for (const e of validateSchema(schemas.version, doc)) {
     report.error(where, `${e.path} ${e.message}`);
   }
+  // `low_tools` is a set the review is compared against (compileReview), and
+  // the record is its one written form: sorted (JS code-unit order, the order
+  // bot/lib/derive.mjs writes), so two records of one set are one text. Unique
+  // and strings are the schema's. Which names count is NOT judged here: the
+  // probe applied Astra's own rule (`ToolDangerDeclarations::read`), and a
+  // second reading in JS would differ from Rust's (`trim` strips U+FEFF here
+  // and not there) and refuse a list Astra reads.
+  if (Array.isArray(doc.low_tools)) {
+    const names = doc.low_tools.map(String);
+    if ([...names].sort().join("\u0000") !== names.join("\u0000")) {
+      report.error(where, "low_tools is not sorted", "bot/lib/derive.mjs writes it sorted; a hand edit did not.");
+    }
+  }
   // The permission words, which are the version record's display strings: the
   // consent sheet shows them before the user has agreed to anything.
   for (const [field, value] of displayStrings(doc)) {
@@ -532,8 +545,13 @@ function checkVersionDoc(plugin, version, ctx) {
   // so the pin a user takes at install can only ever come from a version whose
   // release.repo IS the source repo, which is what this rule protects. Yanks
   // are never undone, so the exemption cannot later re-admit such a version.
+  //
+  // And a version left under the old name by a rename inside one first-party
+  // account (owner, 2026-11-19), which the decide job no longer holds: the
+  // same repository by both numeric ids and the same owner login, so the same
+  // author and nothing for a moderator to yank. `renamedInPlace` says which.
   if (doc.release?.repo && plugin.doc.source?.repo && doc.release.repo !== plugin.doc.source.repo
-    && doc.yanked !== true) {
+    && doc.yanked !== true && !ctx.renamedInPlace?.has(`${plugin.doc.id}@${doc.version}`)) {
     report.error(where, `release.repo ${JSON.stringify(doc.release.repo)} is not the listing's source repo ${JSON.stringify(plugin.doc.source.repo)}`,
       "The identity a user pins at install is the source repo. A release from anywhere else is a different author. " +
       "A version released from the listing's previous repository is accepted only once it is yanked (M-T6.3).");
@@ -668,6 +686,35 @@ function checkVersionDoc(plugin, version, ctx) {
         "See policy/limits.json max_artifact_bytes.");
     }
   }
+}
+
+/**
+ * The versions a first-party rename left under the repository's old name, as
+ * `<id>@<version>`: `versionStandsUnderSource` in tools/lib/first-party.mjs,
+ * the one predicate the decide job also asks before it publishes such a
+ * rename, so the two can never disagree about which renames land. A rename
+ * inside one account only; an organisation rename's versions are still yanked.
+ */
+export function renamedInPlace(sources, records, firstParty) {
+  const out = new Set();
+  const identityOf = new Map();
+  for (const { doc } of records.identities ?? []) {
+    if (doc && typeof doc.plugin_id === "string") identityOf.set(doc.plugin_id, doc);
+  }
+  const decisions = (records.decisions ?? []).map((r) => r.doc).filter(Boolean);
+  for (const plugin of sources.plugins ?? []) {
+    const id = plugin.doc?.id;
+    const identity = identityOf.get(id) ?? null;
+    const sourceRepo = plugin.doc?.source?.repo;
+    if (!identity || typeof sourceRepo !== "string") continue;
+    for (const v of plugin.versions ?? []) {
+      if (!v.doc || v.doc.yanked === true || v.doc.release?.repo === sourceRepo) continue;
+      if (versionStandsUnderSource({ pluginId: id, version: v.doc, identity, sourceRepo, records: decisions, firstParty })) {
+        out.add(`${id}@${v.doc.version}`);
+      }
+    }
+  }
+  return out;
 }
 
 function checkPluginVersions(plugin, ctx) {
@@ -2670,6 +2717,49 @@ export function checkRecords(ctx, sources, records = loadRecords(ctx.root, sourc
 }
 
 /**
+ * A `reviewed` record that declares Low tools carries a review that named them.
+ *
+ * Astra (#377) runs a reviewed release's Low tools without asking, wherever the
+ * signed index lists them, and tools/build-index.mjs copies `low_tools` into
+ * that index from the record as it stands. compileReview writes the mark only
+ * beside a log entry recording the exact set, and detector A11 alarms on any
+ * later change to the member — but only once the change is on `main`, after
+ * the index was built from it. A commit that adds or widens `low_tools` on an
+ * already-reviewed record (an old record gaining `["wipe"]`) would be signed
+ * first and alarmed second.
+ *
+ * So the tree is held to it as it stands, with no history: every record with
+ * `review: "reviewed"` and a non-empty `low_tools` needs a moderation-log
+ * `review` entry for its plugin naming the version whose `low_tools[<version>]`
+ * is that set. A record with no member, or `[]`, is untouched: Astra honours
+ * no Low tool it does not list.
+ */
+export function checkReviewedLowTools(plugins, ctx) {
+  const { report } = ctx;
+  let entries = null;
+  const setOf = (list) => JSON.stringify([...new Set(list.map(String))].sort());
+  for (const plugin of plugins) {
+    for (const version of plugin.versions) {
+      const doc = version.doc;
+      if (!doc || typeof doc !== "object" || doc.review !== "reviewed") continue;
+      if (!Array.isArray(doc.low_tools) || doc.low_tools.length === 0) continue;
+      entries ??= loadModerationEntries({ root: ctx.root }).entries;
+      const want = setOf(doc.low_tools);
+      const covered = entries.some((e) => e?.action === "review" && e.plugin === doc.id
+        && Array.isArray(e.versions) && e.versions.includes(doc.version)
+        && Array.isArray(e.low_tools?.[doc.version]) && setOf(e.low_tools[doc.version]) === want);
+      if (!covered) {
+        report.error(version.file,
+          `is reviewed and declares Low tools ${want}, and no moderation-log review entry records exactly those ` +
+          `as low_tools[${JSON.stringify(doc.version)}]`,
+          "Astra runs a reviewed release's Low tools without asking, so the review has to have named them. A " +
+          "`low_tools` added to or widened on a reviewed record is a list nobody reviewed; leave the record as it was published.");
+      }
+    }
+  }
+}
+
+/**
  * BOT-34's second Check clause: n versions yanked under an `A_YANK`, n records.
  *
  * NO PER-RECORD SCHEMA CAN EXPRESS THIS, and that is not a limitation of the
@@ -3397,6 +3487,13 @@ export async function runValidation(opts) {
   for (const e of errors) report.error(e.file, e.message);
 
   const usable = plugins.filter((p) => p.doc && typeof p.doc === "object");
+  // B.4's other record trees, walked once and handed to every check that reads
+  // them: the second one counts author-action records against the yanks a
+  // moderation entry names, and a second walk would be a second answer to
+  // "what is in the decision log" taken a moment apart.
+  const records = loadRecords(opts.root, { plugins: usable });
+  // The first-party set is a rule, so it comes from THIS repository, like `policy`.
+  ctx.renamedInPlace = renamedInPlace({ plugins: usable }, records, loadFirstParty(REPO_ROOT).ids);
   checkGrandfatheredIcons(ctx, usable);
   for (const plugin of usable) {
     checkPluginDoc(plugin, ctx);
@@ -3405,6 +3502,7 @@ export async function runValidation(opts) {
       if (version.doc && typeof version.doc === "object") checkVersionDoc(plugin, version, ctx);
     }
   }
+  checkReviewedLowTools(usable, ctx);
   checkSquatting(usable, ctx);
   checkListingLanguage(usable, ctx);
   checkBaselineMarker(usable, ctx);
@@ -3415,11 +3513,6 @@ export async function runValidation(opts) {
   checkOperatorPasskeys(ctx);
   if (opts.writer === "moderation") checkModerationWriter(ctx);
 
-  // B.4's other record trees, walked once and handed to both checks: the
-  // second one counts author-action records against the yanks a moderation
-  // entry names, and a second walk would be a second answer to "what is in the
-  // decision log" taken a moment apart.
-  const records = loadRecords(opts.root, { plugins: usable });
   checkRecords(ctx, { plugins: usable }, records);
   checkAuthorActionRecords(ctx, { plugins: usable }, records);
   checkPublisherRecords(ctx);

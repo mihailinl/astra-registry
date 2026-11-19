@@ -61,6 +61,9 @@ import { compareSemver, parseSemver } from "../tools/lib/semver.mjs";
 import { invalidId, unsafePathComponent } from "../tools/lib/ids.mjs";
 import { readTree, treeProblems } from "../tools/lib/tree-modes.mjs";
 import { PIN_REL, REVOKED_DIR, canonicalBody, keyByCredential, loadPin, pinRefusal } from "./lib/operator-act.mjs";
+import { baselineNamesRepository } from "./lib/identity.mjs";
+import { claimsVoiding } from "./lib/decisions.mjs";
+import { publicationUnlisted, stagingListingIdAt } from "../tools/lib/reserved.mjs";
 
 export const EXIT = { ok: 0, refused: 1, broke: 2, conflict: 3 };
 
@@ -183,6 +186,11 @@ export function recordFileProblem(reportDir, rel) {
   // MIG-20's baseline writes `migration` records once, by bot/baseline.mjs, never through a publication; and ID-64
   // reads them as who is a sibling of whom, so one carried in a report could make a listing a sibling of anything.
   if (doc.trigger === "migration") return `${rel} is a \`migration\` record; only MIG-20's baseline writes those, never a publication (ID-64)`;
+  // DEC-7's voiding record ends a listing's baseline (`effectiveBaseline`): it lifts TRUST-23's
+  // `B_REPOSITORY_RECYCLED` and, under ID-64, drops the listing as a sibling. Only the moderation run writes one,
+  // for an applied `M_IDENTITY_RESET`; validate checks a voiding record's shape, not who wrote it, so a well-formed
+  // one carried in a publication report would void any listing's baseline. Anything that claims to be one is refused.
+  if (claimsVoiding(doc)) return `${rel} is an identity-reset (voiding) record; only the moderation run writes those, never a publication (DEC-7; M_IDENTITY_RESET)`;
   const at = typeof doc.decided_at === "string" ? doc.decided_at : "";
   if (at.slice(0, 4) !== m[1] || at.slice(5, 7) !== m[2]) {
     return `${rel}: decided_at ${at} files it under log/decisions/${at.slice(0, 4)}/${at.slice(5, 7)}, not here`;
@@ -457,8 +465,9 @@ export function refuseVersionRegressions(root, reportDir, rels) {
  */
 /**
  * ID-64's sibling test, on main's tree as it stands before this report: does listing `id` already name
- * `repositoryId`, by its identity record or by a MIG-20 baseline (`migration`) record? The same rule as
- * service-decide's `siblingsOf`, read here without importing the decide job (this module stays small).
+ * `repositoryId`, by its identity record or by a MIG-20 baseline (`migration`) record that no later voiding
+ * record ended? The same rule as service-decide's `siblingsOf` — both ask `baselineNamesRepository` — read here
+ * without importing the decide job (this module stays small; `lib/identity.mjs` is pure).
  */
 function namesRepositoryOnMain(root, id, repositoryId) {
   const want = String(repositoryId);
@@ -468,27 +477,30 @@ function namesRepositoryOnMain(root, id, repositoryId) {
   } catch {
     /* no identity record */
   }
+  // This id's records — its baselines and its voidings — so that an `M_IDENTITY_RESET` ends the baseline here
+  // exactly as `effectiveBaseline` ends it everywhere else.
+  const mine = [];
   const walk = (d) => {
     let entries;
     try {
       entries = fs.readdirSync(d, { withFileTypes: true });
     } catch {
-      return false;
+      return;
     }
     for (const e of entries) {
       const full = path.join(d, e.name);
-      if (e.isDirectory()) { if (walk(full)) return true; continue; }
+      if (e.isDirectory()) { walk(full); continue; }
       if (!e.isFile() || !e.name.endsWith(".json")) continue;
       try {
         const r = JSON.parse(fs.readFileSync(full, "utf8"));
-        if (r?.trigger === "migration" && r.plugin_id === id && String(r.repository_id) === want) return true;
+        if (r?.plugin_id === id) mine.push(r);
       } catch {
         /* not a record */
       }
     }
-    return false;
   };
-  return walk(path.join(root, "log", "decisions"));
+  walk(path.join(root, "log", "decisions"));
+  return baselineNamesRepository(mine, id, want);
 }
 
 export function applyReport(root, reportDir, state) {
@@ -622,6 +634,33 @@ export function applyReport(root, reportDir, state) {
     if (idOfPath(rel) === null) throw new Refusal(`${rel}: has no id`, { file: rel });
   }
 
+  // MIG-27: a publication never lists or delists. `unlisted` is the tree's,
+  // read HERE, on every attempt, against the main this attempt is applied to:
+  // an `M_DELIST` that lands between the decide job and this one would
+  // otherwise be undone by a plugin.json the report carried from before it
+  // (review of #521, finding 2). A new listing is unlisted only when it is
+  // MOD-16's staging id. Read and checked before anything is written.
+  const stagingId = stagingListingIdAt(root);
+  const pluginDocs = new Map();
+  for (const rel of rels) {
+    const m = /^plugins\/([^/]+)\/plugin\.json$/.exec(rel);
+    if (!m) continue;
+    const read = (file, whose) => {
+      try {
+        return JSON.parse(fs.readFileSync(file, "utf8"));
+      } catch (e) {
+        throw new Refusal(`${rel} ${whose} is not JSON (${e.message})`, { file: rel });
+      }
+    };
+    const doc = read(path.join(reportDir, rel), "in the report");
+    const target = path.join(root, rel);
+    const onTree = fs.existsSync(target) ? read(target, "on main") : null;
+    const unlisted = publicationUnlisted({ onTree, id: m[1], stagingId });
+    if ((doc?.unlisted === true) === unlisted) continue;
+    const { unlisted: _fromReport, ...rest } = doc;
+    pluginDocs.set(rel, `${JSON.stringify(unlisted ? { ...rest, unlisted: true } : rest, null, 2)}\n`);
+  }
+
   for (const rel of rels) {
     const target = path.join(root, rel);
     if (DECISION_RECORD_FILE.test(rel)) {
@@ -636,7 +675,8 @@ export function applyReport(root, reportDir, state) {
       continue;
     }
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.copyFileSync(path.join(reportDir, rel), target);
+    if (pluginDocs.has(rel)) fs.writeFileSync(target, pluginDocs.get(rel));
+    else fs.copyFileSync(path.join(reportDir, rel), target);
     if (!ALERT_FILE.test(rel)) state.touchedIds.add(idOfPath(rel));
     if (QUEUE_FILE.test(rel)) state.queued.push(rel);
     state.changed = true;

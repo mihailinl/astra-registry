@@ -88,5 +88,22 @@ export async function runProbe(opts) {
     };
   }
 
+  // A probe built before `[tools.danger]` was read answers facts with no
+  // `low_tools`. Taking that as "declares none" would write `low_tools: []`,
+  // which says "probed, nothing Low" (Astra honours a declared Low tool only
+  // when the signed index lists it), about a manifest nothing read for it.
+  // So an outdated probe fails closed, like a missing one.
+  if (parsed.manifest && !Array.isArray(parsed.manifest.low_tools)) {
+    return {
+      findings: [{
+        level: "error",
+        code: "E_PROBE_UNAVAILABLE",
+        message: "the manifest probe answered without `low_tools`, so it predates the `[tools.danger]` read; " +
+          "rebuild it from this checkout",
+      }],
+      manifest: null,
+    };
+  }
+
   return { findings: parsed.findings ?? [], manifest: parsed.manifest ?? null };
 }

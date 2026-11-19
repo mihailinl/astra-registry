@@ -596,6 +596,25 @@ await test("a missing manifest probe fails the run rather than skipping the chec
   }
 });
 
+// Watched failing: with probe.mjs's `low_tools` check removed, the outdated
+// probe's facts come back and `manifest` is not null.
+await test("an outdated probe that answers without low_tools fails the run closed (E_PROBE_UNAVAILABLE)", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-oldprobe-"));
+  scratch.push(dir);
+  const bin = path.join(dir, "old-probe");
+  const answer = { schema: "astra.manifest-probe.result/1", ok: true, findings: [], manifest: { id: "dice-roller", version: "0.2.0", capabilities: [] } };
+  fs.writeFileSync(bin, `#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '${JSON.stringify(answer)}'\n`, { mode: 0o755 });
+  const saved = process.env.ASTRA_MANIFEST_PROBE;
+  process.env.ASTRA_MANIFEST_PROBE = bin;
+  try {
+    const out = await runProbe({ pluginToml: "", botDir: dir });
+    assertEqual(out.findings[0]?.code, "E_PROBE_UNAVAILABLE", JSON.stringify(out.findings));
+    assertEqual(out.manifest, null, "an outdated probe's facts are not used");
+  } finally {
+    if (saved !== undefined) process.env.ASTRA_MANIFEST_PROBE = saved; else delete process.env.ASTRA_MANIFEST_PROBE;
+  }
+});
+
 await test("the probe the tests run is the real one, built from the daemon's crate", () => {
   assert(findProbe() !== null,
     "build it: bot/manifest-probe/link-deps.sh && cargo build --release --manifest-path bot/manifest-probe/Cargo.toml");
@@ -3355,6 +3374,44 @@ await test("B1 — the service path's check lists and decides the union of every
   const d = heldForDom(derived, { repository_id: v.repository_id, repository_owner_id: v.repository_owner_id }, "service");
   assertEqual(d.outcome, "review", JSON.stringify(d.reasons.map((x) => x.code)));
   assert(d.reasons.some((x) => x.code === "R_DOM_ACCESS_HOLD"), "not held by R_DOM_ACCESS_HOLD");
+});
+
+// ── the tools `[tools.danger]` declares Low reach the version record ──────────
+//
+// Astra #377 runs a Low tool of a `reviewed` release without asking, so the
+// record keeps the list a review has to name (compileReview). It is the union
+// over the release's bundles, like `capabilities`, and it is written on every
+// new record, `[]` when none: present means probed, absent means never probed
+// (Astra honours a declared Low tool only where the signed index lists it).
+//
+// Watched failing: with derive.mjs's `low_tools` line removed, both paths'
+// records lose the member (and `[]` is not written); with `releaseAuthority` reading the first bundle's
+// list only, the reversed asset order loses `wipe`.
+const LOW_ON = (os, tools) => conformingAsset({ os, tomlTail: ["[tools.danger]", ...tools.map((t) => `${t} = "low"`), 'nuke = "high"', ""] });
+
+await test("low tools: the issue path writes the union of the bundles' Low tools, sorted, and `[]` when there are none", async () => {
+  for (const assets of [[LOW_ON("linux", ["roll"]), LOW_ON("windows", ["wipe", "roll"])], [LOW_ON("windows", ["wipe", "roll"]), LOW_ON("linux", ["roll"])]]) {
+    const r = await run({ assets, root: registryWith({}) });
+    assertEqual(errorCodes(r).length, 0, JSON.stringify(errorCodes(r)));
+    assertEqual(JSON.stringify(r.derived.version.low_tools), JSON.stringify(["roll", "wipe"]), "the record's Low tools");
+  }
+  const none = await run({ assets: [conformingAsset({ os: "linux" })], root: registryWith({}) });
+  assertEqual(errorCodes(none).length, 0, JSON.stringify(errorCodes(none)));
+  assertEqual(JSON.stringify(none.derived.version.low_tools), "[]", "a release declaring no Low tool is recorded as probed, with none");
+  const highOnly = await run({ assets: [conformingAsset({ os: "linux", tomlTail: ["[tools.danger]", 'nuke = "high"', ""] })], root: registryWith({}) });
+  assertEqual(JSON.stringify(highOnly.derived.version.low_tools), "[]", "a declaration that is not Low is not recorded");
+});
+
+await test("low tools: the service path's check writes them into the listing handed to the publish job", async () => {
+  const { v, assetsDir } = await verifyRun({ assets: [LOW_ON("linux", ["wipe", "roll"])] });
+  assertEqual(v.outcome, "ok", JSON.stringify(v.findings));
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-check-"));
+  scratch.push(out);
+  const { facts, derived } = await checkFacts({ submissionId: SVC_SID, assetsDir: path.join(assetsDir, SVC_SID), verified: v, out, root: REPO_ROOT });
+  assertEqual(facts.findings.filter((f) => f.level === "error").length, 0, JSON.stringify(facts.findings));
+  assertEqual(JSON.stringify(derived.version.low_tools), JSON.stringify(["roll", "wipe"]));
+  const written = JSON.parse(fs.readFileSync(path.join(out, "listing", "plugins", "dice-roller", "versions", "0.2.0.json"), "utf8"));
+  assertEqual(JSON.stringify(written.low_tools), JSON.stringify(["roll", "wipe"]), "the listing handed to the publish job");
 });
 
 await test("check: a reserved id is refused on the service path too", async () => {

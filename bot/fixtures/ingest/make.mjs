@@ -87,6 +87,8 @@ export function makeBundle(spec = {}) {
       `os = [${JSON.stringify(spec.os ?? "linux")}]`,
       `arch = [${JSON.stringify(spec.arch ?? "x86_64")}]`,
       "",
+      // Tables after `[platform]`, e.g. `[tools.danger]` (Astra #377).
+      ...(spec.tomlTail ?? []),
     ].join("\n"),
     "utf8",
   );

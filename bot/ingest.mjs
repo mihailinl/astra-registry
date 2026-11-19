@@ -505,7 +505,7 @@ export async function ingest(opts, deps = {}) {
 
   // What the release asks for is every bundle's ask, not the first one's.
   const authority = releaseAuthority(perBundle);
-  const facts = { ...first.facts, capabilities: authority.capabilities };
+  const facts = { ...first.facts, capabilities: authority.capabilities, low_tools: authority.lowTools };
   const manifest = { ...first.manifest, permissions: authority.permissions };
   if (!parseSemver(facts.version)) {
     f.error("E_VERSION_INCONSISTENT", "version", `${JSON.stringify(facts.version)} is not a semver version`);
@@ -774,11 +774,17 @@ function spill(bytes) {
  * bundle (in asset order) that declares it. Bundles that agree, which is
  * every live multi-platform listing today, derive exactly what they did.
  *
- * @param {{facts: {capabilities?: string[]}, manifest: {permissions?: object}}[]} bundles
- * @returns {{capabilities: string[], permissions: object|undefined}}
+ * The tools `[tools.danger]` declares Low (the probe's `low_tools`) are a
+ * union for the same reason: Astra runs a Low tool of a reviewed release
+ * without asking on whichever platform declared it, so a review has to cover
+ * every bundle's list, not the first one's.
+ *
+ * @param {{facts: {capabilities?: string[], low_tools?: string[]}, manifest: {permissions?: object}}[]} bundles
+ * @returns {{capabilities: string[], lowTools: string[], permissions: object|undefined}}
  */
 function releaseAuthority(bundles) {
   const capabilities = [...new Set(bundles.flatMap((b) => (Array.isArray(b.facts?.capabilities) ? b.facts.capabilities : []).map(String)))].sort();
+  const lowTools = [...new Set(bundles.flatMap((b) => (Array.isArray(b.facts?.low_tools) ? b.facts.low_tools : []).map(String)))].sort();
   let permissions;
   for (const b of bundles) {
     const block = b.manifest?.permissions;
@@ -786,7 +792,7 @@ function releaseAuthority(bundles) {
     permissions ??= {};
     for (const [name, value] of Object.entries(block)) if (!Object.hasOwn(permissions, name)) permissions[name] = value;
   }
-  return { capabilities, permissions };
+  return { capabilities, lowTools, permissions };
 }
 
 function normaliseTime(value) {
@@ -1479,7 +1485,7 @@ export async function checkFacts(opts, deps = {}) {
 
   // What the release asks for is every bundle's ask (`releaseAuthority`).
   const authority = releaseAuthority(perBundle);
-  const facts = { ...first.facts, capabilities: authority.capabilities };
+  const facts = { ...first.facts, capabilities: authority.capabilities, low_tools: authority.lowTools };
   const manifest = { ...first.manifest, permissions: authority.permissions };
   const { plugins } = loadSources(root);
   const existing = plugins.find((p) => p.doc?.id === facts.id) ?? null;

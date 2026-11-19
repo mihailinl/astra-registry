@@ -114,3 +114,58 @@ export function isFirstPartyId(value, ids) {
   const id = canonicalGithubId(value);
   return id !== null && ids instanceof Set && ids.has(id);
 }
+
+// ── a rename inside one first-party account (owner, 2026-11-19) ────────────
+//
+// ONE predicate, read by both sides that must agree: bot/lib/service-decide.mjs,
+// which publishes such a rename without an `R_IDENTITY_CHANGED` hold, and
+// tools/validate.mjs, which then accepts the versions it left under the old
+// name. Two spellings drifted once already (review of #521, finding 1: the
+// decide side let through renames validate refused, and the publication failed
+// the whole run), so neither side has its own.
+
+const ownerLogin = (repo) => {
+  const owner = String(repo ?? "").split("/")[0];
+  return owner === "" ? null : owner.toLowerCase();
+};
+
+/**
+ * Is `to` the repository `from` was, renamed inside the same first-party
+ * account? Both numeric ids equal (one repository, TRUST-23), the owner id in
+ * policy/first-party.json, and the same owner LOGIN on both names. An
+ * organisation rename keeps the ids and changes the login: it frees the old
+ * login (KNICE-TECH, by the rename to MINICE-AI) for anybody to register and
+ * serve bytes under every old URL, so it stays a held change of hands.
+ *
+ * @param {{from: {repo: string, repository_id: unknown, repository_owner_id: unknown},
+ *   to: {repo: string, repository_id: unknown, repository_owner_id: unknown}, firstParty: Set<string>|null}} opts
+ */
+export function sameAccountRename({ from, to, firstParty }) {
+  if (!from || !to || !(firstParty instanceof Set)) return false;
+  const rid = canonicalGithubId(String(from.repository_id ?? ""));
+  const oid = canonicalGithubId(String(from.repository_owner_id ?? ""));
+  if (rid === null || oid === null) return false;
+  if (String(to.repository_id ?? "") !== rid || String(to.repository_owner_id ?? "") !== oid) return false;
+  if (!isFirstPartyId(oid, firstParty)) return false;
+  const login = ownerLogin(from.repo);
+  return login !== null && login === ownerLogin(to.repo);
+}
+
+/**
+ * Does a published version stand under the listing's `sourceRepo` although its
+ * `release.repo` is another name? Yes when it is yanked, when the names are the
+ * same, or when a `published` decision record of that version names its
+ * `release.repo` with ids that `sameAccountRename` makes the listing's own
+ * (`identity`: the listing's identity record).
+ *
+ * @param {{pluginId: string, version: object, identity: object|null, sourceRepo: string,
+ *   records: object[], firstParty: Set<string>|null}} opts `records` are decision record documents
+ */
+export function versionStandsUnderSource({ pluginId, version, identity, sourceRepo, records, firstParty }) {
+  const repo = version?.release?.repo;
+  if (version?.yanked === true || typeof repo !== "string" || repo === sourceRepo) return true;
+  if (!identity) return false;
+  const to = { repo: sourceRepo, repository_id: identity.repository_id, repository_owner_id: identity.repository_owner_id };
+  return (records ?? []).some((r) => r?.state === "published" && r.plugin_id === pluginId && r.version === version.version
+    && r.repo === repo && sameAccountRename({ from: r, to, firstParty }));
+}
