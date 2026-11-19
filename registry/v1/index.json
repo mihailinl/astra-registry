@@ -468,6 +468,7 @@
         ],
         "license": "MIT",
         "name": "Bad Apple",
+        "owner_id": 193032699,
         "platform_downloads": {
           "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/bad-apple-v0.1.2/bad-apple-0.1.2-linux-x64.astraplugin",
           "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/bad-apple-v0.1.2/bad-apple-0.1.2-windows-x64.astraplugin"
@@ -689,6 +690,7 @@
         ],
         "license": "MIT",
         "name": "Companion Cat",
+        "owner_id": 193032699,
         "platform_downloads": {
           "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/companion-cat-v0.1.7/companion-cat-0.1.7-linux-x64.astraplugin",
           "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/companion-cat-v0.1.7/companion-cat-0.1.7-windows-x64.astraplugin"
@@ -1059,6 +1061,7 @@
         "id": "denchik-vroid-manager",
         "license": "MIT",
         "name": "VRM Manager",
+        "owner_id": 326081654,
         "platform_downloads": {
           "linux-x64": "https://github.com/denchik2444/vrm-manager/releases/download/v1.1.7/denchik-vroid-manager-1.1.7-noarch.astraplugin",
           "noarch": "https://github.com/denchik2444/vrm-manager/releases/download/v1.1.7/denchik-vroid-manager-1.1.7-noarch.astraplugin",
@@ -1190,6 +1193,7 @@
         ],
         "license": "MIT",
         "name": "Dice Roller",
+        "owner_id": 193032699,
         "platform_downloads": {
           "linux-x64": "https://github.com/mihailinl/astra-dice-roller/releases/download/v0.1.3/dice-roller-0.1.3-linux-x64.astraplugin",
           "windows-x64": "https://github.com/mihailinl/astra-dice-roller/releases/download/v0.1.3/dice-roller-0.1.3-windows-x64.astraplugin"
@@ -1330,6 +1334,7 @@
         ],
         "license": "GPL-2.0-or-later",
         "name": "Doom",
+        "owner_id": 193032699,
         "platform_downloads": {
           "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/doom-v0.1.3/doom-0.1.3-linux-x64.astraplugin",
           "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/doom-v0.1.3/doom-0.1.3-windows-x64.astraplugin"
@@ -2655,6 +2660,7 @@
         ],
         "license": "MIT",
         "name": "JSON Tools",
+        "owner_id": 193032699,
         "platform_downloads": {
           "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/json-tools-v0.1.2/json-tools-0.1.2-noarch.astraplugin",
           "noarch": "https://github.com/mihailinl/AstraPlugins/releases/download/json-tools-v0.1.2/json-tools-0.1.2-noarch.astraplugin",
@@ -2742,6 +2748,7 @@
         "id": "knowledge-graph",
         "license": "MIT",
         "name": "Knowledge Graph",
+        "owner_id": 209764128,
         "platform_downloads": {
           "linux-x64": "https://github.com/Belnash3/knowledge-graph/releases/download/v0.2.0/knowledge-graph-0.2.0-noarch.astraplugin",
           "noarch": "https://github.com/Belnash3/knowledge-graph/releases/download/v0.2.0/knowledge-graph-0.2.0-noarch.astraplugin",
@@ -2837,6 +2844,7 @@
         "id": "minecraft-for-astra",
         "license": "MIT",
         "name": "Minecraft for Astra",
+        "owner_id": 228949876,
         "platform_downloads": {
           "linux-x64": "https://github.com/teletemagame-dev/minecraft-for-astra/releases/download/v0.3.3/minecraft-for-astra-0.3.3-noarch.astraplugin",
           "noarch": "https://github.com/teletemagame-dev/minecraft-for-astra/releases/download/v0.3.3/minecraft-for-astra-0.3.3-noarch.astraplugin",
@@ -4805,6 +4813,7 @@
         "id": "sub-models-for-astra",
         "license": "MIT",
         "name": "Sub Models for Astra",
+        "owner_id": 228949876,
         "platform_downloads": {
           "linux-x64": "https://github.com/teletemagame-dev/sub-models-for-astra/releases/download/v0.14.0/sub-models-for-astra-0.14.0-noarch.astraplugin",
           "noarch": "https://github.com/teletemagame-dev/sub-models-for-astra/releases/download/v0.14.0/sub-models-for-astra-0.14.0-noarch.astraplugin",
@@ -4875,6 +4884,7 @@
         ],
         "license": "MIT",
         "name": "Telegram Bot",
+        "owner_id": 193032699,
         "platform_downloads": {
           "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.2.0/telegram-client-0.2.0-linux-x64.astraplugin",
           "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.2.0/telegram-client-0.2.0-windows-x64.astraplugin"
@@ -5051,6 +5061,7 @@
         ],
         "license": "MIT",
         "name": "Text Utils",
+        "owner_id": 193032699,
         "platform_downloads": {
           "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.4/text-utils-0.1.4-noarch.astraplugin",
           "noarch": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.4/text-utils-0.1.4-noarch.astraplugin",
@@ -5964,6 +5975,7 @@
         "id": "yandex-smart-home",
         "license": "MIT",
         "name": "Yandex Smart Home",
+        "owner_id": 232130437,
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/Y-home-f-astra/releases/download/v0.6.0/yandex-smart-home-0.6.0-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/Y-home-f-astra/releases/download/v0.6.0/yandex-smart-home-0.6.0-noarch.astraplugin",

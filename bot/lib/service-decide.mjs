@@ -71,7 +71,7 @@ import { loadPin, ownerApprovalsAt } from "./operator-act.mjs";
 import { HOUR_MS, iso } from "./policy/time.mjs";
 import { CODES } from "./codes.mjs";
 import { POLICY_CODES } from "./policy/constants.mjs";
-import { applyIdentity, baselineNamedIds, compareWithBaseline, effectiveBaseline } from "./identity.mjs";
+import { applyIdentity, baselineFor, baselineNamedIds, compareWithBaseline, effectiveBaseline } from "./identity.mjs";
 import { publicationUnlisted, stagingListingIdAt } from "../../tools/lib/reserved.mjs";
 import { safeRepo, safeTag } from "./safe.mjs";
 import { execFileSync } from "node:child_process";
@@ -487,32 +487,9 @@ export function terminalForSubmission({ records, submissionId, fingerprint, repo
   return list.find((r) => r?.decision_id && r.decision_id === hit.names) ?? { state: hit.reported, decision_id: hit.names, reasons: [] };
 }
 
-/**
- * The identity baseline for a listing with no identity record (TRUST-23;
- * MIG-28; ID-74).
- *
- * MIG-20's `migration` record first, through `effectiveBaseline`, which ends
- * a baseline at the newest voiding record. **Failing that, the first
- * `published` record carrying both ids**, and this is a reading this module
- * records rather than one the plan spells: a plugin first listed through the
- * service path after R3 has no `migration` record by construction — MIG-20
- * writes those once, over the listings that existed at R3 — and ID-74 says
- * every later release of an id is "compared with that listing under DEC-17".
- * Read as `migration` alone, MIG-28 would hold every update of every plugin
- * listed after the baseline `R_IDENTITY_CHANGED` for ever. MIG-20's tree check
- * ("every later version carries both ids in its own record") is what makes the
- * first publication record a baseline in all but name.
- */
-export function baselineFor({ records, pluginId }) {
-  const { baseline, voidedAt } = effectiveBaseline({ records, pluginId });
-  if (baseline) return { baseline, source: "migration" };
-  const published = (records ?? [])
-    .filter((r) => r?.plugin_id === pluginId && r?.state === "published" && r?.trigger !== "migration")
-    .filter((r) => BASE10_RE.test(String(r.repository_id ?? "")) && BASE10_RE.test(String(r.repository_owner_id ?? "")))
-    .filter((r) => !voidedAt || String(r.decided_at) > voidedAt)
-    .sort((a, b) => String(a.decided_at).localeCompare(String(b.decided_at)));
-  return published.length ? { baseline: published[0], source: "first-publication" } : { baseline: null, source: null };
-}
+// `baselineFor` lives in bot/lib/identity.mjs (moved 2026-11-19, beside `effectiveBaseline`) so the catalogue
+// builder reads the same baseline the decide job does; re-exported for this module's callers.
+export { baselineFor };
 
 // ── ID-41: with an identity record ──────────────────────────────────────────
 

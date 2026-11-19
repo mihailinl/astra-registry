@@ -367,29 +367,28 @@ export async function run() {
       console.log(`      (serial ${baseDoc.signed.serial} → ${serial}: the catalogue's version rose, so a difference publishes)`);
       return;
     }
-    // ID-77's introduction, and only that. The generator learned `owner_id`
-    // after 28 listings already had identity records, so the commit teaching
-    // it renders them differently at an unchanged serial, and nothing under
-    // plugins/ could honestly move with it. That content waits, as TRUST-28
-    // means it to: the signer carries the served catalogue until the next
-    // listing change raises the serial, and the owner ids publish then.
-    // `baseHasOwnerIds` is whether the base catalogue already carries any
-    // `owner_id`. Only when it carries none (it was generated before the
-    // member existed) is the member left out of the comparison; once any
-    // committed catalogue carries one, an equal-serial change of it is red
-    // like any other.
-    const baseHasOwnerIds = baseDoc.signed.plugins.some((e) => Object.hasOwn(e, "owner_id"));
-    if (!baseHasOwnerIds) {
-      console.log("      (the base catalogue predates `owner_id` (ID-77), so its first appearance is not compared; " +
-        "it publishes when the next listing change raises the serial)");
-    }
-    const strip = (entry) => {
+    // ID-77's introduction, and only that. The generator learned `owner_id` (6.34.0, then 6.35.2's effective
+    // baseline) after listings already existed, so the commit teaching it renders them differently at an
+    // unchanged serial, and nothing under plugins/ could honestly move with it. That content waits, as
+    // TRUST-28 means it to: the signer carries the served catalogue until the next listing change raises the
+    // serial. So an entry GAINING `owner_id` where the base entry has none is not compared; an entry whose
+    // `owner_id` changes, or loses it, at an equal serial is red like any other difference.
+    const baseOwner = new Map(baseDoc.signed.plugins.map((e) => [e.id, Object.hasOwn(e, "owner_id")]));
+    const gained = [];
+    const strip = (entry, side) => {
       const { publisher, ...rest } = entry;
-      if (!baseHasOwnerIds) delete rest.owner_id;
+      if (side === "after" && Object.hasOwn(rest, "owner_id") && baseOwner.get(rest.id) === false) {
+        gained.push(rest.id);
+        delete rest.owner_id;
+      }
       return rest;
     };
-    const before = stableStringify(baseDoc.signed.plugins.map(strip)).split("\n");
-    const after = stableStringify(buildIndex({ root: REPO_ROOT, serial }).signed.plugins.map(strip)).split("\n");
+    const before = stableStringify(baseDoc.signed.plugins.map((e) => strip(e, "before"))).split("\n");
+    const after = stableStringify(buildIndex({ root: REPO_ROOT, serial }).signed.plugins.map((e) => strip(e, "after"))).split("\n");
+    if (gained.length) {
+      console.log(`      (${gained.length} entr${gained.length === 1 ? "y gains" : "ies gain"} \`owner_id\` (ID-77) at serial ${serial}; ` +
+        "not compared, it publishes when the next listing change raises the serial)");
+    }
     let first = null;
     for (let i = 0; i < Math.max(before.length, after.length); i++) {
       if (before[i] !== after[i]) {
@@ -535,7 +534,8 @@ export async function run() {
   // there is nothing trustworthy to compare: no identity record (unbound, or
   // one an M_IDENTITY_RESET removed) and an id that is not a canonical
   // positive safe integer. A present-but-wrong id would be worse than none,
-  // because absence makes the client ask.
+  // because absence makes the client ask. Since 6.35.2 a listing without an identity record takes its
+  // effective baseline's id.
   //
   // Watched: deleting the `ownerIdEntry` spread in `buildIndex` turns the
   // first assertion red; replacing it with a bare
@@ -584,6 +584,29 @@ export async function run() {
     assert(Object.hasOwn(entryOf(), "owner_id"), "the reset control is not bound");
     fs.rmSync(identityFile);
     assert(!Object.hasOwn(entryOf(), "owner_id"), "a reset listing still carries the owner_id of the identity it no longer has");
+
+    // Contract 6.35.2: with no identity record, the effective baseline names the owner. MIG-20's
+    // `migration` record first, else the first `published` record carrying both ids (`baselineFor`,
+    // the decide job's own reading). The identity record, when there is one, always wins.
+    // Watched: dropping the baseline argument in buildIndex turns the first assertion red; reading
+    // the baseline before the identity record turns the last one red.
+    const record = (name, doc) => {
+      const f = path.join(dir, "log", "decisions", "2026", "09", name);
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      fs.writeFileSync(f, `${JSON.stringify(doc)}\n`);
+    };
+    record(`${"a".repeat(32)}.json`, { plugin_id: "dice-roller", trigger: "migration", state: "published",
+      repository_id: "1343092393", repository_owner_id: "193032699", decided_at: "2026-09-20T00:00:00Z" });
+    assertEqual(JSON.stringify(entryOf().owner_id), "193032699",
+      "a baseline-only listing does not carry its migration baseline's owner id");
+    fs.rmSync(path.join(dir, "log"), { recursive: true });
+    record(`${"b".repeat(32)}.json`, { plugin_id: "dice-roller", trigger: "service", state: "published",
+      repository_id: "1343092393", repository_owner_id: "114572819", decided_at: "2026-10-01T00:00:00Z" });
+    assertEqual(JSON.stringify(entryOf().owner_id), "114572819",
+      "a listing whose only baseline is its first publication does not carry that record's owner id");
+    bind("280318216");
+    assertEqual(JSON.stringify(entryOf().owner_id), "280318216", "the baseline won over the identity record");
+    fs.rmSync(path.join(dir, "log"), { recursive: true });
   });
 
   // A reviewed record's Low tools were named by its review, checked on the tree

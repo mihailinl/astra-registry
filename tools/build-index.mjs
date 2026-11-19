@@ -61,7 +61,8 @@ import { cleanEnv } from "./lib/git-env.mjs";
 
 import { ijsonProblems, stableStringify } from "./lib/canonical.mjs";
 import { compareSemver } from "./lib/semver.mjs";
-import { loadIdentities, loadPublishers, loadSources, REPO_ROOT } from "./lib/sources.mjs";
+import { loadIdentities, loadPublishers, loadRecords, loadSources, REPO_ROOT } from "./lib/sources.mjs";
+import { baselineFor } from "../bot/lib/identity.mjs";
 import { canonicalGithubId, firstPartyClaimProblems, isFirstPartyRecord, loadFirstParty } from "./lib/first-party.mjs";
 import { INDEX_SCHEMA } from "../bot/lib/sign.mjs";
 import { MAX_README_BYTES, iconDataUri } from "../bot/lib/assets.mjs";
@@ -428,11 +429,22 @@ export function publisherFor({ plugin, publishers, identity = null, firstParty =
  * `M_IDENTITY_RESET` the identity record is gone, and so is this member.
  *
  * @param {object|null} identity the listing's `identity.json`, or null
+ * @param {object|null} baseline its effective baseline record, read only when there is no identity record
  * @returns {{owner_id?: number}}
  */
-export function ownerIdEntry(identity) {
-  const id = canonicalGithubId(identity?.repository_owner_id);
+export function ownerIdEntry(identity, baseline = null) {
+  const id = canonicalGithubId(identity ? identity.repository_owner_id : baseline?.repository_owner_id);
   return id !== null && Number.isSafeInteger(Number(id)) ? { owner_id: Number(id) } : {};
+}
+
+/**
+ * The listing's effective baseline when it has no identity record (contract 6.35.2): the decide job's own
+ * `baselineFor` over the decision records on the tree, so the catalogue names the owner id that job
+ * compares a release with. MIG-20's `migration` record, else the first `published` record carrying both
+ * ids, each ended by a voiding record. A listing with an identity record never reads this: the record wins.
+ */
+export function baselineOwnerSource(records, pluginId) {
+  return baselineFor({ records, pluginId }).baseline;
 }
 
 /**
@@ -491,6 +503,8 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
   const { errors: idErrors, identities } = loadIdentities(root, plugins.map((p) => p.dir));
   errors.push(...idErrors);
   const identityOf = new Map(identities.map((r) => [r.file.split("/")[1], r.doc]));
+  // Contract 6.35.2: a listing with no identity record takes owner_id from its effective baseline.
+  const decisionDocs = loadRecords(root).decisions.map((r) => r.doc);
   // Contract 6.32.0: the first-party ids `astra_team` is granted from. A file
   // that does not load stops the build, as a publisher record that does not
   // load does: read as "no first party", it would silently drop every badge.
@@ -584,7 +598,7 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
       // listing, and on a record whose id is not a canonical positive safe
       // integer: absence makes the client ask, which is the failure that
       // costs one prompt rather than one silent install.
-      ...ownerIdEntry(identityOf.get(plugin.dir) ?? null),
+      ...ownerIdEntry(identityOf.get(plugin.dir) ?? null, baselineOwnerSource(decisionDocs, plugin.doc.id)),
       downloads: 0,
       stars: 0,
       updated_at: latest.published_at,
