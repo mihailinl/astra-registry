@@ -589,6 +589,18 @@ test("TRUST_26's takedown alarm is its own event job after the push, never `sett
   assert.ok(ALERT_EVENTS.has("plugins-moderation.yml/takedown-alert"));
 });
 
+// One alert job reads its state through a step of its own before the alert
+// action does: sign.yml's export-alert, whose memory step
+// (tools/signer/export-memory.mjs) keeps when export-assert last compared
+// anything, in the same signed state, so that a service answering 404 to
+// everything raises SIGNER_EXPORT_NOT_COMPARED instead of staying green. The
+// state still comes only from `<job>-state`'s output and goes back only to
+// `<job>-save`; what the exception allows is that one step between them, by
+// file and job, with each line spelled out below.
+const STATE_VIA_MEMORY = new Map([
+  ["sign.yml/export-alert", "the comparison memory, tools/signer/export-memory.mjs (Phase 2 step 2)"],
+]);
+
 test("R4: every alert job but the events takes its state only from a secret-less job's output, and hands it back to one", () => {
   const jobs = allJobs();
   const callers = jobs.filter((j) => code(j).some((l) => /^\s+- uses:\s*\.\/\.github\/actions\/alert\s*$/.test(l)));
@@ -609,15 +621,29 @@ test("R4: every alert job but the events takes its state only from a secret-less
     }
     const pre = `${job.job}-state`;
     const post = `${job.job}-save`;
-    if (stateLines.length !== 1 || stateLines[0].trim() !== `state: \${{ needs.${pre}.outputs.state }}`) {
-      problems.push(`${where(job)} does not hand the alert action exactly \`state: \${{ needs.${pre}.outputs.state }}\`: ${stateLines.map((l) => l.trim()).join(" | ") || "none"}`);
+    const viaMemory = STATE_VIA_MEMORY.has(id);
+    const wantState = viaMemory ? "state: ${{ steps.memory.outputs.state }}" : `state: \${{ needs.${pre}.outputs.state }}`;
+    if (stateLines.length !== 1 || stateLines[0].trim() !== wantState) {
+      problems.push(`${where(job)} does not hand the alert action exactly \`${wantState}\`: ${stateLines.map((l) => l.trim()).join(" | ") || "none"}`);
+    }
+    if (viaMemory) {
+      const memoryAt = lines.findIndex((l) => /^\s+id:\s*memory\s*$/.test(l));
+      const memory = memoryAt < 0 ? [] : lines.slice(memoryAt, lines.findIndex((l, i) => i > memoryAt && /^\s+- /.test(l)));
+      for (const want of [`ASTRA_ALERT_STATE: \${{ needs.${pre}.outputs.state }}`, "run: node tools/signer/export-memory.mjs --verdict verdict.json"]) {
+        if (!memory.some((l) => l.trim() === want)) problems.push(`${where(job)}'s memory step does not say \`${want}\``);
+      }
     }
     const needs = /^ {4}needs:\s*\[?([^\]\n]+)\]?\s*$/m.exec(lines.join("\n"))?.[1] ?? "";
     if (!needs.split(",").map((n) => n.trim()).includes(pre)) problems.push(`${where(job)} does not wait for ${pre}`);
     const alarmStep = lines.findIndex((l) => /^\s+- uses:\s*\.\/\.github\/actions\/alert\s*$/.test(l));
     const stepId = /^\s+id:\s*(\S+)\s*$/.exec(lines.slice(alarmStep + 1, alarmStep + 3).find((l) => /^\s+id:/.test(l)) ?? "")?.[1];
+    const handOn = viaMemory
+      ? { next_state: `\${{ steps.${stepId}.outputs.next-state || steps.memory.outputs.state }}`,
+        state_changed: `\${{ steps.${stepId}.outputs.state-changed == 'true' || steps.memory.outputs.changed == 'true' }}` }
+      : null;
     for (const [out, from] of [["next_state", "next-state"], ["state_changed", "state-changed"]]) {
-      if (!lines.some((l) => l.trim() === `${out}: \${{ steps.${stepId}.outputs.${from} }}`)) {
+      const want = handOn ? `${out}: ${handOn[out]}` : `${out}: \${{ steps.${stepId}.outputs.${from} }}`;
+      if (!lines.some((l) => l.trim() === want)) {
         problems.push(`${where(job)} does not hand on \`${out}\` from its alert step (\`${stepId}\`)`);
       }
     }
@@ -838,7 +864,10 @@ test("an `alerts` job maps the channel's secrets and no ping URL that is not its
     }
     // R4's signing key: only in an alert job that takes a state, which the
     // R4 test below names by its `state:` input. Anywhere else it is reach.
-    const takesState = code(job).some((l) => /^\s+state:\s*\$\{\{\s*needs\.[A-Za-z0-9_-]+-state\.outputs\.state\s*\}\}/.test(l));
+    // `ASTRA_ALERT_STATE:` is the one job in STATE_VIA_MEMORY, whose memory
+    // step takes the state before the alert action does (the R4 test holds it).
+    const stateKeyName = STATE_VIA_MEMORY.has(`${job.file}/${job.job}`) ? "ASTRA_ALERT_STATE" : "state";
+    const takesState = code(job).some((l) => new RegExp(`^\\s+${stateKeyName}:\\s*\\$\\{\\{\\s*needs\\.[A-Za-z0-9_-]+-state\\.outputs\\.state\\s*\\}\\}`).test(l));
     for (const secret of stateAlertsSecrets()) {
       if (named.has(secret) && !takesState) problems.push(`${where(job)} maps ${secret} and takes no alert state; the key signs a state, and holding it without one is reach`);
       if (!named.has(secret) && takesState) problems.push(`${where(job)} takes an alert state and does not map ${secret}, so the state is never trusted and every red pages`);
@@ -2579,7 +2608,8 @@ test("`id-token: write` outside the bot workflows never sits beside plugins-serv
 });
 
 // The exception above, held to BOT-1's sentence: a job that holds a bot token
-// holds nothing else. `contents: read` and the token, no stored secret, no
+// holds nothing else. `contents: read`, `pull-requests: read` (the merged-PR
+// lookup) and the token, no stored secret, no
 // artifact either way, no cache, no push, no alarm credential, and the one
 // script it runs is the assertion. Watched by adding `contents: write`, a
 // `secrets.` read or an upload to the job: each is named below.
@@ -2593,8 +2623,8 @@ test("sign.yml's export-assert holds a bot token and nothing else", () => {
   assert.ok(at >= 0, `${where(job)} has no permissions block`);
   const permissions = [];
   for (let i = at + 1; i < lines.length && /^\s{6}\S/.test(lines[i]); i++) permissions.push(lines[i].trim());
-  assert.deepEqual(permissions.sort(), ["contents: read", "id-token: write"],
-    `${where(job)} asks for more than \`contents: read\` and the token`);
+  assert.deepEqual(permissions.sort(), ["contents: read", "id-token: write", "pull-requests: read"],
+    `${where(job)} does not ask for exactly \`contents: read\`, \`pull-requests: read\` and the token`);
   const FORBIDDEN = [
     [/secrets\./, "a stored secret"],
     [/actions\/(upload|download)-artifact/, "an artifact"],

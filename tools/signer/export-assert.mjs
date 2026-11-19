@@ -13,19 +13,28 @@
 //
 //   (a) `state_sha256` of the Source-Commit's tree (tools/lib/export-state.mjs);
 //   (b) when repository variable `ASTRA_EXPORT_URL` names the service's
-//       origin, `GET <origin>/plugins/v1/export?serial=<the Source-Commit's
-//       serial>` with a bot OIDC token (bot/lib/oidc.mjs, environment
-//       `plugins-service`; no stored secret), read up to 64 MiB. A 200 at that
-//       serial is compared with (a) and with the digest of its own files; a
-//       200 at another serial, or a 404 `{current_serial}`, is the service
-//       being elsewhere — a note, never a mismatch; any other answer is
-//       unreachable. Unset, the answer is "not asked": reported as that, and
-//       never as equal;
+//       origin, the export with a bot OIDC token (bot/lib/oidc.mjs, environment
+//       `plugins-service`; no stored secret), read up to 64 MiB. It is asked BY
+//       COMMIT, `GET <origin>/plugins/v1/export?commit=<Source-Commit>`: the
+//       service's serial is its own database sequence, not DEC-9's count, so a
+//       serial computed here names nothing over there. Once export commits
+//       carry an `Export-Serial:` trailer, the newest one in the Source-Commit's
+//       history is asked by that serial instead (`?serial=N`) and compared with
+//       that commit's tree. A 200 is compared with the tree and with the digest
+//       of its own files; a 404, and a 200 at another serial than the one
+//       asked, are the service being elsewhere — a note, never a mismatch; any
+//       other answer is unreachable. Unset, the answer is "not asked": reported
+//       as that, and never as equal. A service that never lets a comparison
+//       happen does not stay green: `export-alert` raises
+//       SIGNER_EXPORT_NOT_COMPARED after 24 hours of asking without one
+//       (tools/signer/export-memory.mjs);
 //   (c) every commit in `<last signed Source-Commit>..<Source-Commit>` that
 //       touches plugins/ or log/ is authored AND committed by one of the
 //       identities the committing workflows configure, `BOT_IDENTITIES`, or
 //       belongs to a pull request merged into main (a note); any other is
-//       named, and is one of the job's `hexes`;
+//       named, and is one of the job's `hexes`. A merged pull request is a
+//       NOTE only while this is assert-only: the step-4 gate must also require
+//       an approving review by somebody who is not the pull request's author;
 //   (d) any "no" makes the job's status red with a fixed code. The job has
 //       its own alert (`export-alert` in sign.yml, check `signer-export`), with
 //       its own state, keyed on the foreign commits alone: each one pages once,
@@ -50,8 +59,9 @@ import { pathToFileURL } from "node:url";
 import { mintToken } from "../../bot/lib/oidc.mjs";
 import { STATE_ROOTS, exportFiles, stateAt, stateSha256 } from "../lib/export-state.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
-import { signedCommits } from "../served-set/provenance.mjs";
+import { signedCommits, trailersOf } from "../served-set/provenance.mjs";
 import { gitMaybe, gitText } from "./git.mjs";
+import { NOT_COMPARED_CODE } from "./export-memory.mjs";
 import { fetchSignedHead } from "./plan.mjs";
 import { serialAt } from "../export-stub.mjs";
 
@@ -80,6 +90,9 @@ export const CODES = Object.freeze({
   unreachable: "SIGNER_EXPORT_UNREACHABLE",
   foreignCommit: "SIGNER_EXPORT_FOREIGN_COMMIT",
   noBase: "SIGNER_EXPORT_NO_SIGNED_BASE",
+  // Raised by export-alert, not by this job (tools/signer/export-memory.mjs):
+  // only that job holds the memory of when a comparison last happened.
+  notCompared: NOT_COMPARED_CODE,
 });
 
 export const FETCH_TIMEOUT_MS = 45_000;
@@ -108,6 +121,7 @@ export function lastSignedSource({ root, ref, sourceCommit }) {
 }
 
 const UNIT = "\u001f";
+const RECORD = "\u001e";
 
 /**
  * The commits in `base..head` that touch plugins/ or log/ and were not both
@@ -134,8 +148,8 @@ export const EXPORT_PATH = "/plugins/v1/export";
 export const MAX_EXPORT_BYTES = 64 * 1024 * 1024;
 
 /**
- * The export URL for `serial`, built from the variable's ORIGIN and this
- * file's path, or why not.
+ * The export URL for `query` — `{commit}` or `{serial}` — built from the
+ * variable's ORIGIN and this file's path, or why not.
  *
  * The variable names the service, and only the service: an origin with no
  * path, query, fragment or credentials. The path is appended here, so no
@@ -145,7 +159,7 @@ export const MAX_EXPORT_BYTES = 64 * 1024 * 1024;
  *
  * @returns {{url: URL, problem: null} | {url: null, problem: string}}
  */
-export function exportUrl(base, serial) {
+export function exportUrl(base, query) {
   const refuse = (why) => ({ url: null, problem: `${EXPORT_URL_VAR} ${why}; it is the service's origin, ${EXPORT_ORIGIN}, and nothing else` });
   let b;
   try {
@@ -158,7 +172,9 @@ export function exportUrl(base, serial) {
   if (b.pathname !== "/" || /%2e|\.\./i.test(String(base).slice(b.origin.length))) return refuse("carries a path");
   if (b.origin !== EXPORT_ORIGIN) return refuse(`names ${JSON.stringify(b.origin).slice(0, 80)}`);
   const url = new URL(EXPORT_PATH, b.origin);
-  url.searchParams.set("serial", String(serial));
+  if (query && typeof query === "object" && SHA_RE.test(query.commit ?? "")) url.searchParams.set("commit", query.commit);
+  else if (query && typeof query === "object" && Number.isSafeInteger(query.serial) && query.serial >= 0) url.searchParams.set("serial", String(query.serial));
+  else return refuse("cannot be asked for that: the query is a 40-hex commit or a non-negative serial");
   if (url.origin !== EXPORT_ORIGIN || url.pathname !== EXPORT_PATH) return refuse("does not build the export's URL");
   return { url, problem: null };
 }
@@ -196,15 +212,17 @@ export async function readCapped(res, limit = MAX_EXPORT_BYTES) {
  * The export at `serial`, fetched with one bot token. One of:
  *
  *   {kind: "export", doc}                      200, a JSON document
- *   {kind: "elsewhere", current}               404 `{current_serial}`: the
- *                                              service does not hold `serial`
+ *   {kind: "elsewhere", current}               404: the service holds no
+ *                                              state for what was asked;
+ *                                              `current` is its `current_serial`
+ *                                              when it says one, else null
  *   {kind: "unreachable", error}               anything else
  *
  * Nothing about the token, and no text of the answer, reaches a returned
  * string: errors carry the HTTP status, and values only through `shown`.
  */
-export async function fetchExport({ base, serial, env = process.env, fetchImpl = fetch, mint = mintToken, log = console }) {
-  const { url, problem } = exportUrl(base, serial);
+export async function fetchExport({ base, query, env = process.env, fetchImpl = fetch, mint = mintToken, log = console }) {
+  const { url, problem } = exportUrl(base, query);
   if (problem) return { kind: "unreachable", error: problem };
   let token;
   try {
@@ -230,18 +248,37 @@ export async function fetchExport({ base, serial, env = process.env, fetchImpl =
   try {
     const read = await readCapped(res);
     if (!read.ok) return { kind: "unreachable", error: read.error };
-    body = JSON.parse(read.text);
+    body = res.status === 404 ? (() => { try { return JSON.parse(read.text); } catch { return null; } })() : JSON.parse(read.text);
   } catch {
     return { kind: "unreachable", error: `the export answered HTTP ${res.status} with something that is not JSON` };
   }
-  if (res.status === 404) {
-    const current = body?.current_serial;
-    if (!Number.isSafeInteger(current)) {
-      return { kind: "unreachable", error: `the export answered 404 without a current_serial (${shown(current)})` };
-    }
-    return { kind: "elsewhere", current };
-  }
+  // A 404 alone is a note: the service holds nothing for what was asked. Its
+  // `current_serial` is reported when it has the grammar, and nothing else is.
+  if (res.status === 404) return { kind: "elsewhere", current: body?.current_serial ?? null };
   return { kind: "export", doc: body };
+}
+
+/** The trailer an export commit will carry (design §4 step 2). */
+export const EXPORT_SERIAL_TRAILER = "Export-Serial";
+
+/**
+ * The newest commit in `sourceCommit`'s history whose message carries an
+ * `Export-Serial:` trailer, with that serial; or null while none does.
+ *
+ * @returns {{sha: string, serial: number} | null}
+ */
+export function exportSerialAt({ root, sourceCommit }) {
+  const out = gitText(
+    ["log", "-E", `--grep=^${EXPORT_SERIAL_TRAILER}: [0-9]+$`, `--format=%H${UNIT}%B${RECORD}`, sourceCommit],
+    { root },
+  );
+  for (const rec of out.split(RECORD).map((r) => r.trim()).filter(Boolean)) {
+    const [sha, ...body] = rec.split(UNIT);
+    const v = trailersOf(body.join(UNIT))[EXPORT_SERIAL_TRAILER];
+    const n = Number(v);
+    if (/^[0-9]+$/.test(v ?? "") && Number.isSafeInteger(n)) return { sha: sha.trim(), serial: n };
+  }
+  return null;
 }
 
 /**
@@ -309,31 +346,38 @@ export async function assertExport({
     exportAnswer = "not-asked";
     lines.push(`note  export: not asked (${EXPORT_URL_VAR} is unset). Nothing was compared; this is not a pass.`);
   } else {
-    const got = await fetchExport({ base, serial, env, fetchImpl, mint, log });
+    // By trailer once export commits carry one, by commit until then.
+    const trailer = exportSerialAt({ root, sourceCommit });
+    const query = trailer ? { serial: trailer.serial } : { commit: sourceCommit };
+    const against = trailer && trailer.sha !== sourceCommit ? stateAt({ root, commit: trailer.sha }) : tree;
+    const asked = trailer ? `serial ${trailer.serial} (${EXPORT_SERIAL_TRAILER} of ${trailer.sha.slice(0, 12)})` : `commit ${sourceCommit.slice(0, 12)}`;
+    const got = await fetchExport({ base, query, env, fetchImpl, mint, log });
     if (got.kind === "unreachable") {
       exportAnswer = "unreachable";
       codes.push(CODES.unreachable);
       lines.push(`FAIL  export: ${got.error}`);
-    } else if (got.kind === "elsewhere" || got.doc?.serial !== serial) {
-      // The service is at another serial: a lag or a lead, not a different
-      // state at the same one. Reported, never compared, never paged.
+    } else if (got.kind === "elsewhere" || (trailer && got.doc?.serial !== trailer.serial)) {
+      // The service holds nothing for what was asked, or answers another
+      // serial: a lag or a lead, not a different state. Reported, never
+      // compared, and never paged by itself (export-memory.mjs pages a
+      // service that never lets a comparison happen).
       exportAnswer = "other-serial";
       const at = got.kind === "elsewhere" ? got.current : got.doc?.serial;
-      lines.push(`note  export: service at serial ${showSerial(at)}, signed ${serial}; nothing was compared`);
+      lines.push(`note  export: service at serial ${at === null ? "(not said)" : showSerial(at)}, asked for ${asked}; nothing was compared`);
     } else {
       const { files, problems } = exportFiles(got.doc);
       const own = stateSha256(files);
       const claimed = got.doc?.state_sha256;
       const wrong = problems.length ? [`${problems.length} of its files cannot be read (first: ${shown(problems[0])})`] : [];
       if (claimed !== own) wrong.push(`its state_sha256 ${showDigest(claimed)} is not the digest of its own files, ${own}`);
-      if (claimed !== tree.state_sha256) wrong.push(`its state_sha256 ${showDigest(claimed)} is not the Source-Commit's, ${tree.state_sha256}`);
+      if (claimed !== against.state_sha256) wrong.push(`its state_sha256 ${showDigest(claimed)} is not the tree's, ${against.state_sha256}`);
       if (wrong.length) {
         exportAnswer = "differs";
         codes.push(CODES.stateMismatch);
-        lines.push(`FAIL  export at serial ${serial}:`, ...wrong.map((w) => `      ${w}`));
+        lines.push(`FAIL  export for ${asked}:`, ...wrong.map((w) => `      ${w}`));
       } else {
         exportAnswer = "equal";
-        lines.push(`ok    export at serial ${serial}: state_sha256 equal`);
+        lines.push(`ok    export for ${asked}: state_sha256 equal`);
       }
     }
   }

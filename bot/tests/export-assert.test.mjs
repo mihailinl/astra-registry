@@ -11,19 +11,24 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
-import { alertDecision } from "../alert.mjs";
+import { alertDecision, readSignedState, signState } from "../alert.mjs";
+import os from "node:os";
 import { stubExport } from "../../tools/export-stub.mjs";
 import { stateSha256 } from "../../tools/lib/export-state.mjs";
 import { REPO_ROOT } from "../../tools/lib/sources.mjs";
 import { composeVerdict } from "../../tools/served-set/compose.mjs";
 import {
-  BOT_IDENTITIES, CODES, EXPORT_URL_VAR, MAX_EXPORT_BYTES, assertExport, exportUrl, fetchExport, foreignCommits,
-  mergedPullOf, readCapped,
+  BOT_IDENTITIES, CODES, EXPORT_URL_VAR, MAX_EXPORT_BYTES, assertExport, exportSerialAt, exportUrl, fetchExport,
+  foreignCommits, mergedPullOf, readCapped,
 } from "../../tools/signer/export-assert.mjs";
+import {
+  MEMORY_CHECK, NOT_COMPARED_CODE, compareMemory, runMemory,
+} from "../../tools/signer/export-memory.mjs";
 import { BOT, HUMAN, exportHistory } from "./fixtures/export-history.mjs";
 
 const ORIGIN = "https://api.minice.ai";
 const ASKED = (serial) => `${ORIGIN}/plugins/v1/export?serial=${serial}`;
+const ASKED_COMMIT = (sha) => `${ORIGIN}/plugins/v1/export?commit=${sha}`;
 
 /** main's history with a `signed` branch whose one commit signed c2. */
 function withSigned(name = "export-assert") {
@@ -63,7 +68,7 @@ function otherStateAtSameSerial(h) {
   return { ...doc, files, state_sha256: stateSha256(decoded) };
 }
 
-test("equal: asked at the Source-Commit's serial, the digest is the tree's, every change is the bot's, nothing alerts", async () => {
+test("equal: asked by the Source-Commit, the digest is the tree's, every change is the bot's, nothing alerts", async () => {
   const h = withSigned();
   const s = service(stubExport({ root: h.dir, commit: h.commits.c4 }));
   const r = await ask(h, { env, ...s });
@@ -73,16 +78,16 @@ test("equal: asked at the Source-Commit's serial, the digest is the tree's, ever
   assert.equal(r.export, "equal");
   assert.equal(r.authors, "bot-only");
   assert.equal(s.calls.mint, 1);
-  assert.deepEqual(s.calls.fetch, [{ url: ASKED(3), auth: "Bearer test-token" }]);
+  assert.deepEqual(s.calls.fetch, [{ url: ASKED_COMMIT(h.commits.c4), auth: "Bearer test-token" }]);
 });
 
-test("a different state at the same serial is SIGNER_EXPORT_STATE_MISMATCH, and the call returns rather than throwing", async () => {
+test("a different state for the same commit is SIGNER_EXPORT_STATE_MISMATCH, and the call returns rather than throwing", async () => {
   const h = withSigned();
   const r = await ask(h, { env, ...service(otherStateAtSameSerial(h)) });
   assert.equal(r.status, "red");
   assert.deepEqual(r.codes, [CODES.stateMismatch]);
   assert.equal(r.export, "differs");
-  assert.ok(r.lines.some((l) => /is not the Source-Commit's/.test(l)));
+  assert.ok(r.lines.some((l) => /is not the tree's/.test(l)));
 
   // An export whose digest does not match its own files is a mismatch too.
   const lie = stubExport({ root: h.dir, commit: h.commits.c4 });
@@ -92,24 +97,49 @@ test("a different state at the same serial is SIGNER_EXPORT_STATE_MISMATCH, and 
   assert.ok(r2.lines.some((l) => /not the digest of its own files/.test(l)));
 });
 
-test("the service at another serial is a note, not a mismatch: a 200 at another serial, and a 404 {current_serial}", async () => {
+test("a 404 alone is a note, with or without current_serial; never unreachable, never a state", async () => {
   const h = withSigned();
-  // A 200 that answers serial 2 when 3 was asked.
-  const r = await ask(h, { env, ...service(stubExport({ root: h.dir, commit: h.commits.c2 })) });
-  assert.equal(r.status, "green", r.lines.join("\n"));
-  assert.deepEqual(r.codes, []);
-  assert.equal(r.export, "other-serial");
-  assert.ok(r.lines.includes("note  export: service at serial 2, signed 3; nothing was compared"));
-
-  // The settled 404: the service does not hold serial 3 and says where it is.
-  const r404 = await ask(h, { env, ...service({ current_serial: 2 }, { status: 404 }) });
+  const r404 = await ask(h, { env, ...service({ current_serial: 41 }, { status: 404 }) });
+  assert.equal(r404.status, "green", r404.lines.join("\n"));
   assert.deepEqual(r404.codes, []);
   assert.equal(r404.export, "other-serial");
-  assert.ok(r404.lines.includes("note  export: service at serial 2, signed 3; nothing was compared"));
+  assert.ok(r404.lines.includes(`note  export: service at serial 41, asked for commit ${h.commits.c4.slice(0, 12)}; nothing was compared`));
+  for (const [body, raw] of [[{ error: "not found" }, null], [null, "not json"], [null, ""]]) {
+    const bare = await ask(h, { env, ...service(body, { status: 404, raw }) });
+    assert.deepEqual(bare.codes, [], JSON.stringify(raw ?? body));
+    assert.equal(bare.export, "other-serial");
+  }
+});
 
-  // A 404 that does not say where it is cannot be read as a lag.
-  const bare = await ask(h, { env, ...service({ error: "not found" }, { status: 404 }) });
-  assert.deepEqual(bare.codes, [CODES.unreachable]);
+test("asked by commit, the answer's own serial is the service's sequence and is not held to DEC-9's count", async () => {
+  const h = withSigned();
+  const doc = { ...stubExport({ root: h.dir, commit: h.commits.c4 }), serial: 9001 };
+  const r = await ask(h, { env, ...service(doc) });
+  assert.equal(r.export, "equal", r.lines.join("\n"));
+  // And a 200 with another state is a mismatch, whatever serial it names.
+  const r2 = await ask(h, { env, ...service({ ...otherStateAtSameSerial(h), serial: 9001 }) });
+  assert.deepEqual(r2.codes, [CODES.stateMismatch]);
+});
+
+test("once an export commit carries Export-Serial, it is asked by that serial and compared with that commit's tree", async () => {
+  const h = withSigned();
+  h.write("plugins/alpha/README.md", "exported\n");
+  const exported = h.commit("registry: export\n\nExport-Serial: 17\n");
+  h.write("README.md", "docs after the export\n");
+  const head = h.commit("docs");
+  assert.deepEqual(exportSerialAt({ root: h.dir, sourceCommit: head }), { sha: exported, serial: 17 });
+  assert.equal(exportSerialAt({ root: h.dir, sourceCommit: h.commits.c4 }), null);
+
+  const doc = { ...stubExport({ root: h.dir, commit: exported }), serial: 17 };
+  const s = service(doc);
+  const r = await assertExport({ root: h.dir, sourceCommit: head, signedRef: "signed", env, log: quiet, pullOf: noPulls, ...s });
+  assert.deepEqual(s.calls.fetch.map((c) => c.url), [ASKED(17)]);
+  assert.equal(r.export, "equal", r.lines.join("\n"));
+  // The service answering another serial than the one asked is a note.
+  const r2 = await assertExport({ root: h.dir, sourceCommit: head, signedRef: "signed", env, log: quiet, pullOf: noPulls, ...service({ ...doc, serial: 18 }) });
+  assert.equal(r2.export, "other-serial");
+  assert.deepEqual(r2.codes, []);
+  assert.ok(r2.lines.some((l) => l.includes("service at serial 18, asked for serial 17")));
 });
 
 test("any other answer is SIGNER_EXPORT_UNREACHABLE: 503, 401, a redirect, not JSON", async () => {
@@ -136,7 +166,7 @@ test("the answer is read up to 64 MiB, counted on the bytes, and no further", as
 
   // And fetchExport goes through it: an oversized 200 is unreachable, never parsed.
   const big = await fetchExport({
-    base: ORIGIN, serial: 3, mint: async () => ({ token: "t" }), log: quiet,
+    base: ORIGIN, query: { serial: 3 }, mint: async () => ({ token: "t" }), log: quiet,
     // Finite (65 MiB), so a reader without the cap parses and fails here rather than hanging.
     fetchImpl: async () => {
       let left = 65;
@@ -165,10 +195,15 @@ test("nothing the service answers is printed raw: digests and serials off their 
 });
 
 test("the URL is the service's origin plus this file's path, and nothing else gets a token", async () => {
+  const sha = "b".repeat(40);
   for (const ok of ["https://api.minice.ai", "https://api.minice.ai/", " https://api.minice.ai "]) {
-    const { url, problem } = exportUrl(ok.trim(), 7);
+    const { url, problem } = exportUrl(ok.trim(), { serial: 7 });
     assert.equal(problem, null, ok);
     assert.equal(url.href, ASKED(7));
+    assert.equal(exportUrl(ok.trim(), { commit: sha }).url.href, ASKED_COMMIT(sha));
+  }
+  for (const q of [{}, { commit: "HEAD" }, { commit: `${sha}&x=1` }, { serial: -1 }, { serial: "7" }, 7, null]) {
+    assert.ok(exportUrl(ORIGIN, q).problem, `query ${JSON.stringify(q)} was accepted`);
   }
   for (const bad of [
     "http://api.minice.ai", "https://api.minice.ai:8443", "https://api.minice.ai.example.invalid",
@@ -177,7 +212,7 @@ test("the URL is the service's origin plus this file's path, and nothing else ge
     "https://api.minice.ai/#x", "https://example.invalid", "api.minice.ai", "",
   ]) {
     const s = service({});
-    const got = await fetchExport({ base: bad, serial: 3, mint: s.mint, fetchImpl: s.fetchImpl, log: quiet });
+    const got = await fetchExport({ base: bad, query: { serial: 3 }, mint: s.mint, fetchImpl: s.fetchImpl, log: quiet });
     assert.equal(got.kind, "unreachable", bad);
     assert.equal(s.calls.mint, 0, `${bad} was given a token`);
     assert.equal(s.calls.fetch.length, 0, `${bad} was fetched`);
@@ -320,6 +355,67 @@ test("a persistent outage pages once, not once per head; the signer's own check 
   assert.equal(alertDecision(signer, first.state, { now: new Date("2026-11-20T01:00:00Z") }).act, "page");
 });
 
+// ── a service that never lets a comparison happen does not stay green ─────
+
+test("compareMemory: asking without comparing for 24 hours is NOT_COMPARED; a comparison clears it; unset forgets", () => {
+  const t0 = new Date("2026-11-19T00:00:00Z");
+  const at = (h) => new Date(t0.getTime() + h * 3600_000);
+  let m = compareMemory({ prior: undefined, answer: "other-serial", now: t0 });
+  assert.deepEqual([m.changed, m.notCompared], [true, false]);
+  assert.deepEqual(m.memory, { asked_since: "2026-11-19T00:00:00Z", last_compared: null });
+  assert.equal(compareMemory({ prior: m.memory, answer: "other-serial", now: at(23) }).notCompared, false);
+  const due = compareMemory({ prior: m.memory, answer: "unreachable", now: at(24) });
+  assert.deepEqual([due.changed, due.notCompared], [false, true]);
+  // A job that did not report keeps counting an existing memory, starts none.
+  assert.equal(compareMemory({ prior: m.memory, answer: "", now: at(25) }).notCompared, true);
+  assert.equal(compareMemory({ prior: undefined, answer: "", now: at(25) }).memory, null);
+
+  const c = compareMemory({ prior: m.memory, answer: "equal", now: at(30) });
+  assert.deepEqual([c.changed, c.notCompared, c.memory.last_compared], [true, false, "2026-11-20T06:00:00Z"]);
+  // Refreshed every 6 hours, not every run.
+  assert.equal(compareMemory({ prior: c.memory, answer: "differs", now: at(32) }).changed, false);
+  assert.equal(compareMemory({ prior: c.memory, answer: "equal", now: at(36) }).changed, true);
+  assert.equal(compareMemory({ prior: c.memory, answer: "other-serial", now: at(53) }).notCompared, false);
+  assert.equal(compareMemory({ prior: c.memory, answer: "other-serial", now: at(54) }).notCompared, true);
+
+  const gone = compareMemory({ prior: c.memory, answer: "not-asked", now: at(60) });
+  assert.deepEqual([gone.memory, gone.changed, gone.notCompared], [null, true, false]);
+  // A memory off its grammar is no memory.
+  assert.equal(compareMemory({ prior: { asked_since: "yesterday", last_compared: null }, answer: "other-serial", now: t0 }).changed, true);
+});
+
+test("a service that always answers 404 pages SIGNER_EXPORT_NOT_COMPARED once after 24 hours, and resolves on a comparison", () => {
+  const key = "k".repeat(40);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "export-memory-test-"));
+  const verdictFile = path.join(dir, "verdict.json");
+  let line = "";
+  let now = new Date("2026-11-19T00:00:00Z");
+  const acts = [];
+  const run = (answer) => {
+    fs.writeFileSync(verdictFile, JSON.stringify({ schema: "astra.registry.alert-verdict/1", check: "signer-export", status: "green" }));
+    const out = runMemory({ verdictFile, stateLine: line, answer, env: { ASTRA_ALERT_STATE_HMAC_KEY: key }, now, log: quiet });
+    const verdict = JSON.parse(fs.readFileSync(verdictFile, "utf8"));
+    fs.writeFileSync(path.join(dir, "s.json"), out.state);
+    const d = alertDecision(verdict, readSignedState(path.join(dir, "s.json"), key), { now });
+    // What export-alert saves: the alarm's next state (signed, as runAlert
+    // writes it) when it moved, else the memory step's.
+    line = d.changed ? JSON.stringify(signState(d.state, key)) : out.state;
+    acts.push(d.act);
+    now = new Date(now.getTime() + 3600_000);
+    return verdict;
+  };
+  for (let i = 0; i < 30; i++) run("other-serial");
+  assert.deepEqual(acts.slice(0, 24), Array(24).fill("quiet"), "paged before 24 hours");
+  assert.equal(acts[24], "page");
+  assert.deepEqual(acts.slice(25), Array(5).fill("quiet"), "paged more than once");
+  const v = run("equal");
+  assert.equal(v.status, "green");
+  assert.equal(acts.at(-1), "resolve");
+  fs.writeFileSync(path.join(dir, "s.json"), line);
+  assert.ok(readSignedState(path.join(dir, "s.json"), key).checks[MEMORY_CHECK].last_compared, "the comparison was remembered");
+  assert.equal(CODES.notCompared, NOT_COMPARED_CODE);
+});
+
 // ── sign.yml: the job is beside the signature, never in front of it ────────
 
 const SIGN = fs.readFileSync(path.join(REPO_ROOT, ".github", "workflows", "sign.yml"), "utf8");
@@ -345,6 +441,8 @@ test("sign.yml: publish signs without waiting for export-assert, which runs afte
   assert.match(assertJob, /node tools\/signer\/export-assert\.mjs --source-commit "\$SOURCE_COMMIT"/);
   assert.match(assertJob, /ASTRA_EXPORT_URL: \$\{\{ vars\.ASTRA_EXPORT_URL \}\}/);
   assert.match(assertJob, /GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
+  assert.match(assertJob, /^\s{6}pull-requests: read$/m, "the merged-PR lookup needs pull-requests: read");
+  assert.match(assertJob, /^\s{6}export: \$\{\{ steps\.assert\.outputs\.export \}\}$/m);
   assert.doesNotMatch(assertJob, /secrets\./, "the export is fetched with a minted token, never a stored secret");
   for (const other of ["pages", "alert-state", "alert", "alert-save"]) {
     assert.doesNotMatch(job(other), /export-assert/, `${other} waits for or reports the assertion`);
@@ -357,7 +455,12 @@ test("sign.yml: export-assert pages through its own alert, check signer-export, 
   assert.match(alert, /ASTRA_SIGNER_JOBS: export-assert$/m);
   for (const v of ["RESULT", "STATUS", "CODES", "HEXES"]) assert.match(alert, new RegExp(`EXPORT_ASSERT_${v}: `));
   assert.match(alert, /--check signer-export$/m);
-  assert.match(alert, /state: \$\{\{ needs\.export-alert-state\.outputs\.state \}\}/);
+  assert.match(alert, /ASTRA_ALERT_STATE: \$\{\{ needs\.export-alert-state\.outputs\.state \}\}/);
+  assert.match(alert, /EXPORT_ANSWER: \$\{\{ needs\.export-assert\.outputs\.export \}\}/);
+  assert.match(alert, /run: node tools\/signer\/export-memory\.mjs --verdict verdict\.json/);
+  assert.match(alert, /state: \$\{\{ steps\.memory\.outputs\.state \}\}/);
+  assert.match(alert, /next_state: \$\{\{ steps\.alarm\.outputs\.next-state \|\| steps\.memory\.outputs\.state \}\}/);
+  assert.match(alert, /tools\/signer\/export-memory\.mjs$/m, "the sparse checkout lacks the memory script");
   assert.match(job("export-alert-state"), /key: sign-export-alert$/m);
   assert.match(job("export-alert-save"), /key: sign-export-alert$/m);
   assert.match(job("alert-state"), /key: sign-alert$/m, "the signer's own memory is not shared with this one");

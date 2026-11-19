@@ -432,6 +432,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      # `commits/{sha}/pulls`: is a non-bot commit a merged pull request's?
+      pull-requests: read
     # Short: this job shares `registry-signer`'s concurrency group, and the
     # next signer run queues behind it.
     timeout-minutes: 3
@@ -439,6 +441,9 @@ jobs:
       status: ${{ steps.assert.outputs.status }}
       codes: ${{ steps.assert.outputs.codes }}
       hexes: ${{ steps.assert.outputs.hexes }}
+      # equal | differs | other-serial | unreachable | not-asked: what
+      # export-alert's memory of the last comparison reads.
+      export: ${{ steps.assert.outputs.export }}
     steps:
       # Full history: (c) walks every commit since `signed`'s previous
       # Source-Commit, and the serial is a `rev-list --count`.
@@ -656,9 +661,12 @@ jobs:
     permissions:
       contents: read
     timeout-minutes: 5
+    # The alarm's next state when it moved, else the comparison memory's when
+    # that moved (tools/signer/export-memory.mjs), which carries everything the
+    # alarm read.
     outputs:
-      next_state: ${{ steps.alarm.outputs.next-state }}
-      state_changed: ${{ steps.alarm.outputs.state-changed }}
+      next_state: ${{ steps.alarm.outputs.next-state || steps.memory.outputs.state }}
+      state_changed: ${{ steps.alarm.outputs.state-changed == 'true' || steps.memory.outputs.changed == 'true' }}
     # The three channel secrets and the state key, and no ping URL: this job
     # posts no heartbeat (attack M-5: a job maps only what it uses).
     env:
@@ -679,6 +687,7 @@ jobs:
             bot/lib/alert-checks.mjs
             tools/lib/ids.mjs
             tools/served-set/compose.mjs
+            tools/signer/export-memory.mjs
             tools/signer/verdict.mjs
           sparse-checkout-cone-mode: false
 
@@ -695,10 +704,20 @@ jobs:
           EXPORT_ASSERT_HEXES: ${{ needs.export-assert.outputs.hexes }}
         run: node tools/signer/verdict.mjs --out verdict.json --check signer-export
 
+      # A service that answers 404 to everything must not stay green for
+      # ever: 24 hours of asking without one comparison adds
+      # SIGNER_EXPORT_NOT_COMPARED to the verdict, once.
+      - name: When a comparison last happened
+        id: memory
+        env:
+          ASTRA_ALERT_STATE: ${{ needs.export-alert-state.outputs.state }}
+          EXPORT_ANSWER: ${{ needs.export-assert.outputs.export }}
+        run: node tools/signer/export-memory.mjs --verdict verdict.json
+
       - uses: ./.github/actions/alert
         id: alarm
         with:
-          state: ${{ needs.export-alert-state.outputs.state }}
+          state: ${{ steps.memory.outputs.state }}
           verdict: verdict.json
           no-heartbeat-because: >-
             the signer's ROLL-62 heartbeat is posted by this workflow's `alert`
