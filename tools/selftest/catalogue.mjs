@@ -604,6 +604,16 @@ export async function run() {
       repository_id: "1343092393", repository_owner_id: "114572819", decided_at: "2026-10-01T00:00:00Z" });
     assertEqual(JSON.stringify(entryOf().owner_id), "114572819",
       "a listing whose only baseline is its first publication does not carry that record's owner id");
+    // A change of hands a moderator approved, published unbound: the baseline still names A, the newest
+    // version is B's. No owner_id, so the client asks (the review of 4df4cd0).
+    // Watched: returning the baseline unconditionally in baselineOwnerSource turns this red.
+    fs.rmSync(path.join(dir, "log"), { recursive: true });
+    record(`${"a".repeat(32)}.json`, { plugin_id: "dice-roller", trigger: "migration", state: "published",
+      repository_id: "1343092393", repository_owner_id: "193032699", decided_at: "2026-09-20T00:00:00Z" });
+    record(`${"c".repeat(32)}.json`, { plugin_id: "dice-roller", trigger: "service", state: "published",
+      repository_id: "1343092393", repository_owner_id: "114572819", decided_at: "2026-10-02T00:00:00Z" });
+    assert(!Object.hasOwn(entryOf(), "owner_id"),
+      `a listing whose later publication names another owner still carries the baseline's owner_id ${entryOf().owner_id}`);
     bind("280318216");
     assertEqual(JSON.stringify(entryOf().owner_id), "280318216", "the baseline won over the identity record");
     fs.rmSync(path.join(dir, "log"), { recursive: true });
