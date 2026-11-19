@@ -1,0 +1,52 @@
+{
+  "schema": "astra.registry.export-state-vectors/1",
+  "$comment": "Worked cases for state_sha256. The definition is the header of tools/lib/export-state.mjs in astra-registry; every implementation must reproduce `lines` and `state_sha256` from `files` (path to base64 bytes) for each case. bot/tests/export-state.test.mjs holds the registry's implementation to them.",
+  "cases": [
+    {
+      "name": "empty",
+      "note": "No file under plugins/ or log/: SHA-256 of the empty string.",
+      "files": {},
+      "lines": "",
+      "state_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "one-listing",
+      "note": "log/ sorts before plugins/; each line ends in a line feed, the last one too.",
+      "files": {
+        "log/decisions/2026/11/0123456789abcdef0123456789abcdef.json": "eyJvdXRjb21lIjoiYWNjZXB0In0K",
+        "plugins/dice-roller/plugin.json": "eyJpZCI6ImRpY2Utcm9sbGVyIn0K",
+        "plugins/dice-roller/versions/1.0.0.json": "eyJ2ZXJzaW9uIjoiMS4wLjAifQo="
+      },
+      "lines": "90b487e7e05562e1d93582c7e423e9d9a4d84a9e8bb5a62db620eaec909569f6 log/decisions/2026/11/0123456789abcdef0123456789abcdef.json\n5788cc1b7d746a3af5b6d7ac8217f74e16a4275ce7ad1751b13ac9b7d97f9d48 plugins/dice-roller/plugin.json\n705f5e244229493ee06e69f5af0b066b5d0aa1eb92548a8d1d98bd81953371ea plugins/dice-roller/versions/1.0.0.json\n",
+      "state_sha256": "418a22fb4f21fcac7cdd4e886fc59c6944692c6b88c55a2c6eed5ddb939fb8e6"
+    },
+    {
+      "name": "bytes-as-stored",
+      "note": "Content is hashed as stored: an empty file, CRLF line ends, no trailing newline, and non-UTF-8 bytes are all kept exactly.",
+      "files": {
+        "plugins/a/crlf.txt": "b25lDQp0d28NCg==",
+        "plugins/a/empty.txt": "",
+        "plugins/a/icon.png": "iVBORwD//go=",
+        "plugins/a/no-newline.json": "e30="
+      },
+      "lines": "6f4792b265fe72790b344fd3ef5294701d9d087bed9fce815c0f4bbad6d2ed87 plugins/a/crlf.txt\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 plugins/a/empty.txt\n638e7e658615235833958cc2ddc6ce374fbfd0285195bfa3c648f8f7f7604500 plugins/a/icon.png\n44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a plugins/a/no-newline.json\n",
+      "state_sha256": "e09629a222bbd765d31727256e92f37fe7b0502f5450073699752446eaa28fce"
+    },
+    {
+      "name": "byte-order",
+      "note": "Paths compare by their UTF-8 bytes: '-' (2d) < '.' (2e) < '/' (2f) < 'A' (41) < 'a' (61); U+FF21 (EF BC A1) sorts before U+1F600 (F0 9F 98 80). A UTF-16 sort, such as JavaScript's default sort(), puts U+1F600 first and gives `not_this_utf16_order_gives`.",
+      "files": {
+        "log/z": "Nwo=",
+        "plugins/A/x": "NAo=",
+        "plugins/a-b/x": "Mgo=",
+        "plugins/a.b/x": "Mwo=",
+        "plugins/a/b": "MQo=",
+        "plugins/Ａ/x": "NQo=",
+        "plugins/😀/x": "Ngo="
+      },
+      "lines": "10159baf262b43a92d95db59dae1f72c645127301661e0a3ce4e38b295a97c58 log/z\n7de1555df0c2700329e815b93b32c571c3ea54dc967b89e81ab73b9972b72d1d plugins/A/x\n53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3 plugins/a-b/x\n1121cfccd5913f0a63fec40a6ffd44ea64f9dc135c66634ba001d10bcf4302a2 plugins/a.b/x\n4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865 plugins/a/b\nf0b5c2c2211c8d67ed15e75e656c7862d086e9245420892a7de62cd9ec582a06 plugins/Ａ/x\n06e9d52c1720fca412803e3b07c4b228ff113e303f4c7ab94665319d832bbfb7 plugins/😀/x\n",
+      "state_sha256": "be4324fb84a031a29fda62541ae814cb90f8c974c4398fb4b6464c651ac2099d",
+      "not_this_utf16_order_gives": "9ad265c8330418e0d266bc1c06b1dc2e07251a7e1fb0fbae41921cc45d5b39cf"
+    }
+  ]
+}
