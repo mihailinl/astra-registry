@@ -83,7 +83,7 @@ import { isTime } from "../../tools/lib/time.mjs";
 import { decisionId, submissionKey } from "./decisions.mjs";
 import { ID_PATTERN } from "../../tools/lib/ids.mjs";
 import { SEMVER_PATTERN } from "../../tools/lib/semver.mjs";
-import { isFirstPartyId, loadFirstParty } from "../../tools/lib/first-party.mjs";
+import { isFirstPartyId, loadFirstParty, sameAccountRename, versionStandsUnderSource } from "../../tools/lib/first-party.mjs";
 
 const ID_RE = new RegExp(ID_PATTERN);
 const SEMVER_RE = new RegExp(SEMVER_PATTERN);
@@ -555,27 +555,29 @@ export function id41({ identity, record, lineHash }) {
 }
 
 /**
- * A rename inside Astra's own accounts is not held (owner, 2026-11-19).
+ * A rename inside one of Astra's own accounts is not held (owner, 2026-11-19).
  *
- * TRUST-23's rename row and ID-41's row 5 hold a repository whose name moved
- * while BOTH numeric ids stayed. For a third party that hold stands. For an
- * owner whose id is in policy/first-party.json it stopped nobody:
- * KNICE-TECH/astra-chess became MINICE-AI/astra-chess with repository id
- * 1343092393 and owner id 280318216 unchanged, and the hold that followed sat
- * for weeks. The attacker a name change could hide is a freed login
- * registered by somebody else, and that attacker cannot keep either id:
- * `B_REPOSITORY_RECYCLED` (row 1, and TRUST-23's recycled row) and the
- * transfer and re-creation rows catch it whatever this returns.
+ * ID-41's row 5 holds a repository whose name moved while BOTH numeric ids
+ * stayed. For a third party that hold stands. For a repository renamed inside
+ * one first-party account it stopped nobody: the attacker a name change could
+ * hide is a freed login registered by somebody else, and that attacker cannot
+ * keep either id (`B_REPOSITORY_RECYCLED`, and the transfer and re-creation
+ * rows, catch it whatever this returns).
  *
- * True only when `reference` (the identity record, or the baseline) names
- * exactly this release's repository id and owner id, and that owner id is
- * first party. Anything unread, missing or different holds as before.
+ * True only when the listing is BOUND (an identity record names the ids;
+ * a baseline-only listing keeps TRUST-23's hold), `sameAccountRename` holds
+ * between the record and this release — same ids, first-party owner, same
+ * owner LOGIN, so an organisation rename stays held — and every version the
+ * listing already has stands under the new name by
+ * `versionStandsUnderSource`, the predicate tools/validate.mjs asks of the
+ * tree this publication writes. The two sides share it so that a rename this
+ * lets through is one the validator accepts (review of #521, finding 1).
  */
-export function firstPartyRename({ identity, reference, firstParty = null }) {
-  if (!reference || !(firstParty instanceof Set)) return false;
-  return isStr(identity?.repository_id) && String(reference.repository_id) === identity.repository_id
-    && isStr(identity?.repository_owner_id) && String(reference.repository_owner_id) === identity.repository_owner_id
-    && isFirstPartyId(identity.repository_owner_id, firstParty);
+export function firstPartyRename({ identity, record, versions = [], records = [], pluginId, firstParty = null }) {
+  if (!record || !sameAccountRename({ from: record, to: identity, firstParty })) return false;
+  return versions.every(({ doc }) => versionStandsUnderSource({
+    pluginId, version: doc, identity: record, sourceRepo: identity.repo, records, firstParty,
+  }));
 }
 
 // ── the approval (BOT-26) ───────────────────────────────────────────────────
@@ -1426,14 +1428,16 @@ export function decideSubmission(input) {
     findings.push({ level: "error", code: "B_BINDING_UNUSABLE", where: null, message: "the binding line cannot be used for this repository (ID-9)" });
   }
 
-  // A rename inside Astra's own accounts publishes (`firstPartyRename`); the
-  // note says so, and moderators read the release first.
+  // A rename inside one first-party account publishes (`firstPartyRename`);
+  // the note says so, and moderators read the release first.
   const renameNote = (from) =>
     `a first-party rename (${from} → ${identity.repo}, repository ${identity.repository_id} and owner ` +
     `${identity.repository_owner_id} unchanged), published under the new name`;
   if (identityRecord) {
     const t = id41({ identity, record: identityRecord, lineHash });
-    const fpRename = firstPartyRename({ identity, reference: identityRecord, firstParty: git.firstParty ?? null });
+    const fpRename = firstPartyRename({
+      identity, record: identityRecord, versions: existing?.versions ?? [], records, pluginId: verified.plugin_id, firstParty: git.firstParty ?? null,
+    });
     for (const c of t.codes) {
       if (c === "B_REPOSITORY_RECYCLED") recycled = `ID-41 row 1: ${identity.repo} now attests repository ${identity.repository_id} (owner ${identity.repository_owner_id}); the identity record names ${identityRecord.repository_id} (owner ${identityRecord.repository_owner_id})`;
       else if (c === "B_OWNER_CHANGED") findings.push({ level: "error", code: c, where: null, message: `ID-41 row 3: the owner id moved from ${identityRecord.repository_owner_id} to ${identity.repository_owner_id} under the same token` });
@@ -1447,16 +1451,14 @@ export function decideSubmission(input) {
   } else if (existing) {
     const { baseline } = baselineFor({ records, pluginId: verified.plugin_id });
     const compared = compareWithBaseline({ identity: { ok: true, ...identity, missing: [] }, baseline });
-    // With no baseline (MIG-28) nothing names the ids, so this is false and the hold stands.
-    const fpRename = firstPartyRename({ identity, reference: baseline, firstParty: git.firstParty ?? null });
+    if (compared.code === "B_REPOSITORY_RECYCLED") recycled = compared.reason;
+    else if (compared.code === "R_IDENTITY_CHANGED") heldCodes.push("R_IDENTITY_CHANGED");
     // TRUST-23's second half: the certificate's name against the listing's
     // `source.repo` on main, never against a lookup.
     const listedRepo = String(existing.doc?.source?.repo ?? "");
-    const nameMoved = compared.code === "R_IDENTITY_CHANGED"
-      || Boolean(listedRepo && listedRepo.toLowerCase() !== identity.repo.toLowerCase());
-    if (compared.code === "B_REPOSITORY_RECYCLED") recycled = compared.reason;
-    if (nameMoved && fpRename) priorityNotes.push(renameNote(listedRepo || baseline.repo));
-    else if (nameMoved) heldCodes.push("R_IDENTITY_CHANGED");
+    if (listedRepo && listedRepo.toLowerCase() !== identity.repo.toLowerCase() && !heldCodes.includes("R_IDENTITY_CHANGED")) {
+      heldCodes.push("R_IDENTITY_CHANGED");
+    }
     // MIG-10; ID-41: never R_BINDING_CHANGED. Since 6.7.0 not for the
     // repository's own owner or admin with a live token, nor under a binding
     // a moderator already approved (`firstBindingCleared`).

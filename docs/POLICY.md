@@ -513,12 +513,15 @@ with a check. Since contract 3.0.0 an approval there clears only a change of han
   too, and the owner file's newest commit is one of theirs and not from a
   pull request, the first binding is not held. Anyone outside that set in
   the binding's history holds it as above.
-- **Astra's own rename is not held** (since 2026-11-19). A repository renamed
-  or moved between Astra's own accounts with BOTH numeric ids unchanged (the
-  repository id and the owner id, the owner's in `policy/first-party.json`)
-  publishes under its new name, marked for moderators to read first, and the
-  listing's `source.repo` and identity record move with it. A third party's
-  rename, and any change of either id, is held as above.
+- **Astra's own rename is not held** (since 2026-11-19). A bound repository
+  renamed inside ONE of Astra's own accounts — the repository id, the owner id
+  (in `policy/first-party.json`) and the owner login all unchanged — publishes
+  under its new name, marked for moderators to read first, and the listing's
+  `source.repo` and identity record move with it. Its older versions stay
+  listed under the old name when a published decision record shows they came
+  from the same repository. A third party's rename, an organisation rename
+  (the login changes and the old one is freed), a listing with no identity
+  record, and any change of either id are held as above.
 - **A moderator approves a binding once** (since 6.7.0). A later release
   under the same binding token, plugin and repository is not held again; it
   publishes once the approved release's alert is recorded as delivered (there
