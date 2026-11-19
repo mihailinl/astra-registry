@@ -1119,7 +1119,7 @@ await test("ID-63's two reads: the owner-file commit, and whether a pull request
   const listUrl = `${API}/repositories/1203676452/commits` +
     `?sha=${"a".repeat(40)}&path=.well-known%2Fastra-plugin-owner&per_page=1`;
   const withPull = stubFetch({
-    [listUrl]: { status: 200, body: JSON.stringify([{ sha: "b".repeat(40) }]) },
+    [listUrl]: { status: 200, body: JSON.stringify([{ sha: "b".repeat(40), author: { id: 193032699 }, committer: { id: 19864447 } }]) },
     [`${API}/repositories/1203676452/commits/${"b".repeat(40)}/pulls`]: {
       status: 200, body: JSON.stringify([{ number: 17 }]),
     },
@@ -1127,6 +1127,8 @@ await test("ID-63's two reads: the owner-file commit, and whether a pull request
   const last = await gh.lastCommitTouching(1203676452, "a".repeat(40), ".well-known/astra-plugin-owner", { fetchImpl: withPull });
   assertEqual(last.status, "found", last.reason);
   assertEqual(last.commit, "b".repeat(40), "the newest commit touching the file up to the attested one");
+  // re-review of #512, blocker 1: the signer is read beside the linked author, as a separate id
+  assertEqual(`${last.author_id}/${last.committer_id}`, "193032699/19864447", "the linked author and the committer (the signer)");
   const pulls = await gh.pullsForCommit(1203676452, "b".repeat(40), { fetchImpl: withPull });
   assertEqual(pulls.status, "found", pulls.reason);
   assertEqual(pulls.pulls.join(","), "17", "GitHub ties it to #17");
@@ -3009,6 +3011,8 @@ async function verifyRun({
   permission = { status: "unreadable", reason: "HTTP 403: Must have push access to view collaborator permission.", permission: null },
   membership = { status: "not_found", reason: "HTTP 404" },
   asked = null,
+  // Contract 6.32.0: MIG-10 (c)'s inputs — the first-party set and the owner file's history.
+  firstParty = new Set(), commitsTouching = null,
 } = {}) {
   const github = fakeGitHub({ repo: REPO, tag: TAG, assets });
   const assetsDir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-assets-"));
@@ -3042,7 +3046,10 @@ async function verifyRun({
     },
     lastCommitTouching: async () => ({ status: "found", reason: "HTTP 200", commit: "9".repeat(40) }),
     pullsForCommit: async () => ({ status: "found", reason: "HTTP 200", pulls: [4] }),
-    workflowRun: async () => ({ status: "found", reason: "HTTP 200", triggering_actor_id: actorId, triggering_actor_login: "a-pusher" }),
+    workflowRun: async () => ({ status: "found", reason: "HTTP 200", triggering_actor_id: actorId, actor_id: actorId, triggering_actor_login: "a-pusher" }),
+    firstParty,
+    commitsTouching: commitsTouching ?? (async () => ({ status: "found", reason: "HTTP 200", truncated: false,
+      commits: [{ commit: "9".repeat(40), author_id: FIXTURE_OWNER_ID, committer_id: FIXTURE_OWNER_ID, verified: true }, { commit: "8".repeat(40), author_id: "700000555", committer_id: "700000556", verified: false }] })),
     collaboratorPermission: async () => permission,
     publicOrgMember: async (...args) => { asked?.push(args); return membership; },
   });
@@ -3155,6 +3162,28 @@ await test("verify: a binding line at the attested commit, with ID-63's and MIG-
   assertEqual(v.actor.triggering_actor_id, FIXTURE_OWNER_ID, "MIG-31's actor");
 });
 
+// Contract 6.32.0 (MIG-10 (c); review of #512, H1): for a first-party owner,
+// verify reads the owner file's WHOLE history, each commit with its pull
+// request answer, and the run's original actor; for anyone else it reads
+// neither history nor more calls. A partial history is none.
+await test("verify: a first-party owner's owner-file history and original actor are read; anyone else's are not", async () => {
+  const token = "Abcdefghijklmnopqrstuv0123";
+  const own = await verifyRun({ assets: [conformingAsset()], ownerFile: `astra-binding: ${token}\n`, firstParty: new Set([FIXTURE_OWNER_ID]) });
+  assertEqual(JSON.stringify(own.v.owner_file.history), JSON.stringify([
+    { commit: "9".repeat(40), author_id: FIXTURE_OWNER_ID, committer_id: FIXTURE_OWNER_ID, verified: true, pull_request: true },
+    { commit: "8".repeat(40), author_id: "700000555", committer_id: "700000556", verified: false, pull_request: true },
+  ]), "the owner file's history, every commit, with its signer (re-review of #512, blocker 1)");
+  assertEqual(own.v.actor.actor_id, FIXTURE_OWNER_ID, "the run's original actor");
+  let asked = 0;
+  const other = await verifyRun({ assets: [conformingAsset()], ownerFile: `astra-binding: ${token}\n`,
+    commitsTouching: async () => { asked += 1; return { status: "found", commits: [], truncated: false }; } });
+  assertEqual(asked, 0, "the history was read for an owner outside the first-party set");
+  assertEqual("history" in other.v.owner_file, false);
+  const partial = await verifyRun({ assets: [conformingAsset()], ownerFile: `astra-binding: ${token}\n`, firstParty: new Set([FIXTURE_OWNER_ID]),
+    commitsTouching: async () => ({ status: "found", commits: [{ commit: "9".repeat(40), author_id: FIXTURE_OWNER_ID, verified: true }], truncated: true }) });
+  assertEqual(partial.v.owner_file.history, null, "a history longer than the bot reads was judged in part");
+});
+
 // `compareActor` (bot/lib/identity.mjs) builds a `reason` that NAMES the
 // account for its "floor" outcome ("the build was started by account …").
 // `verify` is its one caller, and reads `cmp.reason` only on `cmp.outcome ===
@@ -3179,7 +3208,10 @@ await test("MIG-31: a mismatched triggering actor's id reaches only `v.actor.tri
     if (Array.isArray(value)) { value.forEach((x, i) => walk(x, `${keyPath}[${i}]`)); return; }
     if (typeof value === "object") {
       for (const [k, x] of Object.entries(value)) {
-        if (k === "triggering_actor_id") continue; // the one typed field allowed to carry it
+        // The typed fields allowed to carry it: the triggering actor, and since
+        // contract 6.32.0 the run's original actor (MIG-10 (c)), which is the
+        // same account in this fixture.
+        if (k === "triggering_actor_id" || k === "actor_id") continue;
         walk(x, `${keyPath}.${k}`);
       }
     }

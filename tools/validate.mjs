@@ -38,6 +38,7 @@ import {
   unsafeDisplayText,
   unsafePathComponent,
 } from "./lib/ids.mjs";
+import { FIRST_PARTY_FILE, firstPartyClaimProblems, isFirstPartyRecord, loadFirstParty } from "./lib/first-party.mjs";
 import {
   ALERTS_DIR,
   BASELINE_FILE,
@@ -53,6 +54,7 @@ import {
   loadSchemas,
   loadSources,
   nonStagingVersions,
+  publisherNameCollisions,
   publisherRecords,
   readJson,
   REPO_ROOT,
@@ -94,7 +96,7 @@ import {
   latinFraction,
   localeEnumProblems,
 } from "../bot/lib/locales.mjs";
-import { buildIndex, indexContent, publisherKeyProblems } from "./build-index.mjs";
+import { buildIndex, indexContent, ownerIdOf, publisherKeyProblems } from "./build-index.mjs";
 import { RESERVED_KEYS, SUPPORTED_KEYS } from "./lib/platform.mjs";
 import { isTime } from "./lib/time.mjs";
 import { reviewMarkFindings } from "./lib/review-mark.mjs";
@@ -922,6 +924,10 @@ function checkIndex(ctx) {
       "ids pin the join (TRUST-25) and are never the key.");
   }
 
+  for (const { where, problem, fix } of catalogueListingProblems(signed, { allowDirect: ctx.allowDirect === true })) {
+    report.error(rel, `${where}: ${problem}`, fix);
+  }
+
   let regenerated;
   try {
     regenerated = stableStringify(buildIndex({ root, serial: signed.serial }));
@@ -972,6 +978,83 @@ function checkIndex(ctx) {
       report.error(rel, `${p.id}: latest release is staging but the entry is not marked staging`);
     }
   }
+}
+
+/**
+ * What the signed catalogue promises per listing, asked of the committed file
+ * on every validation — and so at every publish, which since contract 6.32.0
+ * no longer runs `tools/selftest.mjs` (the owner's over-security cleanup of
+ * 2026-11-18, report row "Selftest блокирует весь пакет публикации"). These
+ * were the selftest's live-data checks over `registry/v1/index.json`
+ * (`tools/selftest/catalogue.mjs`, `tools/selftest/publishers.mjs`); the
+ * selftest keeps its floors and its fixture cases, and is a required check on
+ * every pull request to `main`.
+ *
+ *   INV-29   no listing claims a download or a star
+ *   INV-39   every artifact URL is under the GitHub release download path of
+ *            the repository the card names (`source.repo`); not asked under
+ *            `--allow-direct`, whose catalogues are self-hosted on purpose
+ *   BOT-79   every icon is inlined bytes (`data:image/…`) or none
+ *   ID-51    every listing's `publisher` is a `signed.publishers` key, and
+ *            every key is some listing's
+ *
+ * @returns {{where: string, problem: string, fix: string}[]}
+ */
+export function catalogueListingProblems(signed, { allowDirect = false } = {}) {
+  const out = [];
+  const plugins = Array.isArray(signed?.plugins) ? signed.plugins : [];
+  const keys = new Set(Object.keys(signed?.publishers ?? {}));
+  const named = new Set();
+  for (const p of plugins) {
+    const id = p?.id ?? "<no id>";
+    if ((p?.downloads !== undefined && p.downloads !== 0) || (p?.stars !== undefined && p.stars !== 0)) {
+      out.push({ where: id, problem: `claims downloads=${JSON.stringify(p.downloads)} stars=${JSON.stringify(p.stars)}`,
+        fix: "INV-29: this registry measures neither, and a signed number it never measured is a claim it cannot stand behind." });
+    }
+    if (typeof p?.icon_url === "string" && p.icon_url !== "" && !p.icon_url.startsWith("data:image/")) {
+      out.push({ where: id, problem: `icon_url fetches from ${JSON.stringify(p.icon_url.slice(0, 60))}`,
+        fix: "BOT-79: a signed card's picture is inlined bytes, never a host the author chose." });
+    }
+    if (!allowDirect) {
+      const repo = p?.source?.repo;
+      if (typeof repo !== "string" || !repo.includes("/")) {
+        out.push({ where: id, problem: "has no source.repo to hold its artifacts to", fix: "INV-39." });
+      } else {
+        const prefix = `https://github.com/${repo}/releases/download/`;
+        const urls = [
+          ...(p.download_url ? [["download_url", p.download_url]] : []),
+          ...Object.entries(p.platform_downloads ?? {}),
+          ...(p.releases ?? []).flatMap((r) => Object.entries(r?.artifacts ?? {}).map(([k, a]) => [`releases[${r.version}].${k}`, a?.url])),
+        ];
+        for (const [field, url] of urls) {
+          if (!String(url).startsWith(prefix)) {
+            out.push({ where: id, problem: `${field} ${url} is not under ${prefix}`,
+              fix: "INV-39: a card that names one repository and downloads from another is the picture a user cannot check." });
+          }
+        }
+      }
+    }
+    if (typeof p?.publisher === "string" && p.publisher !== "" && keys.has(p.publisher)) {
+      if (!Number.isSafeInteger(signed.publishers[p.publisher]?.github_id)) {
+        out.push({ where: `signed.publishers.${p.publisher}`, problem: "carries no github_id",
+          fix: "Contract 6.32.0: every signed.publishers entry names its account by numeric id; give publishers/<owner>.json an owner_ids entry for its owner." });
+      }
+    }
+    if (typeof p?.publisher === "string" && p.publisher !== "") {
+      named.add(p.publisher);
+      if (!keys.has(p.publisher)) {
+        out.push({ where: id, problem: `names publisher ${JSON.stringify(p.publisher)}, which is not a signed.publishers key`,
+          fix: "ID-51: the badge join reads signed.publishers by the listing's publisher login." });
+      }
+    }
+  }
+  for (const key of keys) {
+    if (!named.has(key)) {
+      out.push({ where: `signed.publishers.${key}`, problem: "is named by no listing",
+        fix: "A record shipped inside the signature with nothing pointing at it is a badge nobody reviewed for a listing." });
+    }
+  }
+  return out;
 }
 
 // ── the mirrored limits ─────────────────────────────────────────────────────
@@ -2761,6 +2844,30 @@ export function checkReviewMarks(ctx) {
 export function checkPublisherRecords(ctx, loaded = loadPublishers(ctx.root)) {
   const { report, schemas } = ctx;
   for (const e of loaded.errors) report.error(e.file, e.message);
+  // Moved here from tools/selftest/publishers.mjs (contract 6.32.0): two
+  // records that render as one word are a badge a stranger can borrow.
+  // Contract 6.32.0: `astra_team` is Astra's own, by numeric id and never by
+  // login (policy/first-party.json). The generator already gives such a
+  // record no badge; this says why, at the commit that writes it.
+  // A tree-level rule: asked only where there is a tree (a caller judging
+  // records alone passes no root).
+  const firstParty = ctx.root ? loadFirstParty(ctx.root) : null;
+  for (const p of firstParty?.problems ?? []) report.error(FIRST_PARTY_FILE, p);
+  for (const { file, doc } of firstParty ? publisherRecords(loaded.publishers) : []) {
+    // Any tier: a login mapped to another account's first-party id (H2).
+    for (const p of firstPartyClaimProblems(doc, firstParty)) {
+      report.error(file, p, `Contract 6.32.0: ${FIRST_PARTY_FILE} names the one login each first-party id is; owner_ids is typed by the record's author.`);
+    }
+    if (doc?.tier !== "astra_team" || isFirstPartyRecord(doc, firstParty, ownerIdOf)) continue;
+    const logins = [doc.owner, ...(Array.isArray(doc.covers) ? doc.covers : [])];
+    report.error(file, `claims tier astra_team for ${logins.map((l) => `${l} (id ${ownerIdOf(doc, l) ?? "none"})`).join(", ")}, ` +
+      "which are not all first-party ids under their own logins",
+      `Contract 6.32.0: astra_team is granted only to the ids in ${FIRST_PARTY_FILE}, each under the login it names, and such a record gives no badge.`);
+  }
+  for (const c of publisherNameCollisions(loaded.publishers)) {
+    report.error(`publishers/${c.a}.json`, `renders as the same word as ${c.b}: ${c.why}`,
+      "No two publishers may render alike; a reader cannot tell them apart on a card.");
+  }
   for (const { file, doc } of publisherRecords(loaded.publishers)) {
     for (const p of validateSchema(schemas.publisher, doc, "$")) {
       report.error(file, `${p.path} ${p.message}`,

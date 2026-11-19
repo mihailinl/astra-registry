@@ -604,6 +604,8 @@ const BOUND_WORLD_CODES = {
   W_GITHUB_RATE_LIMITED: { level: "wait" },
   W_SERVICE_UNREACHABLE: { level: "wait" },
   W_ELIGIBILITY_UNREADABLE: { level: "wait" },
+  // Unused while TRUST-32's window is 0 (contract 6.32.0); kept so a
+  // reinstated window needs no vocabulary change.
   W_OPERATOR_WINDOW: { level: "wait" },
   W_REGISTRY_UNACKNOWLEDGED: { level: "wait" },
   // An approval TRUST-27's wait or MIG-31's floor defers (contract 3.10.0):

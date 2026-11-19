@@ -3507,17 +3507,19 @@ function svcLand(root, decided, { deliveredAt = null } = {}) {
 
 /**
  * A hold, approved a day after TRUST-27's period, walked through every gate an
- * approval has on this path: BOT-28's author notice window, TRUST-14's alert
- * (undelivered, then delivered), TRUST-32's operator window, and the run that
- * finally decides. `beforeFinal(root, sub)` runs on the tree just before that
- * last run.
+ * approval has on this path since contract 6.32.0: BOT-28's author notice
+ * window, then the run that decides. With no operator window (TRUST-32 at 0)
+ * that run publishes and names TRUST-14's alert at once, and its alert record
+ * lands beside the listing when the channel reported delivery. Until 6.32.0
+ * the walk had three more runs: the alert undelivered, delivered, and the
+ * six-hour window. `beforeFinal(root, sub)` runs on the tree just before the
+ * deciding run; `deliveredAt: null` lands it as a run whose alert job
+ * reported no delivery.
  *
  * The approval is dated from the module's own `FIRST_BINDING_WAIT_DAYS`, so
  * these walks hold the gates that come AFTER TRUST-27 whatever its period is.
- * That period is a separate question: contract 2.1.0 made it 0 days and
- * bot/lib/service-decide.mjs still enforces 7 (lane S11's report, 2026-09-24).
  */
-function approvalWalk(root, sub, { tokenState = "seen", notice = { kind: "approved", status: "sent" }, beforeFinal = null, readAfterDays = null } = {}) {
+function approvalWalk(root, sub, { tokenState = "seen", notice = { kind: "approved", status: "sent" }, beforeFinal = null, readAfterDays = null, deliveredAt = undefined } = {}) {
   const s = {};
   s.held = svcDecide(root, sub, { ask: svcAsk(sub, { tokenState }), now: T0 });
   s.heldLanded = svcLand(root, s.held);
@@ -3528,18 +3530,13 @@ function approvalWalk(root, sub, { tokenState = "seen", notice = { kind: "approv
   const readFrom = readAfterDays === null ? approvedAt : at(T0, readAfterDays * 24 * 60 + 1);
   const ask = svcAsk(sub, { tokenState, decisions, notice: { ...notice, accepted_at: readFrom } });
   const approved = (now) => svcDecide(root, sub, { ask, now, claimedFrom: "approved" });
+  s.approvedAt = approvedAt;
   s.noticeRunning = approved(at(readFrom, 1));
   const noticeDone = at(readFrom, 6 * 60 + 1);
-  s.undelivered = approved(noticeDone);
-  s.undeliveredLanded = svcLand(root, s.undelivered, { deliveredAt: null });
-  s.approvedAt = approvedAt;
-  s.deliveredAt = at(noticeDone, 11);
-  s.delivered = approved(at(noticeDone, 10));
-  s.deliveredLanded = svcLand(root, s.delivered, { deliveredAt: s.deliveredAt });
-  s.windowRunning = approved(at(s.deliveredAt, 60));
   if (beforeFinal) beforeFinal(root, sub);
-  s.final = approved(at(s.deliveredAt, 6 * 60 + 1));
-  s.finalLanded = svcLand(root, s.final);
+  s.final = approved(noticeDone);
+  s.deliveredAt = deliveredAt === undefined ? at(noticeDone, 1) : deliveredAt;
+  s.finalLanded = svcLand(root, s.final, { deliveredAt: s.deliveredAt });
   return s;
 }
 
@@ -3607,59 +3604,48 @@ await test("the decide job refuses to decide a listed plugin whose MIG-1 state i
 // ── ROLL-25 (3): text-utils held under MIG-10, approved, served ──────────────
 //
 // The approval comes a day after TRUST-27's period (whatever the module
-// enforces), and what then stands between it and the catalogue is TRUST-14's
-// alert and TRUST-32's six hours from the alert's reported delivery. Until
-// contract 5.8.0 BOT-28's notice window stood first; a one-account first
-// binding now waits for no notice.
+// enforces), and since contract 6.32.0 nothing else stands between it and the
+// catalogue: TRUST-14's alert goes out in the run that publishes, and TRUST-32's
+// window is 0 (the owner's over-security cleanup of 2026-11-18, report row
+// "После одобрения смены владельца плагина релиз ждёт 6 ч"). Until 5.8.0
+// BOT-28's notice window stood first; a one-account first binding waits for
+// no notice.
 //
 // Watched failing: with TRUST-27's comparison in `honourApproval` made two
 // days longer than the constant, the approval is not honoured and the walk is
-// red at the notice; with `decideSubmission`'s TRUST-14 gate (`if (w.name)`)
-// made `false`, the run that raises the alert publishes and is red; with
-// `operatorWindow`'s `due > now` made `false`, the run an hour after delivery
-// publishes and is red; and with the identity records written for the plugin
-// alone (`ids = [verified.plugin_id]`), ID-64's siblings are unbound and it is
-// red.
-await test("ROLL-25 (3) — text-utils held `R_FIRST_BINDING`, approved, published only after TRUST-27's period, the alert's delivery and the operator window, with no notice wait since 5.8.0, binding every sibling (DEC-6; BOT-28; TRUST-14; TRUST-32; ID-64)", () => {
+// red; with `OPERATOR_WINDOW_HOURS` back at 6 the deciding run waits and is
+// red; with `decideSubmission`'s `publishAlert` dropped the publication names
+// no alert and is red; with `composePublication`'s alert branch kept to
+// waits, no alert record lands and it is red; and with the identity records
+// written for the plugin alone (`ids = [verified.plugin_id]`), ID-64's
+// siblings are unbound and it is red.
+await test("ROLL-25 (3) — text-utils held `R_FIRST_BINDING`, approved, published after TRUST-27's period in the run that sends the operator alert, with no notice wait since 5.8.0 and no operator window since 6.32.0, binding every sibling (DEC-6; BOT-28; TRUST-14; TRUST-32; ID-64)", () => {
   const root = serviceWorld();
   const sub = svcSubmission({ id: "text-utils", version: "0.2.1", line: LINE_OWNER });
   const s = approvalWalk(root, sub);
   assertEqual(JSON.stringify(s.held.plan.record?.reasons), JSON.stringify(["R_FIRST_BINDING"]), `the hold: ${said(s.held.plan)}`);
   // Contract 5.8.0 (BOT-28, OD-28): a first binding read with exactly one
   // line and no `R_BINDING_CHANGED` sends its notices to the account that
-  // made the release, so it waits for no notice. A minute after the approval
-  // it is already at TRUST-14's alert. Until 5.8.0 this run waited
-  // `W_NOTICE_PENDING` for the rest of six hours.
-  assertEqual(`${s.noticeRunning.plan.kind} ${s.noticeRunning.plan.wait?.code}`, "wait W_ALERT_UNDELIVERED",
-    `a minute after the approval a one-account first binding waits for no notice (BOT-28 since 5.8.0): ${said(s.noticeRunning.plan)}`);
+  // made the release, so it waits for no notice; since 6.32.0 a minute after
+  // the approval it publishes.
+  assertEqual(s.noticeRunning.plan.state, "published",
+    `a minute after the approval a one-account first binding is served (BOT-28 since 5.8.0; TRUST-32 at 0 since 6.32.0): ${said(s.noticeRunning.plan)}`);
   assertEqual(s.noticeRunning.plan.alert?.event, "approval", "the alert is named at once");
-  assertEqual(`${s.undelivered.plan.kind} ${s.undelivered.plan.wait?.code}`, "wait W_ALERT_UNDELIVERED",
-    `with the notice window passed, the approval raises TRUST-14's alert and publishes nothing: ${said(s.undelivered.plan)}`);
+  assertEqual(s.final.plan.state, "published",
+    `a day after TRUST-27's ${FIRST_BINDING_WAIT_DAYS} days, the approved first binding is not served: ${said(s.final.plan)}`);
   // 6.7.0: the alert also binds the whole digest and the held record it clears.
-  const { digest: alertDigest, held_decision_id: alertHeld, token_hash: _bindingCovered, ...alertLabel } = s.undelivered.plan.alert ?? {};
+  const { digest: alertDigest, held_decision_id: alertHeld, token_hash: _bindingCovered, ...alertLabel } = s.final.plan.alert ?? {};
   assertEqual(JSON.stringify(alertLabel),
     JSON.stringify({ fingerprint: sub.fingerprint, event: "approval", approval_decided_at: s.approvedAt }),
     "the alert does not name this fingerprint's approval");
   assertEqual(String(alertDigest).slice(0, 16), sub.fingerprint, "the alert's whole digest is not the one its label is cut from");
   assertEqual(/^[0-9a-f]{64}$/.test(String(alertDigest)) && /^[0-9a-f]{32}$/.test(String(alertHeld)), true,
     "the alert does not bind the whole digest and the held record (6.7.0)");
-  assertEqual(s.undeliveredLanded.changed.length, 0,
-    `no delivery was reported and the run wrote ${s.undeliveredLanded.changed.join(", ")}: TRUST-32 counts only from a reported delivery`);
-  assertEqual(JSON.stringify(s.deliveredLanded.changed), JSON.stringify([`state/alerts/${sub.fingerprint}.json`]),
-    "a reported delivery lands the alert record, and nothing else");
-  assertEqual(`${s.windowRunning.plan.kind} ${s.windowRunning.plan.wait?.code}`, "wait W_OPERATOR_WINDOW",
-    `an hour after delivery the operator window is still running (TRUST-32): ${said(s.windowRunning.plan)}`);
-  // Contract 5.8.0: the window's end is `window_ends_at`, and the earliest
-  // retry a hint 15 minutes after the run, so an operator's OK is read soon.
-  assertEqual(s.windowRunning.plan.wait.window_ends_at, at(s.deliveredAt, 6 * 60),
-    "W_OPERATOR_WINDOW's `window_ends_at` is not the window's end");
-  assertEqual(s.windowRunning.plan.wait.earliest_retry_at, at(s.deliveredAt, 60 + 15),
-    "W_OPERATOR_WINDOW's earliest retry is not a 15-minute hint");
-  assertEqual(s.final.plan.state, "published",
-    `six hours after delivery, and a day after TRUST-27's ${FIRST_BINDING_WAIT_DAYS} days, the approved first binding is not served: ${said(s.final.plan)}`);
   assertEqual(s.final.plan.record.moderator, "the-owner", "DEC-7: the approving moderator is not on the record");
   assert(s.finalLanded.changed.includes("plugins/text-utils/versions/0.2.1.json"),
     `the publication did not land its version file: ${s.finalLanded.changed.join(", ")}`);
+  assert(s.finalLanded.changed.includes(`state/alerts/${sub.fingerprint}.json`),
+    `a reported delivery did not land the alert record beside the publication: ${s.finalLanded.changed.join(", ")}`);
   // ID-64: the binding commit writes the identity record of every listing the
   // repository id names, baseline-named ones included — the bound world the
   // ROLL-59 walks below start from.
@@ -3669,6 +3655,15 @@ await test("ROLL-25 (3) — text-utils held `R_FIRST_BINDING`, approved, publish
     assertEqual(fs.readFileSync(path.join(root, rel), "utf8"), identityBytes(l.id, LINE_OWNER),
       `${rel} is not the record serviceWorld({ bound: true }) starts the ROLL-59 walks from`);
   }
+  // 6.32.0: an alert the channel did not report delivered holds nothing back;
+  // the release lands and no alert record is written (W_ALERT_UNDELIVERED is
+  // no longer a wait).
+  const lost = approvalWalk(serviceWorld(), sub, { deliveredAt: null });
+  assertEqual(lost.final.plan.state, "published", `an undelivered alert held the release: ${said(lost.final.plan)}`);
+  assert(lost.finalLanded.changed.includes("plugins/text-utils/versions/0.2.1.json"),
+    `the undelivered run did not land its version file: ${lost.finalLanded.changed.join(", ")}`);
+  assert(!lost.finalLanded.changed.some((f) => f.startsWith("state/alerts/")),
+    `no delivery was reported and the run wrote an alert record: ${lost.finalLanded.changed.join(", ")}`);
 });
 
 // ── ROLL-25 (4): a telegram-client release held `R_FIRST_BINDING`, stopped ──

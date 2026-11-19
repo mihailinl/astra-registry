@@ -71,7 +71,9 @@ function fixtureClone(name) {
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.cpSync(path.join(REPO_ROOT, rel), dest, { recursive: true });
   }
-  for (const rel of ["plugins", "publishers"]) {
+  // `policy/` since contract 6.32.0: the fixture's first-party ids, which
+  // the generator reads to grant fixture-owner's `astra_team` badge.
+  for (const rel of ["plugins", "publishers", "policy"]) {
     fs.cpSync(path.join(FIXTURE, rel), path.join(dir, rel), { recursive: true });
   }
   git("add", "-A");

@@ -765,6 +765,32 @@ test("control: the same race with a marked record lands on the second attempt", 
   assert.equal(git(bare, "show", "main:plugins/alpha/versions/0.1.0.json"), '{"version":"0.1.0","review":"unreviewed"}');
 });
 
+// Contract 6.32.0 (report row "Selftest блокирует весь пакет публикации"):
+// the publish path runs the validator and the generator, and no longer the
+// registry's own test suite, which gates pull requests to `main` instead (the
+// required `registry-selftest` check). Here a selftest that would fail, and
+// would leave a mark if it ran at all, and a validator and a generator that
+// pass: the release lands and the mark is never written.
+//
+// Watched red: with `["tools/selftest.mjs"]` back in `registryChecks`' steps,
+// the run ends ChecksFailed and nothing lands.
+test("6.32.0: the publish path does not run tools/selftest.mjs; a red selftest holds no release back", () => {
+  const { dir, one, two, bare } = estate();
+  const marker = path.join(dir, "selftest-ran");
+  write(two, "tools/build-index.mjs", "process.exit(0);\n");
+  write(two, "tools/validate.mjs", "process.exit(0);\n");
+  write(two, "tools/selftest.mjs", `import fs from "node:fs";\nfs.writeFileSync(${JSON.stringify(marker)}, "ran");\nprocess.exit(1);\n`);
+  git(two, "add", "-A");
+  git(two, "commit", "-m", "a registry whose own suite is red");
+  git(two, "push", "origin", "HEAD:main");
+  git(one, "pull", "--quiet", "--ff-only", "origin", "main");
+  const reports = report(dir, "ingest-report-0", { id: "alpha", version: "0.1.0" });
+  const result = run({ root: one, reports, watchState: path.join(dir, "none"), base: git(one, "rev-parse", "HEAD"), log: quiet });
+  assert.equal(result.outcome, "committed", JSON.stringify(result));
+  assert.equal(fs.existsSync(marker), false, "the publish path ran tools/selftest.mjs");
+  assert.ok(git(bare, "ls-tree", "--name-only", "main", "plugins/alpha/versions/0.1.0.json"), "the release did not land");
+});
+
 test("DRY_RUN commits on the runner, pushes nothing, and says `dry-run`", () => {
   const { dir, one, bare } = estate();
   const reports = report(dir, "ingest-report-0", { id: "alpha", version: "0.1.0" });

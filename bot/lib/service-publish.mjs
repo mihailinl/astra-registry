@@ -214,10 +214,13 @@ export function composePublication({ plans, root, listingsDir, reportsDir, deliv
       else if (!landed.record) landed.heldBack = "record_unreadable";
     }
 
-    if (plan.kind === "wait" && plan.alert && isTime(deliveredAt)) {
+    if ((plan.kind === "wait" || (plan.kind === "state" && plan.state === "published")) && plan.alert && isTime(deliveredAt)) {
       // TRUST-14: the alert went out in this run and the channel reported
       // delivery, so the record TRUST-32's window counts from lands in this
-      // run's commit (BOT-73).
+      // run's commit (BOT-73). Since contract 6.32.0 (no window) a published
+      // change of hands carries its alert too, and the record is what the
+      // deny and revert buttons are read against; without a reported delivery
+      // the release still publishes and no record is written.
       const doc = {
         schema: ALERT_SCHEMA,
         fingerprint: plan.alert.fingerprint,

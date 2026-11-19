@@ -245,6 +245,10 @@ export const ENTRIES = [
   "policy/reserved-ids.json",
   "policy/spdx-allowlist.json",
   "policy/listing-language-exemptions.json",
+  // Contract 6.32.0: Astra's own GitHub ids. `tools/build-index.mjs` grants the
+  // `astra_team` tier from it and `bot/lib/service-decide.mjs` skips MIG-10's
+  // `R_FIRST_BINDING` hold by it, so it decides what a bot run publishes.
+  "policy/first-party.json",
   // Contract 2.4.0's: B.4's alert record, which tools/validate.mjs judges
   // against it by literal path (the fourteenth schema).
   "schema/alert-v1.json",
@@ -1035,7 +1039,6 @@ export const DATA_OUTSIDE = [
   { path: "policy/binding-deadline.json", why: "committed by the owner by hand (MIG-2); TRUST-31 lists it outside" },
   // Deliberate, and each is TRUST-31's own words.
   { path: "schema/contract-tokens-v1.json", why: "generated from the contract, so hashing it would make every contract version a shadow transition (TRUST-31). It IS read at run time: fixedReason decides a moderation compile's reason_refused" },
-  { path: ".github/workflows", why: "tools/selftest.mjs's lane census reads every workflow file; the two bot workflows are set entries and the rest are outside by TRUST-31. Exact, so a named new workflow is still judged" },
   // Not files at all: operation paths relative to the plugins service's API
   // base (contract §4.2), in bot/lib/service.mjs's OPERATIONS.
   ...["gates", "leases", "moderation-work", "notice-status", "results", "service-decision-results", "submissions", "verdicts"]

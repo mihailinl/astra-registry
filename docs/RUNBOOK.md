@@ -856,7 +856,11 @@ minutes later (the wait's `earliest_retry_at` is a retry hint; its
 
 ### 7.10 The takedown bound
 
-**Three in any trailing 24 hours, estate-wide.** Above it, a moderator's
+**10 in any trailing 24 hours, estate-wide** (3 until contract 6.32.0).
+From the fourth withdrawal of a day on, the `settled` job of each moderation
+run that withdrew more pages the owner (`TRUST_26_TAKEDOWNS_ABOVE_ALERT`, with
+the plugin ids that run took away, which are what a revert, §7.7, names).
+Above the bound, a moderator's
 takedown — `block_install` and `disable` included — is held (`bound`), and
 released by itself in the first moderation run whose trailing 24 hours admit
 it, oldest first (§7.8). An operator's confirm (§7.7) releases it at once; it is
@@ -870,16 +874,22 @@ from the tree, so the hand advisories of §7.1 and §7.5 count exactly as a
 service decision does. Two exclusions and only two: a MOD-52 revert (§7.7), and
 the staging listing, excluded by its reserved id.
 
-The consequence to keep in mind on a bad day: **three hand advisories fill the
-bound**, and the fourth withdrawal that day — a moderator's `disable`, say —
-waits until the oldest of the three is 24 hours old, then goes by itself. That
+The consequence to keep in mind on a bad day: **ten hand advisories fill the
+bound**, and the eleventh withdrawal that day — a moderator's `disable`, say —
+waits until the oldest of the ten is 24 hours old, then goes by itself. That
 is the bound working, not a fault, and it is the registry's one guard against a
 compromised panel or service withdrawing the catalogue: it caps the blast
-radius at three withdrawals a day. If the fourth cannot wait, confirm it
-(§7.7) and it goes at once.
+radius at ten withdrawals a day, and the alarm from the fourth on is what
+tells you one is under way. If the eleventh cannot wait, confirm it (§7.7)
+and it goes at once.
 
-Author actions count. The service caps each account at one listed plugin id in
-any trailing 24 hours, so filling the bound by author actions takes three
+An admin's safety takedown still counts. The report of 2026-11-18 asked that
+it should not; a service decision carries no fact this bot can verify that
+says an admin made it (only `category` and a `moderator` handle), so the
+exclusion waits for the plugins service to send one.
+
+Author actions count. The service caps each account's listed plugin ids in
+any trailing 24 hours, so filling the bound by author actions takes several
 distinct accounts; the registry cannot see accounts and does not try to.
 
 ### 7.11 Clearing a red coverage canary

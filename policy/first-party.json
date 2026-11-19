@@ -1,0 +1,27 @@
+{
+  "schema": "astra.registry.first-party/1",
+  "$comment": [
+    "Astra's own GitHub accounts and organisations, by NUMERIC id (contract 6.32.0; the owner's over-security cleanup of 2026-11-18, report §1.14 and the row on official publishers). Two rules read it and no other: the `astra_team` publisher tier is granted only to a listing whose owner's id is here (tools/build-index.mjs `publisherFor`; tools/validate.mjs), and MIG-10's `R_FIRST_BINDING` hold is skipped for a repository whose owner's id is here, when no third party is in the binding's history (bot/lib/service-decide.mjs `firstBindingCleared`; POLICY §3.2).",
+    "IDS, NEVER LOGINS. A login is a name its holder can give away and anybody can then register: `KNICE-TECH` was freed by the rename to MINICE-AI, and the login `knice`/`KNICE` (id 36719) is a stranger's, unrelated to KnlCE (lowercase L, id 114572819). A numeric id does not move with the name and is never reissued. So no rule here matches a login, and `not_first_party` names the look-alike so a test holds it out.",
+    "Verified against GET /users/<login> on 2026-11-18. Each id is §0.7's canonical base-10 string, as publishers/*.json `owner_ids` and identity records spell them.",
+    "COUPLING: minice-g's plugins service (migration 0158) holds the same set for its side of R_FIRST_BINDING and the official mark. A change here is a change there, in the same contract version (ops dev/couplings.md).",
+    "Each id names the ONE login it is (review of #512, H2): a publisher record whose `owner_ids` maps a login to a first-party id is honoured only when that login is this one, case-insensitively, and refused otherwise, because `owner_ids` is typed by whoever writes the record."
+  ],
+  "github_ids": {
+    "280318216": {
+      "login": "MINICE-AI",
+      "note": "organisation"
+    },
+    "114572819": {
+      "login": "KnlCE",
+      "note": "KNICE, lowercase L"
+    },
+    "193032699": {
+      "login": "mihailinl",
+      "note": "the owner"
+    }
+  },
+  "not_first_party": {
+    "36719": "knice / KNICE: a stranger's account whose login looks like KnlCE's display name"
+  }
+}
