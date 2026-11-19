@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "HTfj9uq6/M7euCzwIjh9D5WgTh0BAGGDCR+o6P4P6ETQ+U18CvXAQlbY0HUq32RCa0EsbnKFTjagiQ0I4T/SCw=="
+      "sig": "56TZy5haKqGvFP3Rh+rSfwupOT3VhZJCBFqzSS20k09w15vV29X9m9XJvy0RCIpei7uyi8p8rm3s8CKOFLXDCg=="
     }
   ],
   "signed": {
-    "expires_at": "2026-12-18T06:39:23Z",
-    "issued_at": "2026-11-18T06:39:23Z",
+    "expires_at": "2026-12-19T02:01:00Z",
+    "issued_at": "2026-11-19T02:01:00Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
@@ -6089,12 +6089,14 @@
       "KnlCE": {
         "description": "Astra's co-founder and main developer",
         "display_name": "KNICE",
+        "github_id": 114572819,
         "tier": "astra_team",
         "verified_at": "2026-08-19"
       },
       "mihailinl": {
         "description": "Astra's creator and main developer",
         "display_name": "Mihailin",
+        "github_id": 193032699,
         "tier": "astra_team",
         "verified_at": "2026-08-19"
       }
