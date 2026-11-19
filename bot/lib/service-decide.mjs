@@ -72,6 +72,7 @@ import { HOUR_MS, iso } from "./policy/time.mjs";
 import { CODES } from "./codes.mjs";
 import { POLICY_CODES } from "./policy/constants.mjs";
 import { applyIdentity, baselineNamedIds, compareWithBaseline, effectiveBaseline } from "./identity.mjs";
+import { CONTAINED_OWNERS, containmentUnlist } from "./compile-decision.mjs";
 import { safeRepo, safeTag } from "./safe.mjs";
 import { execFileSync } from "node:child_process";
 import { trackRecord } from "./policy/track-record.mjs";
@@ -1480,6 +1481,30 @@ export function decideSubmission(input) {
     }
   }
 
+  // `unlisted` is main's, never the check job's (derive.mjs carries it, but
+  // that job is the one that opens a stranger's archive, and nothing here put
+  // it back): a release cannot list or delist a listing (MIG-27). The one
+  // exception, since 2026-11-19: a listing unlisted only because a contained
+  // login held it (`containmentUnlist`) is lifted by its first BOUND release
+  // from a first-party owner, not itself from a contained login, in that
+  // release's own publication — what M-T6.3 waited for a moderator to do.
+  if (existing) {
+    const owner = String(identity.repo ?? "").split("/")[0].toLowerCase();
+    const lift = existing.doc?.unlisted === true
+      && git.containment?.ok === true
+      && binding.outcome === "one" && Boolean(lineHash)
+      && isFirstPartyId(identity.repository_owner_id, git.firstParty ?? null)
+      && !CONTAINED_OWNERS.includes(owner);
+    const { unlisted: _fromCheckJob, ...plugin } = derived.plugin;
+    derived.plugin = existing.doc?.unlisted === true && !lift ? { ...plugin, unlisted: true } : plugin;
+    if (lift) {
+      priorityNotes.push(
+        `a containment unlist lifted: ${verified.plugin_id} was unlisted only because a freed login held it, and this ` +
+        `bound release from first-party owner ${identity.repository_owner_id} (${identity.repo}) lists it again`,
+      );
+    }
+  }
+
   for (const c of heldCodes) {
     findings.push({ level: "review", code: c, where: null, message: titleOf(c) });
   }
@@ -2086,6 +2111,8 @@ export function decideJob({ root, submissions, leases, claimShadow, verified, ou
       existing,
       queueEntry: pluginId ? readQueueOnMain(root, pluginId, v.version) : null,
       listingState,
+      // MIG-27's one exception (owner, 2026-11-19), read off main's tree.
+      containment: existing?.doc?.unlisted === true ? containmentUnlist(root, pluginId) : null,
       listingNamesRepo: v?.outcome === "ok"
         ? listingNamesRepository(root, { repo: v.repo, repositoryId: v.repository_id }) ||
           git.records.some((r) => r?.trigger === "migration" && String(r.repository_id) === String(v.repository_id))

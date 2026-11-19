@@ -2318,6 +2318,60 @@ test("F7: with an identity record (ID-41 row 5) a first-party rename publishes a
   assert.notEqual(moved.state, "published", "an owner id that moved is not a rename");
 });
 
+// Owner, 2026-11-19 (F6): MIG-27's one exception. A listing unlisted only
+// because a contained login held it (`containmentUnlist`, read off main) is
+// listed again by its first bound release from a first-party owner, in that
+// publication. Every other release keeps main's `unlisted`, whatever the
+// check job's listing says.
+const unlistedExisting = (over = {}) => {
+  const e = existing({ identity: { repo: P.repo, repository_id: P.rid, repository_owner_id: P.oid, token_hash: F7_HASH } });
+  return { ...e, doc: { ...e.doc, unlisted: true }, ...over };
+};
+const liftRun = ({ firstParty = new Set([P.oid]), containment = { ok: true }, line = f7Line(), ex = unlistedExisting(), listingOver = null, repo = P.repo } = {}) => decideWith({
+  verified: verified({
+    repo, fingerprint: submissionFingerprint({ repo, tag: P.tag, id: P.id, version: P.version, commit: P.commit, digests: DIGESTS }),
+    ...(line ? { binding: line, owner_file: { commit: "9".repeat(40), pull_request: false } } : {}),
+  }),
+  ask: ask({ verdict: "pass" }),
+  listing: listingOver ?? listing(),
+  git: git({ existing: ex, records: [baseline()], firstParty, containment }),
+});
+
+test("F6: a first-party bound release lifts a containment unlist in its own publication, and says so", () => {
+  const plan = liftRun();
+  assert.equal(plan.state, "published", JSON.stringify(plan.reasons.map((r) => r.code)));
+  assert.equal(plan.listing.plugin.unlisted, undefined, "the publication lists it again");
+  assert.ok(codes(plan).includes("P_REVIEW_PRIORITY"));
+  assert.match(priorityOf(plan), /containment unlist lifted/);
+});
+
+test("F6: a third party's release, an unbound release and a listing with a takedown all stay unlisted", () => {
+  const third = liftRun({ firstParty: new Set(["280318216"]) });
+  assert.equal(third.state, "published");
+  assert.equal(third.listing.plugin.unlisted, true, "a third party lifted an unlist");
+  const takedown = liftRun({ containment: { ok: false, why: "the delist of 2026-09-12 was a moderator's decision" } });
+  assert.equal(takedown.listing.plugin.unlisted, true, "a delisted listing was lifted");
+  assert.doesNotMatch(priorityOf(takedown), /containment/);
+  const unread = liftRun({ containment: null });
+  assert.equal(unread.listing.plugin.unlisted, true, "an unread containment answer lifted an unlist");
+  const unbound = liftRun({ line: null, ex: unlistedExisting({ identity: null }) });
+  assert.equal(unbound.state, "published", JSON.stringify(unbound.reasons.map((r) => r.code)));
+  assert.equal(unbound.listing.plugin.unlisted, true, "an unbound release lifted an unlist (MIG-27)");
+  // Never from the contained login itself, whatever the ids say (MIG-30).
+  const contained = liftRun({ repo: "KNICE-TECH/dice-roller" });
+  assert.equal(contained.state, "published", JSON.stringify(contained.reasons.map((r) => r.code)));
+  assert.equal(contained.listing.plugin.unlisted, true, "a release from a contained login lifted an unlist");
+});
+
+test("F6: `unlisted` is main's: a check-job listing cannot drop it or add it", () => {
+  // The check job opens a stranger's archive; its listing arriving without `unlisted` lists nothing.
+  const dropped = liftRun({ firstParty: new Set(["280318216"]), listingOver: listing() });
+  assert.equal(dropped.listing.plugin.unlisted, true);
+  const listed = decideWith({ git: git({ existing: existing(), records: [baseline()] }), listing: listing({ plugin: { ...listing().plugin, unlisted: true } }) });
+  assert.equal(listed.state, "published");
+  assert.equal(listed.listing.plugin.unlisted, undefined, "a release delisted a listed plugin");
+});
+
 test("ID-41 row 1 is permanent: a new tag of a recycled repository is refused again", () => {
   const b = baseline({ repository_id: "1", repository_owner_id: "2" });
   for (const tag of ["v0.2.0", "v0.3.0"]) {
@@ -5130,5 +5184,49 @@ test("ID-64: siblingsOf drops a baseline-named listing once an identity reset en
       "another id's reset ended beta's baseline");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// F6 end to end through `decideJob`: the containment answer is read off main's
+// tree (bot/moderation/, the versions, policy/first-party.json), not handed in.
+test("F6: decideJob reads a containment unlist off the tree and its first-party bound release lists it again", () => {
+  const t = registryTree();
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-f6-"));
+  try {
+    const w = (rel, doc) => {
+      fs.mkdirSync(path.join(t.dir, path.dirname(rel)), { recursive: true });
+      fs.writeFileSync(path.join(t.dir, rel), `${JSON.stringify(doc, null, 2)}\n`);
+    };
+    const RID = "900000001";
+    const OID = "900000002";
+    w(`plugins/${P.id}/plugin.json`, { schema: "astra.registry.plugin/1", id: P.id, name: "Dice Roller", summary: "Rolls dice.", license: "MIT", source: { kind: "github", repo: P.repo }, added_at: "2026-01-01", unlisted: true });
+    w(`plugins/${P.id}/identity.json`, { schema: "astra.registry.identity/1", plugin_id: P.id, repository_id: RID, repository_owner_id: OID, repo: P.repo, token_hash: F7_HASH });
+    w(`plugins/${P.id}/versions/0.1.0.json`, versionDoc("0.1.0", { published_at: "2026-08-01T00:00:00Z", yanked: true, release: { kind: "github_release", repo: "KNICE-TECH/dice-roller", tag: "v0.1.0", commit: "c".repeat(40) } }));
+    w(`bot/moderation/2026-08-02-${P.id}-delist.json`, { date: "2026-08-02", action: "delist", plugin: P.id, reason: "Its source repository is under KNICE-TECH, a login freed by a rename." });
+    w("policy/first-party.json", { schema: "astra.registry.first-party/1", github_ids: { [OID]: { login: "fixture-org" } } });
+    t.g("add", "-A");
+    t.g("commit", "-q", "-m", "a listing contained by a freed login");
+    const run = (firstPartyOwner) => {
+      const v = verified({ repository_id: RID, repository_owner_id: firstPartyOwner, binding: f7Line(), owner_file: { commit: "9".repeat(40), pull_request: false } });
+      const factsDir = path.join(work, `facts-${firstPartyOwner}`);
+      const listingsDir = path.join(work, `listings-${firstPartyOwner}`);
+      fs.mkdirSync(path.join(factsDir, `facts-${P.sid}`), { recursive: true });
+      fs.writeFileSync(path.join(factsDir, `facts-${P.sid}`, "facts.json"), JSON.stringify(facts()));
+      const pdir = path.join(listingsDir, `listing-${P.sid}`, "plugins", P.id);
+      fs.mkdirSync(path.join(pdir, "versions"), { recursive: true });
+      fs.writeFileSync(path.join(pdir, "plugin.json"), JSON.stringify(listing().plugin));
+      fs.writeFileSync(path.join(pdir, "versions", `${P.version}.json`), JSON.stringify(listing().version));
+      return decideJob({
+        root: t.dir, submissions: [P.sid], leases: { [P.sid]: lease() }, claimShadow: false,
+        verified: { [P.sid]: v }, outcome: { [P.sid]: ask({ verdict: "pass" }) }, factsDir, listingsDir,
+        now: P.now, startedAt: P.now, readCommit: t.g("rev-parse", "HEAD").trim(),
+      }).plans[0];
+    };
+    const lifted = run(OID);
+    assert.equal(lifted.state, "published", JSON.stringify(lifted.reasons?.map((r) => r.code) ?? lifted.why));
+    assert.equal(lifted.listing.plugin.unlisted, undefined, "the containment unlist was not lifted");
+  } finally {
+    t.cleanup();
+    fs.rmSync(work, { recursive: true, force: true });
   }
 });

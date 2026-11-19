@@ -398,7 +398,7 @@ export function decide(input) {
     if (!existing || held.some((f) => f.code === "R_FIRST_LISTING")) priority.push("a first listing");
     if (flagged.length) priority.push(`a check's flag for a person (${[...new Set(flagged)].join(", ")})`);
     // The service decide job's own notes: what it let through that held before
-    // (a first-party rename). Strings it wrote.
+    // (a first-party rename, a containment unlist lifted). Strings it wrote.
     for (const note of Array.isArray(input.priority) ? input.priority : []) {
       if (typeof note === "string" && note !== "") priority.push(note);
     }

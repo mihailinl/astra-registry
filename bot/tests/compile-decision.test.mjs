@@ -1418,3 +1418,52 @@ test("a grandfathered or frozen listing's version is reviewable, and an `unliste
   const u = compileDecision(review({ versions: ["1.1.0"] }), { root: unlisted });
   assert.equal(u.refusal, "target_changed", "an `unlisted` listing's version was marked reviewed");
 });
+
+// ── MIG-27's one exception: a containment unlist (owner, 2026-11-19) ───────
+
+const CONTAINED_REASON = "Its source repository is under KNICE-TECH, a login freed by a rename and claimable by anyone.";
+/** astra-chess as M-T6.3 left it: KNICE-TECH versions yanked, delisted by hand, re-released from MINICE-AI. */
+function containedEstate({ entries = null, extraVersion = null, unyank = false } = {}) {
+  const id = MIG25_UNBOUND_EXCEPTION;
+  const files = {
+    "schema/contract-tokens-v1.json": tokenFile(),
+    [`plugins/${id}/plugin.json`]: plugin(id, { repo: "MINICE-AI/astra-chess", unlisted: true }),
+    [`plugins/${id}/identity.json`]: identity(id, { repo: "MINICE-AI/astra-chess" }),
+    [`plugins/${id}/versions/0.1.17.json`]: { ...version(id, "0.1.17", { repo: "KNICE-TECH/astra-chess", yanked: !unyank }), published_at: "2026-08-31T21:10:27Z" },
+    [`plugins/${id}/versions/0.1.19.json`]: { ...version(id, "0.1.19", { repo: "MINICE-AI/astra-chess" }), published_at: "2026-11-12T06:16:05Z" },
+  };
+  if (extraVersion) files[`plugins/${id}/versions/${extraVersion.version}.json`] = extraVersion;
+  const log = entries ?? [
+    { file: `2026-09-12-${id}-delist.json`, doc: { date: "2026-09-12", action: "delist", plugin: id, reason: CONTAINED_REASON } },
+    { file: `2026-09-24-${id}-yank.json`, doc: { date: "2026-09-24", action: "yank", plugin: id, versions: ["0.1.17"], reason: CONTAINED_REASON } },
+  ];
+  for (const { file, doc } of log) files[`bot/moderation/${file}`] = doc;
+  return repo([{ files }]);
+}
+
+test("containmentUnlist: astra-chess as M-T6.3 left it is a containment unlist, and nothing else is", () => {
+  const id = MIG25_UNBOUND_EXCEPTION;
+  assert.deepEqual(compiler.containmentUnlist(containedEstate(), id), { ok: true });
+
+  // A moderator's delist (a service decision, with a category) is a takedown.
+  const decided = containedEstate({ entries: [{ file: `2026-09-12-${id}-delist.json`, doc: { date: "2026-09-12", action: "delist", plugin: id, reason: CONTAINED_REASON, category: "account_compromise", service_decision_id: SDI } }] });
+  assert.match(compiler.containmentUnlist(decided, id).why ?? "", /moderator/, "a moderator's delist was read as containment");
+
+  // A delist that covered a version from outside the contained login.
+  const other = { ...version(id, "0.1.10", { repo: "acme/astra-chess", yanked: true }), published_at: "2026-08-01T00:00:00Z" };
+  assert.match(compiler.containmentUnlist(containedEstate({ extraVersion: other }), id).why ?? "", /outside/,
+    "a delist of a listing that also shipped from elsewhere was read as containment");
+
+  // Any revocation or deprecation in the log, whatever else it says.
+  const revoked = containedEstate({ entries: [
+    { file: `2026-09-12-${id}-delist.json`, doc: { date: "2026-09-12", action: "delist", plugin: id, reason: CONTAINED_REASON } },
+    { file: `2026-09-13-${id}-revoke.json`, doc: { date: "2026-09-13", action: "revoke", plugin: id, reason: CONTAINED_REASON, advisory: "ASTRA-2026-0001" } },
+  ] });
+  assert.match(compiler.containmentUnlist(revoked, id).why ?? "", /revoke entry/, "a revoked listing was read as containment");
+
+  // A live version from the freed login: still contained (MIG-30).
+  assert.match(compiler.containmentUnlist(containedEstate({ unyank: true }), id).why ?? "", /still published from KNICE-TECH|outside/, "a live KNICE-TECH version was not contained");
+
+  // No log entry at all is not containment: an unlogged unlist may be a takedown somebody forgot to log.
+  assert.match(compiler.containmentUnlist(containedEstate({ entries: [] }), id).why ?? "", /no delist entry/, "an unlogged unlist was read as containment");
+});
