@@ -76,7 +76,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { ACTIONS, reasonProblems } from "../bot/lib/moderation.mjs";
-import { stagingListingId as reservedStagingListingId } from "./lib/reserved.mjs";
+import { stagingListingIdAt } from "./lib/reserved.mjs";
 import { ADVISORY_FILE } from "./lib/revocations.mjs";
 import { report } from "./coverage/rules.mjs";
 import {
@@ -364,10 +364,7 @@ export function loadLog(repo) {
  * id would silently stop reporting every listing with a malformed id.
  */
 export function stagingListingId(repo) {
-  const file = path.join(repo, "policy", "reserved-ids.json");
-  if (!fs.existsSync(file)) return null;
-  const { value } = readJsonFile(file);
-  return reservedStagingListingId(value ?? {});
+  return stagingListingIdAt(repo);
 }
 
 /** Author-action records (DEC-7), which cover a yank instead of a log entry. */

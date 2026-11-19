@@ -964,15 +964,6 @@ who finds the delist and not the relist reads a listed plugin as withdrawn.
 | **Reset** | a permanent `B_REPOSITORY_RECYCLED`. A moderator's identity reset (`M_IDENTITY_RESET`), applied in the run that reads it and refused if no `B_REPOSITORY_RECYCLED` refusal is left for it to lift, voids every recorded identity of the plugin id and deletes its identity record if it has one. | the entry, category `identity_reset`, and a decision record saying the id's earlier identities no longer count |
 | **Appeal** | nothing by itself. It records that an appeal was decided, and how. | the outcome — `stands` or `reversed` — and the public reason, **never the appeal's text** |
 
-**A containment unlist lifts itself** (since 2026-11-19). A listing delisted by
-hand only because the login it was published from was freed (`KNICE-TECH`;
-every `delist` and `yank` entry for it a hand entry covering only versions from
-that login, and no deprecation or revocation) is listed again by its first
-bound release from one of Astra's own accounts, in that release's publication,
-whose record carries `P_REVIEW_PRIORITY` saying so. No relist entry is written
-for it. Any other delist still needs a moderator's relist; a release never
-lifts one.
-
 None of the four costs a user anything, which is why they are not in the
 escalation table above: they are the other direction. An appeal that is
 `reversed` is followed by whichever of the first two it calls for.

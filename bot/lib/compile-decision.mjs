@@ -1091,65 +1091,8 @@ function advisoryCovering(root, listing) {
   return null;
 }
 
-/**
- * Is this listing unlisted ONLY because a contained login held it, so that its
- * first bound first-party release may lift `unlisted` in its own publication
- * (owner, 2026-11-19; MIG-27's one exception)?
- *
- * astra-chess was delisted on 2026-09-12 (947c857) because KNICE-TECH had been
- * freed, re-released from MINICE-AI on 2026-11-12, and stayed unlisted: a
- * release never lifts `unlisted`, and only a moderator's `M_RELIST` could, so
- * nobody did for days. A containment unlist is one nobody decided as a
- * takedown, read off the moderation log and the tree, never a new record:
- *
- *   - `plugin.json` is `unlisted`, and the log holds at least one `delist`;
- *   - every `delist` and `yank` entry is a hand entry (no `service_decision_id`,
- *     no `category`: no moderator decided it), and each covers only versions
- *     released from a CONTAINED_OWNERS repository — a delist the versions
- *     published by its date, a yank the versions it names;
- *   - no `deprecate`, `revoke` or `unrevoke` entry, and no signed advisory
- *     covering the latest version (`relist_under_advisory`'s question);
- *   - nothing is contained now (`containedRepo`): every version from the
- *     freed login is yanked, and the source is elsewhere.
- *
- * "No log entry at all" is NOT a containment unlist: knice-chess was retired
- * by a direct commit with no entry (29fe605; the entry is retroactive), and an
- * unlogged unlist is as likely a takedown somebody forgot to log. The release
- * side — bound, first party, not from a contained login — is the caller's
- * (`bot/lib/service-decide.mjs`).
- *
- * @returns {{ok: true}|{ok: false, why: string}}
- */
-export function containmentUnlist(root, id) {
-  const listing = readListing(root, id);
-  if (!listing) return { ok: false, why: `${id} has no listing on this tree` };
-  if (listing.listed) return { ok: false, why: `${id} is listed` };
-  const owner = (repo) => String(repo ?? "").split("/")[0].toLowerCase();
-  const fromContained = (doc) => CONTAINED_OWNERS.includes(owner(doc?.release?.repo));
-  const mine = loadEntries({ root }).entries.filter((e) => e?.plugin === id);
-  if (!mine.some((e) => e.action === "delist")) return { ok: false, why: `bot/moderation/ holds no delist entry for ${id}` };
-  for (const e of mine) {
-    if (["deprecate", "revoke", "unrevoke"].includes(e.action)) return { ok: false, why: `${id} has a ${e.action} entry (${e.date})` };
-    if (e.action !== "delist" && e.action !== "yank") continue;
-    if (e.service_decision_id !== undefined || e.category !== undefined) {
-      return { ok: false, why: `the ${e.action} of ${e.date} was a moderator's decision` };
-    }
-    const covered = e.action === "delist"
-      ? listing.versions.filter(({ doc }) => String(doc?.published_at ?? "").slice(0, 10) <= String(e.date))
-      : listing.versions.filter(({ version }) => Array.isArray(e.versions) && e.versions.includes(version));
-    if (covered.length === 0 || !covered.every(({ doc }) => fromContained(doc))) {
-      return { ok: false, why: `the ${e.action} of ${e.date} covers a version released from outside ${CONTAINED_OWNERS.join(", ")}` };
-    }
-  }
-  const covering = advisoryCovering(root, listing);
-  if (covering) return { ok: false, why: `${covering} covers ${id}'s latest version` };
-  const contained = containedRepo(listing);
-  if (contained) return { ok: false, why: `${id} is still published from ${contained}` };
-  return { ok: true };
-}
-
 /** MIG-30's containment: the listing's own source, or any non-yanked release repo. */
-export function containedRepo(listing) {
+function containedRepo(listing) {
   const owner = (repo) => String(repo ?? "").split("/")[0].toLowerCase();
   const source = listing.plugin?.source?.repo;
   if (CONTAINED_OWNERS.includes(owner(source))) return source;
