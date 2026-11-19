@@ -545,8 +545,13 @@ function checkVersionDoc(plugin, version, ctx) {
   // so the pin a user takes at install can only ever come from a version whose
   // release.repo IS the source repo, which is what this rule protects. Yanks
   // are never undone, so the exemption cannot later re-admit such a version.
+  //
+  // And a version left under the old name by a FIRST-PARTY rename (owner,
+  // 2026-11-19; `firstPartyRename` in bot/lib/service-decide.mjs, which no
+  // longer holds one): the same repository, by both numeric ids, so the same
+  // author, and nothing for a moderator to yank. `renamedInPlace` says which.
   if (doc.release?.repo && plugin.doc.source?.repo && doc.release.repo !== plugin.doc.source.repo
-    && doc.yanked !== true) {
+    && doc.yanked !== true && !ctx.renamedInPlace?.has(`${plugin.doc.id}@${doc.version}`)) {
     report.error(where, `release.repo ${JSON.stringify(doc.release.repo)} is not the listing's source repo ${JSON.stringify(plugin.doc.source.repo)}`,
       "The identity a user pins at install is the source repo. A release from anywhere else is a different author. " +
       "A version released from the listing's previous repository is accepted only once it is yanked (M-T6.3).");
@@ -681,6 +686,55 @@ function checkVersionDoc(plugin, version, ctx) {
         "See policy/limits.json max_artifact_bytes.");
     }
   }
+}
+
+/**
+ * The versions a first-party rename left under the repository's old name, as
+ * `<id>@<version>`: the listing's identity record names a first-party owner
+ * id (policy/first-party.json), and a `published` decision record of that
+ * version names the version's own `release.repo` with the identity record's
+ * repository id and owner id. Both ids equal is one repository whatever it is
+ * called (TRUST-23); a version from any other repository is in no record that
+ * says so and stays refused unless yanked.
+ *
+ * Only a rename inside one account: the old name's OWNER LOGIN must be the
+ * listing's own. A renamed organisation frees its old login (KNICE-TECH, by
+ * the rename to MINICE-AI), and whoever registers it can serve bytes at every
+ * URL under the old name, so those versions are still yanked, as astra-chess's
+ * were. A repository renamed under the same account leaves its old name to
+ * that account alone.
+ */
+export function renamedInPlace(sources, records, firstParty) {
+  const out = new Set();
+  if (!(firstParty instanceof Set) || firstParty.size === 0) return out;
+  const identityOf = new Map();
+  for (const { doc } of records.identities ?? []) {
+    if (doc && typeof doc.plugin_id === "string") identityOf.set(doc.plugin_id, doc);
+  }
+  const published = new Map();
+  for (const { doc } of records.decisions ?? []) {
+    if (doc?.state !== "published" || typeof doc.plugin_id !== "string") continue;
+    const key = `${doc.plugin_id}@${doc.version}`;
+    if (!published.has(key)) published.set(key, []);
+    published.get(key).push(doc);
+  }
+  for (const plugin of sources.plugins ?? []) {
+    const id = plugin.doc?.id;
+    const ident = identityOf.get(id);
+    if (!ident || !firstParty.has(String(ident.repository_owner_id))) continue;
+    const ownerLogin = (repo) => String(repo).split("/")[0].toLowerCase();
+    const listedOwner = ownerLogin(plugin.doc?.source?.repo ?? "");
+    for (const v of plugin.versions ?? []) {
+      const repo = v.doc?.release?.repo;
+      const key = `${id}@${v.doc?.version}`;
+      if (typeof repo !== "string" || listedOwner === "" || ownerLogin(repo) !== listedOwner) continue;
+      const same = (published.get(key) ?? []).some((r) => r.repo === repo
+        && String(r.repository_id) === String(ident.repository_id)
+        && String(r.repository_owner_id) === String(ident.repository_owner_id));
+      if (same) out.add(key);
+    }
+  }
+  return out;
 }
 
 function checkPluginVersions(plugin, ctx) {
@@ -3453,6 +3507,13 @@ export async function runValidation(opts) {
   for (const e of errors) report.error(e.file, e.message);
 
   const usable = plugins.filter((p) => p.doc && typeof p.doc === "object");
+  // B.4's other record trees, walked once and handed to every check that reads
+  // them: the second one counts author-action records against the yanks a
+  // moderation entry names, and a second walk would be a second answer to
+  // "what is in the decision log" taken a moment apart.
+  const records = loadRecords(opts.root, { plugins: usable });
+  // The first-party set is a rule, so it comes from THIS repository, like `policy`.
+  ctx.renamedInPlace = renamedInPlace({ plugins: usable }, records, loadFirstParty(REPO_ROOT).ids);
   checkGrandfatheredIcons(ctx, usable);
   for (const plugin of usable) {
     checkPluginDoc(plugin, ctx);
@@ -3472,11 +3533,6 @@ export async function runValidation(opts) {
   checkOperatorPasskeys(ctx);
   if (opts.writer === "moderation") checkModerationWriter(ctx);
 
-  // B.4's other record trees, walked once and handed to both checks: the
-  // second one counts author-action records against the yanks a moderation
-  // entry names, and a second walk would be a second answer to "what is in the
-  // decision log" taken a moment apart.
-  const records = loadRecords(opts.root, { plugins: usable });
   checkRecords(ctx, { plugins: usable }, records);
   checkAuthorActionRecords(ctx, { plugins: usable }, records);
   checkPublisherRecords(ctx);

@@ -551,6 +551,30 @@ export function id41({ identity, record, lineHash }) {
   return { codes, rows };
 }
 
+/**
+ * A rename inside Astra's own accounts is not held (owner, 2026-11-19).
+ *
+ * TRUST-23's rename row and ID-41's row 5 hold a repository whose name moved
+ * while BOTH numeric ids stayed. For a third party that hold stands. For an
+ * owner whose id is in policy/first-party.json it stopped nobody:
+ * KNICE-TECH/astra-chess became MINICE-AI/astra-chess with repository id
+ * 1343092393 and owner id 280318216 unchanged, and the hold that followed sat
+ * for weeks. The attacker a name change could hide is a freed login
+ * registered by somebody else, and that attacker cannot keep either id:
+ * `B_REPOSITORY_RECYCLED` (row 1, and TRUST-23's recycled row) and the
+ * transfer and re-creation rows catch it whatever this returns.
+ *
+ * True only when `reference` (the identity record, or the baseline) names
+ * exactly this release's repository id and owner id, and that owner id is
+ * first party. Anything unread, missing or different holds as before.
+ */
+export function firstPartyRename({ identity, reference, firstParty = null }) {
+  if (!reference || !(firstParty instanceof Set)) return false;
+  return isStr(identity?.repository_id) && String(reference.repository_id) === identity.repository_id
+    && isStr(identity?.repository_owner_id) && String(reference.repository_owner_id) === identity.repository_owner_id
+    && isFirstPartyId(identity.repository_owner_id, firstParty);
+}
+
 // ── the approval (BOT-26) ───────────────────────────────────────────────────
 
 /** Is the owner file's newest commit the repository owner's own direct commit (ID-63; MIG-10's self path)? */
@@ -1386,6 +1410,8 @@ export function decideSubmission(input) {
   const identity = { repo: verified.repo, repository_id: verified.repository_id, repository_owner_id: verified.repository_owner_id };
   const lineHash = binding.outcome === "one" ? binding.token_hash ?? null : null;
   const heldCodes = [];
+  // What publishes that would once have held: read first, never a hold (`P_REVIEW_PRIORITY`).
+  const priorityNotes = [];
   let recycled = null;
   let firstCleared = null;
   const listingState = git.listingState ?? null;
@@ -1397,11 +1423,19 @@ export function decideSubmission(input) {
     findings.push({ level: "error", code: "B_BINDING_UNUSABLE", where: null, message: "the binding line cannot be used for this repository (ID-9)" });
   }
 
+  // A rename inside Astra's own accounts publishes (`firstPartyRename`); the
+  // note says so, and moderators read the release first.
+  const renameNote = (from) =>
+    `a first-party rename (${from} → ${identity.repo}, repository ${identity.repository_id} and owner ` +
+    `${identity.repository_owner_id} unchanged), published under the new name`;
   if (identityRecord) {
     const t = id41({ identity, record: identityRecord, lineHash });
+    const fpRename = firstPartyRename({ identity, reference: identityRecord, firstParty: git.firstParty ?? null });
     for (const c of t.codes) {
       if (c === "B_REPOSITORY_RECYCLED") recycled = `ID-41 row 1: ${identity.repo} now attests repository ${identity.repository_id} (owner ${identity.repository_owner_id}); the identity record names ${identityRecord.repository_id} (owner ${identityRecord.repository_owner_id})`;
       else if (c === "B_OWNER_CHANGED") findings.push({ level: "error", code: c, where: null, message: `ID-41 row 3: the owner id moved from ${identityRecord.repository_owner_id} to ${identity.repository_owner_id} under the same token` });
+      // Only row 5 can raise this with both ids equal; rows 1b and 2 need a new repository id.
+      else if (c === "R_IDENTITY_CHANGED" && fpRename) priorityNotes.push(renameNote(identityRecord.repo));
       else heldCodes.push(c);
     }
     if (binding.outcome === "none") {
@@ -1410,14 +1444,16 @@ export function decideSubmission(input) {
   } else if (existing) {
     const { baseline } = baselineFor({ records, pluginId: verified.plugin_id });
     const compared = compareWithBaseline({ identity: { ok: true, ...identity, missing: [] }, baseline });
-    if (compared.code === "B_REPOSITORY_RECYCLED") recycled = compared.reason;
-    else if (compared.code === "R_IDENTITY_CHANGED") heldCodes.push("R_IDENTITY_CHANGED");
+    // With no baseline (MIG-28) nothing names the ids, so this is false and the hold stands.
+    const fpRename = firstPartyRename({ identity, reference: baseline, firstParty: git.firstParty ?? null });
     // TRUST-23's second half: the certificate's name against the listing's
     // `source.repo` on main, never against a lookup.
     const listedRepo = String(existing.doc?.source?.repo ?? "");
-    if (listedRepo && listedRepo.toLowerCase() !== identity.repo.toLowerCase() && !heldCodes.includes("R_IDENTITY_CHANGED")) {
-      heldCodes.push("R_IDENTITY_CHANGED");
-    }
+    const nameMoved = compared.code === "R_IDENTITY_CHANGED"
+      || Boolean(listedRepo && listedRepo.toLowerCase() !== identity.repo.toLowerCase());
+    if (compared.code === "B_REPOSITORY_RECYCLED") recycled = compared.reason;
+    if (nameMoved && fpRename) priorityNotes.push(renameNote(listedRepo || baseline.repo));
+    else if (nameMoved) heldCodes.push("R_IDENTITY_CHANGED");
     // MIG-10; ID-41: never R_BINDING_CHANGED. Since 6.7.0 not for the
     // repository's own owner or admin with a live token, nor under a binding
     // a moderator already approved (`firstBindingCleared`).
@@ -1495,6 +1531,7 @@ export function decideSubmission(input) {
     approval: owner?.approval ?? honoured.approval,
     identity: recycled ? { code: "B_REPOSITORY_RECYCLED", reason: recycled } : null,
     sourceIds: identity,
+    priority: priorityNotes,
     now: new Date(now),
     shadow: shadowed,
   });

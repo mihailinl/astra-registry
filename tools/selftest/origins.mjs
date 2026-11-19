@@ -167,4 +167,69 @@ export async function run() {
     const one = await mismatches(moved("moved-one-live", (i, n) => i !== n - 1).dir);
     assertEqual(one.length, 1, `${one.length} refusal(s) with one pre-move version left live; the exemption is wider than a yank`);
   });
+
+  // Owner, 2026-11-19 (F7): a repository renamed inside a first-party account,
+  // both ids unchanged, publishes without a hold, and the versions it left
+  // under the old name are the same repository's: nothing for a person to
+  // yank. Accepted only with a `published` decision record naming that old
+  // name with the identity record's ids, and only when the old name's owner
+  // login is the listing's own; a renamed ORGANISATION frees its old login,
+  // so those versions are still yanked, as astra-chess's were.
+  await test("a first-party rename inside one account keeps its live history; an organisation rename does not", async () => {
+    const src = path.join(REPO_ROOT, "plugins", "astra-chess");
+    const records = path.join(REPO_ROOT, "log", "decisions");
+    assert(fs.existsSync(src), "plugins/astra-chess is gone; this test is about that listing and must be rewritten or deleted");
+    const astraChessRecords = [];
+    for (const y of fs.readdirSync(records)) for (const m of fs.readdirSync(path.join(records, y))) {
+      for (const f of fs.readdirSync(path.join(records, y, m))) {
+        const doc = JSON.parse(fs.readFileSync(path.join(records, y, m, f), "utf8"));
+        if (doc.plugin_id === "astra-chess" && doc.state === "published") astraChessRecords.push({ rel: path.join(y, m, f), doc });
+      }
+    }
+    const tree = (name, { renameTo, withRecords = true, unyankOld = false, ownerId = null }) => {
+      const dir = path.join(tmp, name);
+      fs.cpSync(src, path.join(dir, "plugins", "astra-chess"), { recursive: true });
+      const pdir = path.join(dir, "plugins", "astra-chess");
+      const p = JSON.parse(fs.readFileSync(path.join(pdir, "plugin.json"), "utf8"));
+      p.source.repo = renameTo;
+      fs.writeFileSync(path.join(pdir, "plugin.json"), stableStringify(p));
+      if (ownerId) {
+        const ident = JSON.parse(fs.readFileSync(path.join(pdir, "identity.json"), "utf8"));
+        ident.repository_owner_id = ownerId;
+        ident.repo = renameTo;
+        fs.writeFileSync(path.join(pdir, "identity.json"), stableStringify(ident));
+      }
+      if (unyankOld) {
+        for (const n of fs.readdirSync(path.join(pdir, "versions"))) {
+          const vf = path.join(pdir, "versions", n);
+          const v = JSON.parse(fs.readFileSync(vf, "utf8"));
+          delete v.yanked;
+          fs.writeFileSync(vf, stableStringify(v));
+        }
+      }
+      if (withRecords) {
+        for (const { rel, doc } of astraChessRecords) {
+          fs.mkdirSync(path.dirname(path.join(dir, "log", "decisions", rel)), { recursive: true });
+          fs.writeFileSync(path.join(dir, "log", "decisions", rel), stableStringify(ownerId ? { ...doc, repository_owner_id: ownerId } : doc));
+        }
+      }
+      return dir;
+    };
+    const mismatches = async (dir) => errorsMatching((await validateTree(dir)).report, "is not the listing's source repo");
+    const RENAMED = "MINICE-AI/astra-chess-renamed";
+
+    const renamed = await mismatches(tree("fp-rename", { renameTo: RENAMED }));
+    assertEqual(renamed.length, 0, "a version left under the old name by a first-party rename was refused:\n" +
+      renamed.map((e) => `${e.where}: ${e.message}`).join("\n"));
+
+    const unrecorded = await mismatches(tree("fp-rename-unrecorded", { renameTo: RENAMED, withRecords: false }));
+    assertEqual(unrecorded.length, 1, `${unrecorded.length} refusal(s) with no decision record naming the old name; a record is the evidence`);
+
+    const third = await mismatches(tree("tp-rename", { renameTo: RENAMED, ownerId: "36719" }));
+    assertEqual(third.length, 1, `${third.length} refusal(s) for an owner id that is not first party; the exemption is first-party only`);
+
+    // The KNICE-TECH versions, unyanked: same ids, but the old login is free.
+    const org = await mismatches(tree("org-rename", { renameTo: "MINICE-AI/astra-chess", unyankOld: true }));
+    assert(org.length >= 4, `${org.length} refusal(s) for live versions under a renamed organisation's freed login; each must be refused`);
+  });
 }

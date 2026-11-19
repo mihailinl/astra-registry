@@ -2248,6 +2248,76 @@ test("TRUST-23: against MIG-20's baseline, a fixture per outcome", () => {
   assert.ok(codes(renamed).includes("R_IDENTITY_CHANGED"));
 });
 
+// Owner, 2026-11-19: a repository renamed inside Astra's own accounts, both
+// numeric ids unchanged, publishes under its new name with a note, and is not
+// held. KNICE-TECH/astra-chess → MINICE-AI/astra-chess was held for weeks for
+// exactly this. A third party's rename, and any change of either id, hold or
+// refuse exactly as before.
+const OLD_REPO = "a-stranger/dice-roller-old";
+const F7_HASH = "1".repeat(16);
+const f7Line = () => ({ outcome: "one", token: "t".repeat(24), token_hash: F7_HASH, code: null, alert: false, reason: null });
+const renamedRun = ({ firstParty = new Set([P.oid]), ref = {}, line = null, identity = null } = {}) => decideWith({
+  verified: verified(line ? { binding: line, owner_file: { commit: "9".repeat(40), pull_request: false } } : {}),
+  ask: line ? ask({ verdict: "pass" }) : undefined,
+  git: git({
+    existing: existing({ repo: OLD_REPO, identity }),
+    records: [baseline({ repo: OLD_REPO, ...ref })],
+    firstParty,
+  }),
+});
+const priorityOf = (plan) => plan.reasons.find((r) => r.code === "P_REVIEW_PRIORITY")?.message ?? "";
+
+test("F7: a first-party rename with both ids unchanged publishes under the new name, with a note (TRUST-23's rename row)", () => {
+  const plan = renamedRun();
+  assert.equal(plan.state, "published", JSON.stringify(plan.reasons.map((r) => r.code)));
+  assert.ok(!codes(plan).includes("R_IDENTITY_CHANGED"));
+  assert.ok(codes(plan).includes("P_REVIEW_PRIORITY"), "the record says moderators read it first");
+  assert.match(priorityOf(plan), new RegExp(`first-party rename \\(${OLD_REPO} → ${P.repo}`));
+  assert.equal(plan.listing.plugin.source.repo, P.repo, "source.repo names the new repository");
+  assert.equal(plan.listing.version.release.repo, P.repo);
+  assert.equal(plan.record.repo, P.repo, "the publication record names the new repository");
+});
+
+test("F7: a third-party rename with both ids unchanged is still held", () => {
+  const plan = renamedRun({ firstParty: new Set(["280318216"]) });
+  assert.equal(plan.state, "held");
+  assert.ok(codes(plan).includes("R_IDENTITY_CHANGED"));
+  const none = renamedRun({ firstParty: null });
+  assert.equal(none.state, "held", "no first-party set read is no first party");
+});
+
+test("F7: a first-party name change where either id moved is held or refused as before", () => {
+  const transfer = renamedRun({ ref: { repository_owner_id: "2" } });
+  assert.equal(transfer.state, "held", "the owner id moved: a transfer");
+  assert.ok(codes(transfer).includes("R_IDENTITY_CHANGED"));
+  const recreated = renamedRun({ ref: { repository_id: "1" } });
+  assert.equal(recreated.state, "held", "the repository id moved: a re-creation");
+  assert.ok(codes(recreated).includes("R_IDENTITY_CHANGED"));
+  // MIG-28: no baseline names the ids, so nothing says this is the same repository.
+  const nothing = decideWith({ git: git({ existing: existing({ repo: OLD_REPO }), records: [], firstParty: new Set([P.oid]) }) });
+  assert.equal(nothing.state, "held");
+  assert.ok(codes(nothing).includes("R_IDENTITY_CHANGED"));
+  // Both ids different under the same name: recycled, whoever is first party.
+  const recycled = decideWith({ git: git({ existing: existing(), records: [baseline({ repository_id: "1", repository_owner_id: "2" })], firstParty: new Set([P.oid, "2"]) }) });
+  assert.equal(recycled.state, "refused");
+  assert.ok(codes(recycled).includes("B_REPOSITORY_RECYCLED"));
+});
+
+test("F7: with an identity record (ID-41 row 5) a first-party rename publishes and rewrites the record to the new name", () => {
+  const identity = { repo: OLD_REPO, repository_id: P.rid, repository_owner_id: P.oid, token_hash: F7_HASH };
+  const plan = renamedRun({ identity, line: f7Line() });
+  assert.equal(plan.state, "published", JSON.stringify(plan.reasons.map((r) => r.code)));
+  assert.match(priorityOf(plan), /first-party rename/);
+  assert.equal(plan.listing.plugin.source.repo, P.repo);
+  assert.deepEqual(plan.identity_records.map((r) => [r.plugin_id, r.record.repo, r.record.repository_id, r.record.repository_owner_id]),
+    [[P.id, P.repo, P.rid, P.oid]], "the identity record names the new repository");
+  const third = renamedRun({ identity, line: f7Line(), firstParty: new Set(["280318216"]) });
+  assert.equal(third.state, "held", "a third party's row 5 still holds");
+  assert.ok(codes(third).includes("R_IDENTITY_CHANGED"));
+  const moved = renamedRun({ identity: { ...identity, repository_owner_id: "2" }, line: f7Line() });
+  assert.notEqual(moved.state, "published", "an owner id that moved is not a rename");
+});
+
 test("ID-41 row 1 is permanent: a new tag of a recycled repository is refused again", () => {
   const b = baseline({ repository_id: "1", repository_owner_id: "2" });
   for (const tag of ["v0.2.0", "v0.3.0"]) {
