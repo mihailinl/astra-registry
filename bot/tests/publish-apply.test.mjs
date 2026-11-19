@@ -628,7 +628,7 @@ test("once the marker is on main, a version or queue addition with no record is 
 
 const FP16 = "0123456789abcdef";
 const alertDoc = (over = {}) => ({ schema: "astra.registry.alert/1", fingerprint: FP16, event: "approval", approval_decided_at: "2026-09-24T00:00:00Z", delivered_at: "2026-09-24T00:00:05Z", run: "1/1", ...over });
-const identityDoc = (over = {}) => ({ schema: "astra.registry.identity/1", plugin_id: "alpha", repository_id: "12", repository_owner_id: "34", repo: "you/alpha", token_hash: FP16, ...over });
+const identityDoc = (over = {}) => ({ schema: "astra.registry.identity/1", plugin_id: "alpha", repository_id: "12", repository_owner_id: "34", repo: "example/alpha", token_hash: FP16, ...over });
 
 test("an alert record and an identity record land only through the service path", () => {
   for (const [what, plant] of [
@@ -636,14 +636,14 @@ test("an alert record and an identity record land only through the service path"
     ["an identity record", (at) => write(at, "plugins/alpha/identity.json", `${JSON.stringify(identityDoc())}\n`)],
   ]) {
     const legacy = estate();
-    const reports = withRecord(report(legacy.dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", recordDoc());
+    const reports = withRecord(report(legacy.dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", recordDoc({ repository_id: "12", repository_owner_id: "34" }));
     plant(path.join(reports, "ingest-report-0"));
     const refused = run({ root: legacy.one, reports, watchState: path.join(legacy.dir, "none"), skipChecks: true, log: quiet });
     assert.equal(refused.outcome, "refused", `the legacy path applied ${what}`);
     assert.match(refused.refusals[0].message, /service-path record/);
 
     const svc = estate();
-    const r2 = withRecord(report(svc.dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", recordDoc());
+    const r2 = withRecord(report(svc.dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", recordDoc({ repository_id: "12", repository_owner_id: "34" }));
     plant(path.join(r2, "ingest-report-0"));
     const ok = run({ root: svc.one, reports: r2, watchState: path.join(svc.dir, "none"), skipChecks: true, servicePath: true, log: quiet });
     assert.equal(ok.outcome, "committed", `${what}: ${JSON.stringify(ok.refusals)}`);
@@ -661,6 +661,8 @@ test("an identity record needs a publication beside it, and each record is what 
     ["an alert named for another fingerprint", `state/alerts/${"f".repeat(16)}.json`, alertDoc(), /name is its fingerprint/],
     ["an identity record with a seventh member", "plugins/alpha/identity.json", identityDoc({ note: "x" }), /exactly B\.4's six members/],
     ["an identity record for another id", "plugins/alpha/identity.json", identityDoc({ plugin_id: "beta" }), /names plugin_id beta/],
+    // beta names no repository on main, so it is no sibling of alpha's publication (ID-40; ID-64)
+    ["an identity record for a listing this report does not publish", "plugins/beta/identity.json", identityDoc({ plugin_id: "beta" }), /none for beta, and beta is not a listing already naming/],
   ]) {
     const e = estate();
     const rep = withRecord(report(e.dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", recordDoc());
@@ -668,6 +670,58 @@ test("an identity record needs a publication beside it, and each record is what 
     const out = run({ root: e.one, reports: rep, watchState: path.join(e.dir, "none"), skipChecks: true, servicePath: true, log: quiet });
     assert.equal(out.outcome, "refused", what);
     assert.match(out.refusals[0].message, expected, what);
+  }
+});
+
+test("ID-40: an identity record's repository ids are its own publication's", () => {
+  const e = estate();
+  const rep = withRecord(report(e.dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", recordDoc({ repository_id: "12", repository_owner_id: "34" }));
+  write(path.join(rep, "ingest-report-0"), "plugins/alpha/identity.json", `${JSON.stringify(identityDoc({ repository_id: "99" }))}\n`);
+  const out = run({ root: e.one, reports: rep, watchState: path.join(e.dir, "none"), skipChecks: true, servicePath: true, log: quiet });
+  assert.equal(out.outcome, "refused", "an identity record naming another repository than its publication landed");
+  assert.match(out.refusals[0].message, /binds the repository its publication came from/);
+  for (const [what, ident, rec, expected] of [
+    ["a publication with no repository ids", identityDoc(), recordDoc(), /binds the repository its publication came from/],
+    ["another repository name under the same ids", identityDoc({ repo: "someone/else" }), recordDoc({ repository_id: "12", repository_owner_id: "34" }), /binds the repository its publication came from/],
+    ["a `migration` record carried in a report", identityDoc(), recordDoc({ repository_id: "12", repository_owner_id: "34", trigger: "migration" }), /only MIG-20's baseline writes those/],
+  ]) {
+    const e2 = estate();
+    const rp = withRecord(report(e2.dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", rec);
+    write(path.join(rp, "ingest-report-0"), "plugins/alpha/identity.json", `${JSON.stringify(ident)}\n`);
+    const o = run({ root: e2.one, reports: rp, watchState: path.join(e2.dir, "none"), skipChecks: true, servicePath: true, log: quiet });
+    assert.equal(o.outcome, "refused", `${what} landed`);
+    assert.match(o.refusals[0].message, expected, what);
+  }
+  const ok = estate();
+  const rep2 = withRecord(report(ok.dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", recordDoc({ repository_id: "12", repository_owner_id: "34" }));
+  write(path.join(rep2, "ingest-report-0"), "plugins/alpha/identity.json", `${JSON.stringify(identityDoc())}\n`);
+  const r2 = run({ root: ok.one, reports: rep2, watchState: path.join(ok.dir, "none"), skipChecks: true, servicePath: true, log: quiet });
+  assert.equal(r2.outcome, "committed", JSON.stringify(r2.refusals));
+});
+
+test("ID-64: a sibling listing's identity record lands beside its repository's publication, with the same ids only", () => {
+  // 2026-11-16, cb52dbafcfb4: astra-chess's publication rebound knice-chess, named for the same repository by its
+  // MIG-20 baseline record. That is ID-64's sibling rule, and publish-apply must let it through, and nothing wider.
+  const migration = { ...recordDoc({ plugin_id: "beta", repository_id: "12", repository_owner_id: "34" }), decision_id: "b".repeat(32), trigger: "migration" };
+  for (const [what, plantMain, ident, ok] of [
+    ["a sibling by its baseline record", (root) => write(root, `log/decisions/2026/08/${"b".repeat(32)}.json`, `${JSON.stringify(migration)}\n`), identityDoc({ plugin_id: "beta" }), true],
+    ["a sibling by its identity record", (root) => write(root, "plugins/beta/identity.json", `${JSON.stringify(identityDoc({ plugin_id: "beta" }))}\n`), identityDoc({ plugin_id: "beta", token_hash: "e".repeat(16) }), true],
+    ["a sibling rebound to other ids", (root) => write(root, `log/decisions/2026/08/${"b".repeat(32)}.json`, `${JSON.stringify(migration)}\n`), identityDoc({ plugin_id: "beta", repository_owner_id: "99" }), false],
+    ["a listing naming another repository", (root) => write(root, `log/decisions/2026/08/${"b".repeat(32)}.json`, `${JSON.stringify({ ...migration, repository_id: "77" })}\n`), identityDoc({ plugin_id: "beta" }), false],
+  ]) {
+    const e = estate();
+    plantMain(e.one);
+    git(e.one, "add", "-A");
+    git(e.one, "commit", "--quiet", "-m", `fixture: ${what}`);
+    git(e.one, "push", "--quiet", "origin", "HEAD:main");
+    const rep = withRecord(report(e.dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", recordDoc({ repository_id: "12", repository_owner_id: "34" }));
+    write(path.join(rep, "ingest-report-0"), "plugins/beta/identity.json", `${JSON.stringify(ident)}\n`);
+    const out = run({ root: e.one, reports: rep, watchState: path.join(e.dir, "none"), skipChecks: true, servicePath: true, log: quiet });
+    if (ok) assert.equal(out.outcome, "committed", `${what}: ${JSON.stringify(out.refusals)}`);
+    else {
+      assert.equal(out.outcome, "refused", `${what} landed`);
+      assert.match(out.refusals[0].message, /is not a listing already naming/, what);
+    }
   }
 });
 
