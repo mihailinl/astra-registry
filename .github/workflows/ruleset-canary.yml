@@ -1,0 +1,32 @@
+# Can the bot's own token still write a branch the ruleset protects?
+#
+# The ruleset "bot code needs a second person" (simplification plan 2.5) requires a pull request on main
+# and on `ruleset-canary`, and lets the GitHub Actions app bypass it, because every bot commit is pushed
+# with GITHUB_TOKEN. If that bypass did not hold, publishing would stop. This run pushes main's head to
+# `ruleset-canary` and deletes the branch again, so main never gets a commit. The owner-run that creates
+# the ruleset dispatches this run and removes the ruleset again if it fails.
+name: Ruleset canary
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ruleset-canary
+  cancel-in-progress: false
+
+jobs:
+  push:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write   # one branch, created and deleted; never main
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Write the protected canary branch with the bot's token, then delete it
+        run: |
+          set -euo pipefail
+          git push origin "HEAD:refs/heads/ruleset-canary"
+          git push origin --delete ruleset-canary
+          echo "ok    GITHUB_TOKEN wrote and deleted a branch the ruleset protects"

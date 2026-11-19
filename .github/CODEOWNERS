@@ -1,0 +1,12 @@
+# Who must approve a change to what the signing key runs (simplification plan 2.5, 2026-11-19).
+#
+# The `publish` environment hands ASTRA_INDEX_SIGNING_KEY to any workflow on main. So whatever can change
+# main's workflows, bot or tools can read the key. The ruleset "bot code needs a second person" requires a
+# pull request on main, and an approval from a code owner below for these paths. GitHub never counts an
+# author's own approval, so a change by one of the two owners needs the other. Records, docs and policy
+# merge without an approval; the bot's own commits (GITHUB_TOKEN) bypass the ruleset.
+#
+# Numeric ids, so a renamed login cannot be mistaken for either: KnlCE 114572819, mihailinl 193032699.
+/.github/ @KnlCE @mihailinl
+/bot/     @KnlCE @mihailinl
+/tools/   @KnlCE @mihailinl
