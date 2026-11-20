@@ -326,6 +326,7 @@
         "id": "astra-chess",
         "license": "MIT",
         "name": "Astra Chess",
+        "owner_id": 280318216,
         "platform_downloads": {
           "linux-x64": "https://github.com/MINICE-AI/astra-chess/releases/download/v0.1.19/astra-chess-0.1.19-noarch.astraplugin",
           "noarch": "https://github.com/MINICE-AI/astra-chess/releases/download/v0.1.19/astra-chess-0.1.19-noarch.astraplugin",
