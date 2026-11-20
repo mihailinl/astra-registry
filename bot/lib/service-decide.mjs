@@ -71,7 +71,8 @@ import { loadPin, ownerApprovalsAt } from "./operator-act.mjs";
 import { HOUR_MS, iso } from "./policy/time.mjs";
 import { CODES } from "./codes.mjs";
 import { POLICY_CODES } from "./policy/constants.mjs";
-import { applyIdentity, compareWithBaseline, effectiveBaseline } from "./identity.mjs";
+import { applyIdentity, baselineFor, baselineNamedIds, compareWithBaseline, effectiveBaseline } from "./identity.mjs";
+import { publicationUnlisted, stagingListingIdAt } from "../../tools/lib/reserved.mjs";
 import { safeRepo, safeTag } from "./safe.mjs";
 import { execFileSync } from "node:child_process";
 import { trackRecord } from "./policy/track-record.mjs";
@@ -82,7 +83,7 @@ import { isTime } from "../../tools/lib/time.mjs";
 import { decisionId, submissionKey } from "./decisions.mjs";
 import { ID_PATTERN } from "../../tools/lib/ids.mjs";
 import { SEMVER_PATTERN } from "../../tools/lib/semver.mjs";
-import { isFirstPartyId, loadFirstParty } from "../../tools/lib/first-party.mjs";
+import { isFirstPartyId, loadFirstParty, sameAccountRename, versionStandsUnderSource } from "../../tools/lib/first-party.mjs";
 
 const ID_RE = new RegExp(ID_PATTERN);
 const SEMVER_RE = new RegExp(SEMVER_PATTERN);
@@ -351,7 +352,9 @@ export function readGitState(root, { markersOverride = null, pin = null } = {}) 
   // MIG-10's first-party exemption. A file that does not load is no first
   // party at all, so every first binding is held as before.
   const firstParty = loadFirstParty(root).ids;
-  return { root, records: records.map((r) => r.doc).filter(Boolean), alerts, denied, oks, markers, ownerApprovals, firstParty };
+  // MOD-16's staging id, the one new listing a publication writes unlisted.
+  const stagingId = stagingListingIdAt(root);
+  return { root, records: records.map((r) => r.doc).filter(Boolean), alerts, denied, oks, markers, ownerApprovals, firstParty, stagingId };
 }
 
 function readJsonDir(dir) {
@@ -484,32 +487,9 @@ export function terminalForSubmission({ records, submissionId, fingerprint, repo
   return list.find((r) => r?.decision_id && r.decision_id === hit.names) ?? { state: hit.reported, decision_id: hit.names, reasons: [] };
 }
 
-/**
- * The identity baseline for a listing with no identity record (TRUST-23;
- * MIG-28; ID-74).
- *
- * MIG-20's `migration` record first, through `effectiveBaseline`, which ends
- * a baseline at the newest voiding record. **Failing that, the first
- * `published` record carrying both ids**, and this is a reading this module
- * records rather than one the plan spells: a plugin first listed through the
- * service path after R3 has no `migration` record by construction — MIG-20
- * writes those once, over the listings that existed at R3 — and ID-74 says
- * every later release of an id is "compared with that listing under DEC-17".
- * Read as `migration` alone, MIG-28 would hold every update of every plugin
- * listed after the baseline `R_IDENTITY_CHANGED` for ever. MIG-20's tree check
- * ("every later version carries both ids in its own record") is what makes the
- * first publication record a baseline in all but name.
- */
-export function baselineFor({ records, pluginId }) {
-  const { baseline, voidedAt } = effectiveBaseline({ records, pluginId });
-  if (baseline) return { baseline, source: "migration" };
-  const published = (records ?? [])
-    .filter((r) => r?.plugin_id === pluginId && r?.state === "published" && r?.trigger !== "migration")
-    .filter((r) => BASE10_RE.test(String(r.repository_id ?? "")) && BASE10_RE.test(String(r.repository_owner_id ?? "")))
-    .filter((r) => !voidedAt || String(r.decided_at) > voidedAt)
-    .sort((a, b) => String(a.decided_at).localeCompare(String(b.decided_at)));
-  return published.length ? { baseline: published[0], source: "first-publication" } : { baseline: null, source: null };
-}
+// `baselineFor` lives in bot/lib/identity.mjs (moved 2026-11-19, beside `effectiveBaseline`) so the catalogue
+// builder reads the same baseline the decide job does; re-exported for this module's callers.
+export { baselineFor };
 
 // ── ID-41: with an identity record ──────────────────────────────────────────
 
@@ -549,6 +529,32 @@ export function id41({ identity, record, lineHash }) {
   // Row 6 — the token hash differs from the record's — independently.
   if (lineHash !== null && !sameHash) { codes.push("R_BINDING_CHANGED"); rows.push("6"); }
   return { codes, rows };
+}
+
+/**
+ * A rename inside one of Astra's own accounts is not held (owner, 2026-11-19).
+ *
+ * ID-41's row 5 holds a repository whose name moved while BOTH numeric ids
+ * stayed. For a third party that hold stands. For a repository renamed inside
+ * one first-party account it stopped nobody: the attacker a name change could
+ * hide is a freed login registered by somebody else, and that attacker cannot
+ * keep either id (`B_REPOSITORY_RECYCLED`, and the transfer and re-creation
+ * rows, catch it whatever this returns).
+ *
+ * True only when the listing is BOUND (an identity record names the ids;
+ * a baseline-only listing keeps TRUST-23's hold), `sameAccountRename` holds
+ * between the record and this release — same ids, first-party owner, same
+ * owner LOGIN, so an organisation rename stays held — and every version the
+ * listing already has stands under the new name by
+ * `versionStandsUnderSource`, the predicate tools/validate.mjs asks of the
+ * tree this publication writes. The two sides share it so that a rename this
+ * lets through is one the validator accepts (review of #521, finding 1).
+ */
+export function firstPartyRename({ identity, record, versions = [], records = [], pluginId, firstParty = null }) {
+  if (!record || !sameAccountRename({ from: record, to: identity, firstParty })) return false;
+  return versions.every(({ doc }) => versionStandsUnderSource({
+    pluginId, version: doc, identity: record, sourceRepo: identity.repo, records, firstParty,
+  }));
 }
 
 // ── the approval (BOT-26) ───────────────────────────────────────────────────
@@ -1386,6 +1392,8 @@ export function decideSubmission(input) {
   const identity = { repo: verified.repo, repository_id: verified.repository_id, repository_owner_id: verified.repository_owner_id };
   const lineHash = binding.outcome === "one" ? binding.token_hash ?? null : null;
   const heldCodes = [];
+  // What publishes that would once have held: read first, never a hold (`P_REVIEW_PRIORITY`).
+  const priorityNotes = [];
   let recycled = null;
   let firstCleared = null;
   const listingState = git.listingState ?? null;
@@ -1397,11 +1405,21 @@ export function decideSubmission(input) {
     findings.push({ level: "error", code: "B_BINDING_UNUSABLE", where: null, message: "the binding line cannot be used for this repository (ID-9)" });
   }
 
+  // A rename inside one first-party account publishes (`firstPartyRename`);
+  // the note says so, and moderators read the release first.
+  const renameNote = (from) =>
+    `a first-party rename (${from} → ${identity.repo}, repository ${identity.repository_id} and owner ` +
+    `${identity.repository_owner_id} unchanged), published under the new name`;
   if (identityRecord) {
     const t = id41({ identity, record: identityRecord, lineHash });
+    const fpRename = firstPartyRename({
+      identity, record: identityRecord, versions: existing?.versions ?? [], records, pluginId: verified.plugin_id, firstParty: git.firstParty ?? null,
+    });
     for (const c of t.codes) {
       if (c === "B_REPOSITORY_RECYCLED") recycled = `ID-41 row 1: ${identity.repo} now attests repository ${identity.repository_id} (owner ${identity.repository_owner_id}); the identity record names ${identityRecord.repository_id} (owner ${identityRecord.repository_owner_id})`;
       else if (c === "B_OWNER_CHANGED") findings.push({ level: "error", code: c, where: null, message: `ID-41 row 3: the owner id moved from ${identityRecord.repository_owner_id} to ${identity.repository_owner_id} under the same token` });
+      // Only row 5 can raise this with both ids equal; rows 1b and 2 need a new repository id.
+      else if (c === "R_IDENTITY_CHANGED" && fpRename) priorityNotes.push(renameNote(identityRecord.repo));
       else heldCodes.push(c);
     }
     if (binding.outcome === "none") {
@@ -1442,6 +1460,18 @@ export function decideSubmission(input) {
     if (binding.outcome === "none" && (serviceFirst || anyFirstAfterCutover)) {
       findings.push({ level: "error", code: "B_UNBOUND", where: null, message: "ID-25: a first listing now needs a binding line at the attested commit" });
     }
+  }
+
+  // `unlisted` is the tree's, never the check job's (MIG-27): that job is
+  // the one that opens a stranger's archive, and until 2026-11-19 nothing
+  // here put the field back, so a listing arriving without it relisted a
+  // delisted plugin. For an existing listing it is main's; for a new one it
+  // is set only for MOD-16's staging id (`publicationUnlisted`). The publish
+  // job applies the same rule again against the tree it lands on.
+  {
+    const { unlisted: _fromCheckJob, ...plugin } = derived.plugin;
+    const unlisted = publicationUnlisted({ onTree: existing?.doc ?? null, id: verified.plugin_id, stagingId: git.stagingId ?? null });
+    derived.plugin = unlisted ? { ...plugin, unlisted: true } : plugin;
   }
 
   for (const c of heldCodes) {
@@ -1495,6 +1525,7 @@ export function decideSubmission(input) {
     approval: owner?.approval ?? honoured.approval,
     identity: recycled ? { code: "B_REPOSITORY_RECYCLED", reason: recycled } : null,
     sourceIds: identity,
+    priority: priorityNotes,
     now: new Date(now),
     shadow: shadowed,
   });
@@ -1952,7 +1983,8 @@ function finishPlan(p, { shadowed, startedAt }) {
 
 /**
  * Every listing naming this repository id, by identity record or by MIG-20's
- * baseline record (ID-64: "baseline-named ones included").
+ * baseline record (ID-64: "baseline-named ones included") — a baseline that a
+ * later voiding record ended does not count.
  */
 export function siblingsOf(root, records, repositoryId) {
   const out = new Set();
@@ -1971,10 +2003,10 @@ export function siblingsOf(root, records, repositoryId) {
       /* no identity record */
     }
   }
-  for (const r of records ?? []) {
-    if (r?.trigger === "migration" && String(r.repository_id) === String(repositoryId) && ID_RE.test(String(r.plugin_id))) {
-      out.add(r.plugin_id);
-    }
+  // A baseline counts only while it is effective: an `M_IDENTITY_RESET`'s voiding record ends it, and a raw
+  // `migration` record read past that would make the reset listing a sibling again (`baselineNamesRepository`).
+  for (const id of baselineNamedIds(records, repositoryId)) {
+    if (ID_RE.test(id)) out.add(id);
   }
   return [...out].sort();
 }

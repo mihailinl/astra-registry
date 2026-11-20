@@ -1,6 +1,6 @@
 {
-  "contract_version": "6.31.2",
-  "source_commit": "530d947b055a960dcd14498e370567bcae22e61c",
+  "contract_version": "6.35.0",
+  "source_commit": "4d06c263c510dcbb6fbb6c62d173afdcf300b740",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -3102,6 +3102,19 @@
               "source": "BOT-80"
             },
             {
+              "name": "low_tools",
+              "required": "conditional",
+              "when": {
+                "iff": {
+                  "code": [
+                    "M_REVIEW"
+                  ]
+                }
+              },
+              "why": "`low_tools` is the set of tools the moderator saw declared Low and approved (6.33.0): a review of a version whose record lists Low tools marks it reviewed only when this set equals the record's, and a client then runs those tools without asking. Relaxed to `if`, a takedown may carry it and the bot would copy a meaningless approval into its record. Dropped, every review of a release that declares Low tools leaves it unreviewed, which is safe but makes the declaration useless.",
+              "source": "BOT-80"
+            },
+            {
               "name": "moderator",
               "required": "conditional",
               "when": {
@@ -3342,6 +3355,19 @@
                 }
               },
               "why": "§0.8 calls this revoke `action`, and the noun is the whole difference from `severity` beside it in the same clause: `severity` grades the advisory, which several codes touch, and `action` is what a client must do about a revoked version — `block_install` or `disable` (MOD-10) — which only a revocation decides. So the reverse direction is real. Relaxed to `if`, a deprecation may carry `block_install`, the acceptor copies it into the decision record, and a deprecation — which compiles to a warning and nothing else — is published carrying an enforcement no moderator chose. Dropped, a revocation lands with no enforcement and the withdrawal list cannot say whether an installed copy stops.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "low_tools",
+              "required": "conditional",
+              "when": {
+                "iff": {
+                  "code": [
+                    "M_REVIEW"
+                  ]
+                }
+              },
+              "why": "`low_tools` is the set of tools the moderator saw declared Low and approved (6.33.0): a review of a version whose record lists Low tools marks it reviewed only when this set equals the record's, and a client then runs those tools without asking. Relaxed to `if`, a takedown may carry it and the bot would copy a meaningless approval into its record. Dropped, every review of a release that declares Low tools leaves it unreviewed, which is safe but makes the declaration useless.",
               "source": "BOT-80"
             },
             {
@@ -8217,7 +8243,7 @@
     "tools/testkeys/vectors/signed-set-v1.json",
     "tests/results/"
   ],
-  "trust31_tracked_set_sha256": "3fdab6458ab377dfa53bdc2f562d13fd8597a9c944eccfcfc5c0cee621830e3e",
+  "trust31_tracked_set_sha256": "ab7858bc2b2255721140bcda2aa98e63a8de193be8afa43c0c83f7c9d2cb7f7f",
   "pending": [
     {
       "id": "report_outcome_codes",

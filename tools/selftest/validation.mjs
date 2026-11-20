@@ -823,7 +823,10 @@ export async function run() {
   // files. None is committed by a bot run or served. Named here rather than in
   // tools/validate.mjs, because a path that module names is a gate input by
   // TRUST-31's leg (c), and these are the opposite of one.
-  const NOT_RECORDS = ["tests", "tools/testkeys", "tools/selftest", "bot/fixtures", "bot/tests"];
+  // `tools/vectors` holds worked cases another codebase tests itself against
+  // (Phase 2's state_sha256, tools/lib/export-state.mjs): read by tests, never
+  // committed by a bot run, never served.
+  const NOT_RECORDS = ["tests", "tools/testkeys", "tools/selftest", "tools/vectors", "bot/fixtures", "bot/tests"];
   const NOT_RECORD_FILES = {
     "bot/security-contact.json":
       "the privacy canary's role addresses, read by tools/priv-scan.mjs and kept off every bot run (couplings entry 104)",

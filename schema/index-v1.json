@@ -288,6 +288,12 @@
         "publisher": {
           "type": "string",
           "description": "The key into `signed.publishers`, i.e. the GitHub owner of `source.repo` — the identity the ownership check proves. The Minice account a binding needs from R4a is never here (ROLL-47 A2, amended 2026-09-24). ABSENT when no reviewed record exists, and absence is the answer: a client that renders a badge from this field being present would badge every listing. Deliberately not the `author` string, which comes out of the plugin's own manifest and is whatever the author typed."
+        },
+        "owner_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "description": "Contract 6.34.0, ID-77: GitHub's numeric id of the repository owner, out of the listing's identity record (`plugins/<id>/identity.json`'s `repository_owner_id`, ID-40), inside the signature. The same kind of id as `signed.publishers[*].github_id` (ID-76). ABSENT for an unbound listing (no identity record, including one an `M_IDENTITY_RESET` removed). It changes only with the identity record, so only through a publication that passed ID-41 or a moderator's act. A client MUST compare this id, never a login, and MUST NOT update silently when an entry that carried it now carries a different, malformed or no id: a login can be freed and registered by somebody else, and this id is never reissued. An entry that never carried one keeps the repository-name pin (contract 6.35.2). Optional in this schema so an older catalogue still validates."
         }
       }
     },
@@ -323,6 +329,14 @@
             "type": "string"
           },
           "uniqueItems": true
+        },
+        "low_tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true,
+          "description": "The tools the release declares Low in `[tools.danger]`, copied byte for byte from the version record wherever it carries them, `[]` included, and absent wherever it does not. Present means the release was probed (`[]`: it declares none); ABSENT means it was never probed, and a client must honour no declared Low tool for it. Astra runs a Low tool without asking only when this member lists it and the release's `review` is `reviewed`. OPTIONAL, and a member of `astra.registry.index/1` itself, like `review`: shipped clients carry it inside the signature and ignore it."
         },
         "permissions": {
           "type": "object",

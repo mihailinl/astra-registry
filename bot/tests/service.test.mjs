@@ -2248,6 +2248,114 @@ test("TRUST-23: against MIG-20's baseline, a fixture per outcome", () => {
   assert.ok(codes(renamed).includes("R_IDENTITY_CHANGED"));
 });
 
+// Owner, 2026-11-19: a BOUND repository renamed inside one of Astra's own
+// accounts — both numeric ids and the owner login unchanged — publishes under
+// its new name with a note, and is not held, provided every version it
+// already has stands under the new name the way tools/validate.mjs will ask
+// (review of #521, finding 1). A third party's rename, an organisation rename
+// (login changed), a baseline-only listing and any change of either id hold
+// or refuse exactly as before.
+const OLD_REPO = "a-stranger/dice-roller-old";
+const F7_HASH = "1".repeat(16);
+const f7Line = () => ({ outcome: "one", token: "t".repeat(24), token_hash: F7_HASH, code: null, alert: false, reason: null });
+const oldVersion = () => ({ doc: versionDoc("0.1.0", { release: { kind: "github_release", repo: OLD_REPO, tag: "v0.1.0", commit: "c".repeat(40) } }) });
+const publishedOld = (over = {}) => ({
+  schema: "astra.registry.decision/1", state: "published", trigger: "poll", plugin_id: P.id, version: "0.1.0", repo: OLD_REPO,
+  repository_id: P.rid, repository_owner_id: P.oid, decided_at: "2026-09-02T00:00:00Z", decision_id: "d".repeat(32), ...over,
+});
+const renamedRun = ({ firstParty = new Set([P.oid]), ident = {}, versions = [oldVersion()], records = [publishedOld()] } = {}) => decideWith({
+  verified: verified({ binding: f7Line(), owner_file: { commit: "9".repeat(40), pull_request: false } }),
+  ask: ask({ verdict: "pass" }),
+  git: git({
+    existing: { ...existing({ repo: OLD_REPO, identity: { repo: OLD_REPO, repository_id: P.rid, repository_owner_id: P.oid, token_hash: F7_HASH, ...ident } }), versions },
+    records,
+    firstParty,
+  }),
+});
+const priorityOf = (plan) => plan.reasons.find((r) => r.code === "P_REVIEW_PRIORITY")?.message ?? "";
+
+test("F7: a bound first-party rename inside one account publishes and rewrites the record and source.repo to the new name", () => {
+  const plan = renamedRun();
+  assert.equal(plan.state, "published", JSON.stringify(plan.reasons.map((r) => r.code)));
+  assert.ok(!codes(plan).includes("R_IDENTITY_CHANGED"));
+  assert.ok(codes(plan).includes("P_REVIEW_PRIORITY"), "the record says moderators read it first");
+  assert.match(priorityOf(plan), new RegExp(`first-party rename \\(${OLD_REPO} → ${P.repo}`));
+  assert.equal(plan.listing.plugin.source.repo, P.repo, "source.repo names the new repository");
+  assert.equal(plan.record.repo, P.repo, "the publication record names the new repository");
+  assert.deepEqual(plan.identity_records.map((r) => [r.plugin_id, r.record.repo, r.record.repository_id, r.record.repository_owner_id]),
+    [[P.id, P.repo, P.rid, P.oid]], "the identity record names the new repository");
+});
+
+test("F7: a third-party rename with both ids unchanged is still held", () => {
+  for (const firstParty of [new Set(["280318216"]), null]) {
+    const plan = renamedRun({ firstParty });
+    assert.equal(plan.state, "held", `${firstParty ? "a third party" : "no first-party set read"}: ${plan.state}`);
+    assert.ok(codes(plan).includes("R_IDENTITY_CHANGED"));
+  }
+});
+
+test("F7: an organisation rename, a baseline-only listing, or either id moved is held or refused as before", () => {
+  // The login changed, the ids did not: the old login is free for anybody.
+  const org = decideWith({
+    verified: verified({ repo: "another-org/dice-roller", fingerprint: submissionFingerprint({ repo: "another-org/dice-roller", tag: P.tag, id: P.id, version: P.version, commit: P.commit, digests: DIGESTS }), binding: f7Line(), owner_file: { commit: "9".repeat(40), pull_request: false } }),
+    ask: ask({ verdict: "pass" }),
+    // Every old version has its evidence, so only the login can hold it.
+    git: git({ existing: existing({ repo: P.repo, identity: { repo: P.repo, repository_id: P.rid, repository_owner_id: P.oid, token_hash: F7_HASH } }), records: [publishedOld({ repo: P.repo })], firstParty: new Set([P.oid]) }),
+  });
+  assert.equal(org.state, "held", "an organisation rename was let through");
+  assert.ok(codes(org).includes("R_IDENTITY_CHANGED"));
+  // No identity record: TRUST-23's baseline hold stands, first party or not.
+  const unbound = decideWith({ git: git({ existing: existing({ repo: OLD_REPO }), records: [baseline({ repo: OLD_REPO })], firstParty: new Set([P.oid]) }) });
+  assert.equal(unbound.state, "held", "a baseline-only listing's rename was let through");
+  assert.ok(codes(unbound).includes("R_IDENTITY_CHANGED"));
+  const moved = renamedRun({ ident: { repository_owner_id: "2" } });
+  assert.notEqual(moved.state, "published", "an owner id that moved is not a rename");
+  const recreated = renamedRun({ ident: { repository_id: "1" } });
+  assert.notEqual(recreated.state, "published", "a repository id that moved is not a rename");
+  const recycled = decideWith({ git: git({ existing: existing(), records: [baseline({ repository_id: "1", repository_owner_id: "2" })], firstParty: new Set([P.oid, "2"]) }) });
+  assert.equal(recycled.state, "refused");
+  assert.ok(codes(recycled).includes("B_REPOSITORY_RECYCLED"));
+});
+
+test("F7: a rename whose old versions the validator would refuse is held, never published to fail the run", () => {
+  // No published record names the old version under the old name: validate
+  // could not tell it is the same repository, so decide does not publish.
+  const unrecorded = renamedRun({ records: [] });
+  assert.equal(unrecorded.state, "held");
+  assert.ok(codes(unrecorded).includes("R_IDENTITY_CHANGED"));
+  const otherIds = renamedRun({ records: [publishedOld({ repository_id: "77" })] });
+  assert.equal(otherIds.state, "held", "a record with other ids is no evidence");
+  const yanked = renamedRun({ records: [], versions: [{ doc: { ...oldVersion().doc, yanked: true } }] });
+  assert.equal(yanked.state, "published", "a yanked old version needs no evidence");
+});
+
+// MIG-27: `unlisted` is the tree's, never the check job's. A release never
+// lists or delists an existing listing, and a new listing is unlisted only
+// when it is MOD-16's staging id (review of #521, findings 2 and 6).
+const unlistedExisting = () => {
+  const e = existing();
+  return { ...e, doc: { ...e.doc, unlisted: true } };
+};
+const withUnlisted = () => listing({ plugin: { ...listing().plugin, unlisted: true } });
+
+test("MIG-27: a release keeps an existing listing's `unlisted` whatever the check job's listing says", () => {
+  const dropped = decideWith({ git: git({ existing: unlistedExisting(), records: [baseline()] }), listing: listing() });
+  assert.equal(dropped.state, "published", JSON.stringify(dropped.reasons.map((r) => r.code)));
+  assert.equal(dropped.listing.plugin.unlisted, true, "a check-job listing without `unlisted` relisted a delisted plugin");
+  const added = decideWith({ git: git({ existing: existing(), records: [baseline()] }), listing: withUnlisted() });
+  assert.equal(added.state, "published");
+  assert.equal(added.listing.plugin.unlisted, undefined, "a check-job listing with `unlisted` delisted a listed plugin");
+});
+
+test("MIG-27 / MOD-16: a new listing is unlisted only when it is the staging id", () => {
+  const stranger = decideWith({ listing: withUnlisted(), git: git({ stagingId: "astra-withdrawal-canary" }) });
+  assert.equal(stranger.state, "published");
+  assert.equal(stranger.listing.plugin.unlisted, undefined, "a new listing arrived unlisted from the check job and stayed so");
+  const staging = decideWith({ listing: listing(), git: git({ stagingId: P.id }) });
+  assert.equal(staging.state, "published");
+  assert.equal(staging.listing.plugin.unlisted, true, "the staging listing was published listed");
+});
+
 test("ID-41 row 1 is permanent: a new tag of a recycled repository is refused again", () => {
   const b = baseline({ repository_id: "1", repository_owner_id: "2" });
   for (const tag of ["v0.2.0", "v0.3.0"]) {
@@ -5023,5 +5131,122 @@ test("§4.7 (review finding 8): under a pin that fails its own rules the ingest 
     assert.deepEqual(readGitState(t, { pin: OwnerAuth.pinOf([{ ...key.pinKey, enrolment: null }]), markersOverride: {} }).ownerApprovals, []);
   } finally {
     fs.rmSync(t, { recursive: true, force: true });
+  }
+});
+
+// ── ID-64's siblings after an identity reset ───────────────────────────────
+//
+// `siblingsOf` read MIG-20's `migration` records raw, so a listing whose
+// identity an `M_IDENTITY_RESET` had deleted was still a sibling of its old
+// repository through the baseline record the reset ended: the next
+// publication from that repository rebound it in the same commit and undid the
+// reset. The baseline counts only while `effectiveBaseline` says it does.
+import { siblingsOf } from "../lib/service-decide.mjs";
+import { composeVoidingRecord } from "../lib/decisions.mjs";
+
+test("ID-64: siblingsOf drops a baseline-named listing once an identity reset ended its baseline", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "siblings-"));
+  try {
+    fs.mkdirSync(path.join(root, "plugins", "alpha"), { recursive: true });
+    fs.writeFileSync(path.join(root, "plugins", "alpha", "identity.json"),
+      `${JSON.stringify({ schema: "astra.registry.identity/1", plugin_id: "alpha", repository_id: "111", repository_owner_id: "222", repo: "example/alpha", token_hash: "c".repeat(16) })}\n`);
+    const baseline = (id, at = "2026-08-01T00:00:00Z") => ({
+      decided_at: at, actor: "system", trigger: "migration", plugin_id: id, version: "1.0.0",
+      repo: "example/alpha", tag: "v1.0.0", state: "published", repository_id: "111", repository_owner_id: "222",
+    });
+    const reset = (id, at) => composeVoidingRecord({
+      service_decision_id: "123e4567-e89b-42d3-a456-426614174000", plugin_id: id, decided_at: at, moderator: "mod-1",
+    }).record;
+
+    assert.deepEqual(siblingsOf(root, [baseline("beta")], "111"), ["alpha", "beta"],
+      "the control: a baseline-named listing with no reset is a sibling");
+    assert.deepEqual(siblingsOf(root, [baseline("beta"), reset("beta", "2026-10-01T00:00:00Z")], "111"), ["alpha"],
+      "a reset listing was still a sibling through the baseline the reset ended");
+    assert.deepEqual(siblingsOf(root, [baseline("beta"), reset("beta", "2026-10-01T00:00:00Z"), baseline("beta", "2026-11-01T00:00:00Z")], "111"),
+      ["alpha", "beta"], "a baseline written after the reset counts again");
+    assert.deepEqual(siblingsOf(root, [baseline("beta"), reset("gamma", "2026-10-01T00:00:00Z")], "111"), ["alpha", "beta"],
+      "another id's reset ended beta's baseline");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("MOD-16: the decide job reads the staging id off the tree's own policy/reserved-ids.json", () => {
+  const t = registryTree();
+  try {
+    assert.equal(readGitState(t.dir).stagingId, null, "a tree with no policy file has no staging listing");
+    fs.mkdirSync(path.join(t.dir, "policy"), { recursive: true });
+    fs.writeFileSync(path.join(t.dir, "policy", "reserved-ids.json"), JSON.stringify({ staging_listing_id: "astra-withdrawal-canary" }));
+    t.g("add", "-A");
+    t.g("commit", "-q", "-m", "policy");
+    assert.equal(readGitState(t.dir).stagingId, "astra-withdrawal-canary");
+  } finally {
+    t.cleanup();
+  }
+});
+
+// Review of #521, finding 1, reproduced the way the reviewer did: on a full
+// copy of the committed tree. The decide job and the validator must agree on
+// which renames land, or a rename decide publishes fails the publish run. So
+// both are run here, through the real apply, on the real listings.
+test("F7 on the full tree: a same-account rename decide publishes passes validate; an org rename and an unbound rename are held", async () => {
+  const { runValidation } = await import("../../tools/validate.mjs");
+  const { applyReport } = await import("../publish-apply.mjs");
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), "astra-f7-tree-"));
+  try {
+    const clone = path.join(work, "tree");
+    execFileSync("git", ["clone", "-q", "--no-hardlinks", "--shared", REPO, clone], { stdio: "pipe", env: cleanEnv() });
+    const errorsOf = async () => (await runValidation({ root: clone, allowStaging: true, allowDirect: false, online: false, artifactsDir: null, index: false }))
+      .report.errors.map((e) => `${e.where}: ${e.message}`);
+    const before = await errorsOf();
+    const decideRename = (id, toRepo) => {
+      const ex = serviceDecide.readListingOnMain(clone, id);
+      const ident = ex.identity;
+      const ids = ident ?? { repository_id: "1454409322", repository_owner_id: "114572819" };
+      const tag = "v9.9.9";
+      const digests = [`noarch:${"e".repeat(64)}`];
+      const fp = submissionFingerprint({ repo: toRepo, tag, id, version: "9.9.9", commit: P.commit, digests });
+      const v = verified({
+        plugin_id: id, version: "9.9.9", tag, repo: toRepo, repository_id: ids.repository_id, repository_owner_id: ids.repository_owner_id,
+        fingerprint: fp, artifact_digests: digests,
+        assets: [{ name: `${id}-9.9.9-noarch.astraplugin`, platform: "noarch", sha256: "e".repeat(64), size: 10, url: `https://github.com/${toRepo}/releases/download/${tag}/${id}-9.9.9-noarch.astraplugin` }],
+        binding: ident ? { outcome: "one", token: "t".repeat(24), token_hash: ident.token_hash, code: null, alert: false, reason: null } : verified().binding,
+        owner_file: { commit: "9".repeat(40), pull_request: false },
+      });
+      const latest = ex.versions.map((x) => x.doc).sort((a, b) => String(a.version).localeCompare(String(b.version))).at(-1);
+      const card = { plugin: { ...ex.doc }, version: { ...latest, version: "9.9.9", artifacts: { noarch: { url: null, filename: `${id}-9.9.9-noarch.astraplugin`, sha256: "e".repeat(64), size: 10 } } } };
+      return decideSubmission({
+        lease: lease({ repo: toRepo, tag, service_repository_id: ids.repository_id }), shadow: false, verified: v,
+        facts: facts({ plugin_id: id, version: "9.9.9", platforms: ["noarch"] }), listing: card,
+        ask: ask({ verdict: "pass" }), git: { ...readGitState(clone), existing: ex, queueEntry: null, listingState: null, listingNamesRepo: true, siblings: [], track: undefined },
+        now: "2026-11-19T12:00:00Z", startedAt: "2026-11-19T12:00:00Z", readCommit: "f".repeat(40),
+      });
+    };
+
+    // The positive case: office-files, bound, KnlCE (first party), renamed under KnlCE.
+    const plan = decideRename("office-files", "KnlCE/office-files-renamed");
+    assert.equal(plan.state, "published", JSON.stringify(plan.reasons.map((r) => r.code)));
+    const reportsDir = path.join(work, "reports");
+    const listings = path.join(work, "listings");
+    fs.mkdirSync(listings, { recursive: true });
+    composePublication({ plans: [plan], root: clone, listingsDir: listings, reportsDir, run: "1/1" });
+    const state = { changed: false, touchedIds: new Set(), removals: [], queued: [], records: [], refusals: [], watchState: false, servicePath: true };
+    applyReport(clone, path.join(reportsDir, "report-0"), state);
+    const after = await errorsOf();
+    const fresh = after.filter((e) => !before.includes(e));
+    assert.deepEqual(fresh, [], "the publication decide approved is refused by validate");
+    assert.equal(JSON.parse(fs.readFileSync(path.join(clone, "plugins", "office-files", "plugin.json"), "utf8")).source.repo, "KnlCE/office-files-renamed");
+
+    // An organisation rename of the same bound listing: held, so nothing reaches validate.
+    execFileSync("git", ["-C", clone, "checkout", "-q", "--", "."], { env: cleanEnv() });
+    execFileSync("git", ["-C", clone, "clean", "-qfd"], { env: cleanEnv() });
+    const org = decideRename("office-files", "MINICE-AI/office-files");
+    assert.equal(org.state, "held", "an organisation rename was published");
+    assert.ok(org.record.reasons.includes("R_IDENTITY_CHANGED"));
+    // The reviewer's own case: text-utils has no identity record, so its rename is TRUST-23's hold.
+    const unbound = decideRename("text-utils", "mihailinl/AstraPlugins-renamed");
+    assert.equal(unbound.state, "held", "an unbound listing's rename was published");
+  } finally {
+    fs.rmSync(work, { recursive: true, force: true });
   }
 });

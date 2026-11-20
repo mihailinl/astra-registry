@@ -34,6 +34,7 @@ import {
   run,
 } from "../publish-apply.mjs";
 import { readTree, treeModeProblems } from "../../tools/lib/tree-modes.mjs";
+import { composeVoidingRecord, decisionId } from "../lib/decisions.mjs";
 import { makeKey, pinOf } from "./fixtures/authenticator.mjs";
 
 const git = (cwd, ...args) =>
@@ -708,6 +709,17 @@ test("ID-64: a sibling listing's identity record lands beside its repository's p
     ["a sibling by its identity record", (root) => write(root, "plugins/beta/identity.json", `${JSON.stringify(identityDoc({ plugin_id: "beta" }))}\n`), identityDoc({ plugin_id: "beta", token_hash: "e".repeat(16) }), true],
     ["a sibling rebound to other ids", (root) => write(root, `log/decisions/2026/08/${"b".repeat(32)}.json`, `${JSON.stringify(migration)}\n`), identityDoc({ plugin_id: "beta", repository_owner_id: "99" }), false],
     ["a listing naming another repository", (root) => write(root, `log/decisions/2026/08/${"b".repeat(32)}.json`, `${JSON.stringify({ ...migration, repository_id: "77" })}\n`), identityDoc({ plugin_id: "beta" }), false],
+    // An M_IDENTITY_RESET of beta deleted its identity record and wrote DEC-7's voiding record; the baseline
+    // record is still on main, and read raw it made beta a sibling again, so alpha's publication rebound it and
+    // undid the reset. The first row is the control: the same baseline, no voiding record.
+    ["a baseline sibling whose baseline an identity reset ended", (root) => {
+      write(root, `log/decisions/2026/08/${"b".repeat(32)}.json`, `${JSON.stringify(migration)}\n`);
+      const { record } = composeVoidingRecord({
+        service_decision_id: "123e4567-e89b-42d3-a456-426614174000", plugin_id: "beta",
+        decided_at: "2026-10-01T00:00:00Z", moderator: "mod-1",
+      });
+      write(root, `log/decisions/2026/10/${"c".repeat(32)}.json`, `${JSON.stringify(record)}\n`);
+    }, identityDoc({ plugin_id: "beta" }), false],
   ]) {
     const e = estate();
     plantMain(e.one);
@@ -722,6 +734,33 @@ test("ID-64: a sibling listing's identity record lands beside its repository's p
       assert.equal(out.outcome, "refused", `${what} landed`);
       assert.match(out.refusals[0].message, /is not a listing already naming/, what);
     }
+  }
+});
+
+test("a publication report carrying an identity-reset (voiding) record is refused: only the moderation run writes one", () => {
+  // DEC-7's voiding record ends a baseline (effectiveBaseline): it lifts TRUST-23's B_REPOSITORY_RECYCLED and,
+  // since ID-64 asks effectiveBaseline, drops the listing as a sibling. validate checks its shape only, so a
+  // well-formed one carried in a publication report would void any listing's baseline.
+  const reset = (pluginId) => {
+    const { key, record } = composeVoidingRecord({
+      service_decision_id: "123e4567-e89b-42d3-a456-426614174000", plugin_id: pluginId,
+      decided_at: "2026-09-24T01:02:03Z", moderator: "mod-1",
+    });
+    return { schema: "astra.registry.decision/1", decision_id: decisionId(key), ...record };
+  };
+  for (const [what, doc] of [
+    ["another listing's voiding record", reset("beta")],
+    ["the published listing's own voiding record", reset("alpha")],
+    // claimsVoiding, not isVoidingRecord: a record that only looks like one is refused too, rather than waved
+    // through to a validator that would have to catch it.
+    ["a record claiming the reset's code alone", { ...recordDoc({ decision_id: "d".repeat(32) }), reasons: ["M_IDENTITY_RESET"] }],
+  ]) {
+    const e = estate();
+    const rep = withRecord(report(e.dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", recordDoc());
+    withRecord(rep, "ingest-report-0", doc);
+    const out = run({ root: e.one, reports: rep, watchState: path.join(e.dir, "none"), skipChecks: true, servicePath: true, log: quiet });
+    assert.equal(out.outcome, "refused", `${what} landed`);
+    assert.match(out.refusals[0].message, /identity-reset \(voiding\) record; only the moderation run writes those/, what);
   }
 });
 
@@ -1610,4 +1649,51 @@ test("a pin that fails its own rules approves nothing at the push (review findin
   const broken = { ...REVOKE_PIN, keys: [{ ...REVOKE_KEY, enrolment: null }] };
   const r = run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, servicePath: true, pin: broken, log: quiet });
   assert.equal(r.outcome, "refused", "an owner-approved release was pushed under a pin that fails its own rules");
+});
+
+// MIG-27 (review of #521, finding 2): a publication never lists or delists.
+// `unlisted` is read off the main each attempt lands on, so an `M_DELIST`
+// that lands between the decide job and this one stays.
+test("a delist that lands on main between decide and apply stays delisted", () => {
+  const { dir, one, two, bare } = estate();
+  write(two, "plugins/alpha/plugin.json", '{"id":"alpha"}\n');
+  write(two, "plugins/alpha/versions/0.1.0.json", '{"version":"0.1.0"}\n');
+  git(two, "add", "-A");
+  git(two, "commit", "-m", "alpha, listed");
+  git(two, "push", "origin", "HEAD:main");
+  // The decide job read main here: alpha listed, so its report carries no `unlisted`.
+  const reports = report(dir, "ingest-report-0", { id: "alpha", version: "0.2.0", listing: '{\n  "id": "alpha",\n  "name": "Alpha"\n}\n' });
+  // Then a moderator's delist lands, before the publish job runs.
+  write(two, "plugins/alpha/plugin.json", '{"id":"alpha","unlisted":true}\n');
+  git(two, "add", "-A");
+  git(two, "commit", "-m", "registry: moderation (M_DELIST)");
+  git(two, "push", "origin", "HEAD:main");
+
+  const result = run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, log: quiet });
+  assert.equal(result.outcome, "committed");
+  assert.ok(result.attempts >= 2, "the stale checkout's push was refused and the report re-applied on the delisted main");
+  const landed = JSON.parse(git(bare, "show", "main:plugins/alpha/plugin.json"));
+  assert.equal(landed.unlisted, true, "the publication relisted a plugin delisted under it");
+  assert.equal(landed.name, "Alpha", "the rest of the report's plugin.json landed");
+  assert.equal(git(bare, "show", "main:plugins/alpha/versions/0.2.0.json"), '{"version":"0.2.0"}');
+});
+
+test("a publication never delists a listed plugin, and a new listing is unlisted only as the staging id", () => {
+  const { dir, one, bare } = estate();
+  write(one, "plugins/beta/plugin.json", '{"id":"beta"}\n');
+  write(one, "plugins/beta/versions/0.1.0.json", '{"version":"0.1.0"}\n');
+  write(one, "policy/reserved-ids.json", '{"staging_listing_id":"astra-withdrawal-canary"}\n');
+  git(one, "add", "-A");
+  git(one, "commit", "-m", "beta, listed, and the staging id");
+  git(one, "push", "origin", "HEAD:main");
+  report(dir, "ingest-report-0", { id: "beta", version: "0.2.0", listing: '{"id":"beta","unlisted":true}\n' });
+  report(dir, "ingest-report-1", { id: "gamma", version: "0.1.0", listing: '{"id":"gamma","unlisted":true}\n' });
+  const reports = report(dir, "ingest-report-2", { id: "astra-withdrawal-canary", version: "0.1.0", listing: '{"id":"astra-withdrawal-canary"}\n' });
+
+  const result = run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, log: quiet });
+  assert.equal(result.outcome, "committed");
+  const at = (id) => JSON.parse(git(bare, "show", `main:plugins/${id}/plugin.json`));
+  assert.equal(at("beta").unlisted, undefined, "a publication delisted a listed plugin");
+  assert.equal(at("gamma").unlisted, undefined, "a new listing landed unlisted");
+  assert.equal(at("astra-withdrawal-canary").unlisted, true, "the staging listing landed listed");
 });

@@ -404,6 +404,8 @@ const SD_VALUES = Object.freeze({
   action: "block_install",
   moderator: "amoderator",
   declared_interest: false,
+  // 6.33.0: the Low tools an M_REVIEW approved.
+  low_tools: ["read_state"],
 });
 
 /** The token file's member table for `service_decisions[]`, which is `of[]`. */
@@ -895,7 +897,7 @@ test("an answer missing `shadow` is read as shadow and alerts", () => {
 test("an entry carrying an unnamed member is accepted, and the member reaches no file", () => {
   // M-1, both halves, with the floor written before either mutation.
   const named = ENTRY_ALLOWLIST.moderator;
-  assert.equal(named.length, 15, `BOT-80 names 15 members for a moderator decision (\`corrects\` since 6.7.0) and this list has ${named.length}`);
+  assert.equal(named.length, 16, `BOT-80 names 16 members for a moderator decision (\`corrects\` since 6.7.0, \`low_tools\` with Astra #377) and this list has ${named.length}`);
 
   const root = estate();
   const entry = decision({

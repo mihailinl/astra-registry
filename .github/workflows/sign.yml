@@ -153,6 +153,9 @@ jobs:
       hexes: ${{ steps.sign.outputs.hexes }}
       committed: ${{ steps.commit.outputs.committed }}
       signed_sha: ${{ steps.commit.outputs.signed_sha }}
+      # What `export-assert` asks its questions at: the same commit this job
+      # signed, not whatever `main` says by the time that job starts.
+      source_commit: ${{ steps.source.outputs.sha }}
     steps:
       # main's head at run start, with the whole history: D3's serials are
       # `rev-list --count` and a shallow clone counts what it was given, which
@@ -403,6 +406,67 @@ jobs:
         if: steps.assemble.outputs.deploy == 'true'
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
 
+  # ── export-assert: Phase 2's pre-sign assertion, asked and never enforced ──
+  #
+  # plugin-phase2-design-2026-11-19 §4 step 4 will make signing wait on two
+  # facts about the Source-Commit: its plugins/** and log/** digest is the
+  # plugins service's export (`state_sha256`, tools/lib/export-state.mjs), and
+  # every change to them since the last signing came from the bot. Until the
+  # export is live and the staging replay agrees with it (§6 step 2), they are
+  # asked HERE, after `publish` and beside it: `publish` does not wait for this
+  # job, so its answer can page and cannot hold a signature back. A "no" is a
+  # red status with a fixed code, paged by `export-alert` below under its own
+  # check and its own state, keyed on the foreign commits alone, so that a new
+  # main head does not page again about a commit that already paged.
+  #
+  # It holds a bot OIDC token and nothing else: `contents: read`, no secret, no
+  # artifact, no alarm credential (bot/tests/workflows.test.mjs names it as
+  # the one job outside the bot workflows that may mint one). The token is
+  # minted only when `ASTRA_EXPORT_URL` is set, and only for a URL under the
+  # service's API base; unset, the export comparison reads "not asked".
+  export-assert:
+    needs: publish
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    environment: plugins-service
+    permissions:
+      contents: read
+      id-token: write
+      # `commits/{sha}/pulls`: is a non-bot commit a merged pull request's?
+      pull-requests: read
+    # Short: this job shares `registry-signer`'s concurrency group, and the
+    # next signer run queues behind it.
+    timeout-minutes: 3
+    outputs:
+      status: ${{ steps.assert.outputs.status }}
+      codes: ${{ steps.assert.outputs.codes }}
+      hexes: ${{ steps.assert.outputs.hexes }}
+      # equal | differs | other-serial | unreachable | not-asked: what
+      # export-alert's memory of the last comparison reads.
+      export: ${{ steps.assert.outputs.export }}
+    steps:
+      # Full history: (c) walks every commit since `signed`'s previous
+      # Source-Commit, and the serial is a `rev-list --count`.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.publish.outputs.source_commit }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+
+      - name: The export, the digest and the authors at the Source-Commit (reported, never enforced)
+        id: assert
+        env:
+          ASTRA_EXPORT_URL: ${{ vars.ASTRA_EXPORT_URL }}
+          SOURCE_COMMIT: ${{ needs.publish.outputs.source_commit }}
+          # Read-only (`contents: read`): asks GitHub whether a non-bot commit
+          # is a merged pull request's, which is a note and not a page.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node tools/signer/export-assert.mjs --source-commit "$SOURCE_COMMIT"
+
   # ── alert-state: R4's memory for `alert`, restored without the alarm credential ──
   #
   # The Actions cache is restored HERE, in a job with no environment, no
@@ -549,3 +613,141 @@ jobs:
           mode: save
           key: sign-alert
           state: ${{ needs.alert.outputs.next_state }}
+
+  # ── export-alert: `export-assert`'s own page, with its own memory ──────────
+  #
+  # Apart from `alert` on purpose. The signer's state keys a page on (code,
+  # hex) with the Source-Commit among the hexes, which is right for a carry and
+  # wrong here: a foreign commit stays in `export-assert`'s range until the next
+  # signing, and every new head would page about it again. This check,
+  # `signer-export`, keys on the foreign commits alone and never repeats a page
+  # (bot/alert.mjs NO_REPEAT_CHECKS): each commit pages once, a persistent
+  # outage pages once, and green after a page sends "resolved". The signer's
+  # heartbeat is `alert`'s; this one posts none.
+  export-alert-state:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: none
+    outputs:
+      state: ${{ steps.state.outputs.state }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert-state
+            bot/alert.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - uses: ./.github/actions/alert-state
+        id: state
+        with:
+          mode: restore
+          key: sign-export-alert
+
+  export-alert:
+    needs: [export-assert, export-alert-state]
+    if: always() && !cancelled()
+    runs-on: ubuntu-24.04
+    environment: alerts
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    # The alarm's next state when it moved, else the comparison memory's when
+    # that moved (tools/signer/export-memory.mjs), which carries everything the
+    # alarm read.
+    outputs:
+      next_state: ${{ steps.alarm.outputs.next-state || steps.memory.outputs.state }}
+      state_changed: ${{ steps.alarm.outputs.state-changed == 'true' || steps.memory.outputs.changed == 'true' }}
+    # The three channel secrets and the state key, and no ping URL: this job
+    # posts no heartbeat (attack M-5: a job maps only what it uses).
+    env:
+      ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+      ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+      ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      ASTRA_ALERT_STATE_HMAC_KEY: ${{ secrets.ASTRA_ALERT_STATE_HMAC_KEY }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert
+            bot/alert.mjs
+            bot/heartbeat.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+            tools/served-set/compose.mjs
+            tools/signer/export-memory.mjs
+            tools/signer/verdict.mjs
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+
+      - name: The verdict, from what export-assert reported
+        env:
+          ASTRA_SIGNER_JOBS: export-assert
+          EXPORT_ASSERT_RESULT: ${{ needs.export-assert.result }}
+          EXPORT_ASSERT_STATUS: ${{ needs.export-assert.outputs.status }}
+          EXPORT_ASSERT_CODES: ${{ needs.export-assert.outputs.codes }}
+          EXPORT_ASSERT_HEXES: ${{ needs.export-assert.outputs.hexes }}
+        run: node tools/signer/verdict.mjs --out verdict.json --check signer-export
+
+      # A service that answers 404 to everything must not stay green for
+      # ever: 24 hours of asking without one comparison adds
+      # SIGNER_EXPORT_NOT_COMPARED to the verdict, once.
+      - name: When a comparison last happened
+        id: memory
+        env:
+          ASTRA_ALERT_STATE: ${{ needs.export-alert-state.outputs.state }}
+          EXPORT_ANSWER: ${{ needs.export-assert.outputs.export }}
+        run: node tools/signer/export-memory.mjs --verdict verdict.json
+
+      - uses: ./.github/actions/alert
+        id: alarm
+        with:
+          state: ${{ steps.memory.outputs.state }}
+          verdict: verdict.json
+          no-heartbeat-because: >-
+            the signer's ROLL-62 heartbeat is posted by this workflow's `alert`
+            job on every completed run; this job pages export-assert's findings only
+
+  export-alert-save:
+    needs: export-alert
+    if: always() && needs.export-alert.outputs.state_changed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: none
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert-state
+            bot/alert.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - uses: ./.github/actions/alert-state
+        with:
+          mode: save
+          key: sign-export-alert
+          state: ${{ needs.export-alert.outputs.next_state }}

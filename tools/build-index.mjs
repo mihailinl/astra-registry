@@ -61,7 +61,8 @@ import { cleanEnv } from "./lib/git-env.mjs";
 
 import { ijsonProblems, stableStringify } from "./lib/canonical.mjs";
 import { compareSemver } from "./lib/semver.mjs";
-import { loadIdentities, loadPublishers, loadSources, REPO_ROOT } from "./lib/sources.mjs";
+import { loadIdentities, loadPublishers, loadRecords, loadSources, REPO_ROOT } from "./lib/sources.mjs";
+import { baselineFor, isVoidingRecord } from "../bot/lib/identity.mjs";
 import { canonicalGithubId, firstPartyClaimProblems, isFirstPartyRecord, loadFirstParty } from "./lib/first-party.mjs";
 import { INDEX_SCHEMA } from "../bot/lib/sign.mjs";
 import { MAX_README_BYTES, iconDataUri } from "../bot/lib/assets.mjs";
@@ -186,6 +187,12 @@ function releaseRecord(doc) {
     ...(doc.protocol !== undefined ? { protocol: doc.protocol } : {}),
     ...(doc.min_astra_version !== undefined ? { min_astra_version: doc.min_astra_version } : {}),
     ...(doc.capabilities !== undefined ? { capabilities: [...doc.capabilities].sort() } : {}),
+    // The tools `[tools.danger]` declares Low, wherever the record carries the
+    // member, `[]` included: present is "probed" and absent is "never probed",
+    // and Astra honours a declared Low tool only where this member lists it.
+    // Like `review` below, absent stays absent and is never defaulted, so no
+    // record older than the member changes a byte of `signed.plugins`.
+    ...(doc.low_tools !== undefined ? { low_tools: [...doc.low_tools] } : {}),
     ...(doc.permissions !== undefined ? { permissions: doc.permissions } : {}),
     ...(doc.changelog_url !== undefined ? { changelog_url: doc.changelog_url } : {}),
     ...(doc.staging === true ? { staging: true } : {}),
@@ -414,6 +421,48 @@ export function publisherFor({ plugin, publishers, identity = null, firstParty =
 }
 
 /**
+ * `{owner_id}` for a listing's identity record (ID-77), or `{}`.
+ *
+ * The same kind of id as `signed.publishers[*].github_id` (ID-76), and held to
+ * the same shape: canonical base-10 and a safe integer, so that what the
+ * client compares is exactly the number GitHub issued. After an
+ * `M_IDENTITY_RESET` the identity record is gone, and so is this member.
+ *
+ * @param {object|null} identity the listing's `identity.json`, or null
+ * @param {object|null} baseline its effective baseline record, read only when there is no identity record
+ * @returns {{owner_id?: number}}
+ */
+export function ownerIdEntry(identity, baseline = null) {
+  const id = canonicalGithubId(identity ? identity.repository_owner_id : baseline?.repository_owner_id);
+  return id !== null && Number.isSafeInteger(Number(id)) ? { owner_id: Number(id) } : {};
+}
+
+/**
+ * The listing's effective baseline when it has no identity record (contract 6.35.2): the decide job's own
+ * `baselineFor` over the decision records on the tree, so the catalogue names the owner id that job
+ * compares a release with. MIG-20's `migration` record, else the first `published` record carrying both
+ * ids, each ended by a voiding record. A listing with an identity record never reads this: the record wins.
+ */
+export function baselineOwnerSource(records, pluginId) {
+  const { baseline } = baselineFor({ records, pluginId });
+  if (!baseline) return null;
+  // A moderator may approve a change of hands on a listing with no identity record (R_IDENTITY_CHANGED,
+  // held then published unbound), and nothing then rewrites an identity record. The baseline would still
+  // name the old owner while the newest version is the new one's, and a client that recorded the old id
+  // would install the new owner's update silently. So the baseline names the owner only while every
+  // later publication of the id names the same owner; otherwise there is no owner_id and the client asks.
+  const voids = (records ?? []).filter((r) => r?.plugin_id === pluginId && isVoidingRecord(r)).map((r) => String(r.decided_at ?? "")).sort();
+  const voidedAt = voids.at(-1) ?? null;
+  const owners = new Set((records ?? [])
+    .filter((r) => r?.plugin_id === pluginId && r?.state === "published" && r?.trigger !== "migration")
+    .filter((r) => !voidedAt || String(r.decided_at) > voidedAt)
+    .map((r) => r.repository_owner_id)
+    .filter((v) => v !== undefined && v !== null && v !== "")
+    .map(String));
+  return [...owners].every((o) => o === String(baseline.repository_owner_id)) ? baseline : null;
+}
+
+/**
  * The record's `owner_ids` entry for `login`, matched case-insensitively and
  * only when exactly one key matches (the same rule TRUST-25's join reads), or
  * null.
@@ -469,6 +518,12 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
   const { errors: idErrors, identities } = loadIdentities(root, plugins.map((p) => p.dir));
   errors.push(...idErrors);
   const identityOf = new Map(identities.map((r) => [r.file.split("/")[1], r.doc]));
+  // Contract 6.35.2: a listing with no identity record takes owner_id from its effective baseline.
+  // A decision record that does not load stops the build, as an identity record does: skipped, a voiding
+  // record would leave the old baseline naming an owner after a reset.
+  const loadedRecords = loadRecords(root);
+  errors.push(...loadedRecords.errors.filter((e) => String(e.file).startsWith("log/decisions/")));
+  const decisionDocs = loadedRecords.decisions.map((r) => r.doc);
   // Contract 6.32.0: the first-party ids `astra_team` is granted from. A file
   // that does not load stops the build, as a publisher record that does not
   // load does: read as "no first party", it would silently drop every badge.
@@ -554,6 +609,15 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
       // read as "no badge", and a client that renders on the field merely
       // being present would badge everybody.
       ...(badge ? { publisher: badge.doc.owner } : {}),
+      // ID-77 (contract 6.34.0): the repository owner's GitHub numeric id, out
+      // of the listing's identity record (ID-40), inside the signature. Astra
+      // installs an update without asking only when this equals the id it
+      // recorded at install, and it never compares a login, because a freed
+      // login can be registered by somebody else. Absent on an unbound
+      // listing, and on a record whose id is not a canonical positive safe
+      // integer: absence makes the client ask, which is the failure that
+      // costs one prompt rather than one silent install.
+      ...ownerIdEntry(identityOf.get(plugin.dir) ?? null, baselineOwnerSource(decisionDocs, plugin.doc.id)),
       downloads: 0,
       stars: 0,
       updated_at: latest.published_at,
