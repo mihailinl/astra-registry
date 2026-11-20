@@ -891,6 +891,16 @@ test("A9: ID-64 — a publication's sibling listing, rebound to the same ids in 
     }, identity("beta"), false], // only the rebinding commit is judged here; the earlier hand-written one alarms on its own
     ["no sibling: beta named no repository", () => {}, identity("beta"), true],
     ["a sibling rebound to OTHER ids", baselineBeta, identity("beta", { repository_owner_id: "999" }), true],
+    // An M_IDENTITY_RESET ended beta's baseline before this commit; the baseline record is still there, and read
+    // raw it let a publication of alpha rebind beta unremarked, undoing the reset. The first row is its control.
+    ["no sibling: beta's baseline was ended by an identity reset", (dir) => {
+      baselineBeta(dir);
+      record(dir, {
+        decided_at: "2026-01-02T12:00:00Z", actor: "moderator", moderator: "mod-1", trigger: "moderation",
+        plugin_id: "beta", state: "identity_reset", reasons: ["M_IDENTITY_RESET"], category: "identity_reset",
+      });
+      commit(dir, "moderation: identity reset for beta", "2026-01-02T12:00:00Z");
+    }, identity("beta"), true],
   ]) {
     const dir = estate();
     baseline(dir);
@@ -1203,6 +1213,83 @@ test("A11 clause 1: a mark set without the entry naming that version, or without
   reviewEntry(edited, "alpha", ["1.1.0", "1.2.0"]);
   commit(edited, `a hand edit of an old entry\n\n${TRAILER}`, "2026-02-03T00:00:00Z");
   assert.deepEqual(a11(detect({ root: edited })), ["A11_REVIEWED_NO_DECISION"], "an edited entry was read as the commit's own");
+});
+
+// ── A11 and `low_tools` (Astra #377) ─────────────────────────────────────────
+//
+// Watched failing: with the `sameLowTools` finding removed, clause 4's cases
+// are silent; with the `declared.length > 0` block removed, clause 5's
+// unnamed cases are silent.
+
+/** Set, change or (with `undefined`) remove a version record's low_tools, on the working tree. */
+function lowTools(dir, id, version, value) {
+  const file = path.join(dir, `plugins/${id}/versions/${version}.json`);
+  const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (value === undefined) delete doc.low_tools;
+  else doc.low_tools = value;
+  write(dir, `plugins/${id}/versions/${version}.json`, doc);
+}
+
+function lowReviewable(tools = ["roll", "wipe"]) {
+  const dir = estate();
+  landReview(dir);
+  version_(dir, "alpha", "1.1.0", { version: { review: "unreviewed", low_tools: tools } });
+  commit(dir, "registry: publish alpha 1.1.0", "2026-02-01T01:00:00Z");
+  return dir;
+}
+
+test("A11 clause 4: a committed record's low_tools never changes, disappears or appears afterwards", () => {
+  for (const [what, from, to] of [
+    ["changed", ["roll", "wipe"], ["roll"]],
+    ["emptied", ["roll", "wipe"], []],
+    ["removed", ["roll", "wipe"], undefined],
+    ["removed when empty", [], undefined],
+    ["back-filled onto a record that had none", undefined, ["roll"]],
+    ["back-filled as [] onto a record that had none", undefined, []],
+  ]) {
+    const dir = lowReviewable(from);
+    if (from === undefined) lowTools(dir, "alpha", "1.1.0", undefined), commit(dir, "fixture: no member", "2026-02-01T01:30:00Z");
+    lowTools(dir, "alpha", "1.1.0", to);
+    const sha = commit(dir, "a hand edit", "2026-02-01T02:00:00Z");
+    const r = detect({ root: dir });
+    const found = r.findings.filter((f) => f.code === "A11_LOW_TOOLS_CHANGED" && f.hex === sha);
+    assert.equal(found.length, 1, `${what}: ${JSON.stringify(r.findings)}`);
+    assert.equal(found[0].plugin_id, "alpha");
+  }
+  // A deleted record carrying the member alarms too.
+  const gone = lowReviewable();
+  fs.rmSync(path.join(gone, "plugins/alpha/versions/1.1.0.json"));
+  const sha = commit(gone, "a deletion", "2026-02-01T02:00:00Z");
+  assert.ok(detect({ root: gone }).findings.some((f) => f.code === "A11_LOW_TOOLS_CHANGED" && f.hex === sha));
+  // And a change beside it (a yank) does not.
+  const beside = lowReviewable();
+  const file = path.join(beside, "plugins/alpha/versions/1.1.0.json");
+  write(beside, "plugins/alpha/versions/1.1.0.json", { ...JSON.parse(fs.readFileSync(file, "utf8")), yanked: true });
+  commit(beside, "a yank", "2026-02-01T02:00:00Z");
+  assert.ok(!detect({ root: beside }).findings.some((f) => f.code === "A11_LOW_TOOLS_CHANGED"));
+});
+
+test("A11 clause 5: a record declaring Low tools turns reviewed only with an entry recording exactly them", () => {
+  for (const [what, logged, alarms] of [
+    ["the entry records them", { "1.1.0": ["roll", "wipe"] }, false],
+    ["the entry records them in another order", { "1.1.0": ["wipe", "roll"] }, false],
+    ["the entry records none", undefined, true],
+    ["the entry records another set", { "1.1.0": ["roll"] }, true],
+    ["the entry records them for another version", { "1.0.0": ["roll", "wipe"] }, true],
+  ]) {
+    const dir = lowReviewable();
+    mark(dir, "alpha", "1.1.0", "reviewed");
+    reviewEntry(dir, "alpha", ["1.1.0"], { over: logged === undefined ? {} : { low_tools: logged } });
+    commit(dir, `registry: moderation (1 decision(s))\n\n${TRAILER}\nDecided-At: 2026-02-02T00:00:00Z`, "2026-02-02T00:00:00Z");
+    const r = detect({ root: dir });
+    assert.deepEqual(a11(r), alarms ? ["A11_REVIEWED_LOW_TOOLS_UNNAMED"] : [], `${what}: ${JSON.stringify(r.findings)}`);
+  }
+  // `[]` is no Low tool: an entry recording none is enough.
+  const empty = lowReviewable([]);
+  mark(empty, "alpha", "1.1.0", "reviewed");
+  reviewEntry(empty, "alpha", ["1.1.0"]);
+  commit(empty, `registry: moderation\n\n${TRAILER}`, "2026-02-02T00:00:00Z");
+  assert.deepEqual(a11(detect({ root: empty })), []);
 });
 
 test("A11 clause 2: every other change to a committed review alarms, and a change beside it does not", () => {

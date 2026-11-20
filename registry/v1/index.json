@@ -24,6 +24,7 @@
         "id": "anim-studio",
         "license": "MIT",
         "name": "Anim Studio",
+        "owner_id": 195410205,
         "platform_downloads": {
           "linux-x64": "https://github.com/FluffyTaill/astra-anim-studio/releases/download/v1.4.1/anim-studio-1.4.1-noarch.astraplugin",
           "noarch": "https://github.com/FluffyTaill/astra-anim-studio/releases/download/v1.4.1/anim-studio-1.4.1-noarch.astraplugin",
@@ -302,6 +303,77 @@
         "version": "1.4.1"
       },
       {
+        "added_at": "2026-08-22",
+        "author": "KNICE",
+        "capabilities": [
+          "tools",
+          "ui_contributions"
+        ],
+        "description": "Official chess plugin for Astra with local bot levels, the selected Astra model, and in-game chat.",
+        "download_url": "https://github.com/MINICE-AI/astra-chess/releases/download/v0.1.19/astra-chess-0.1.19-noarch.astraplugin",
+        "downloads": 0,
+        "i18n": {
+          "ru": {
+            "description": "Официальный шахматный плагин для Astra: уровни локального бота, выбранная модель Astra и чат прямо в партии.",
+            "name": "Шахматы Astra"
+          },
+          "uk": {
+            "description": "Офіційний шаховий плагін для Astra: рівні локального бота, вибрана модель Astra і чат просто в партії.",
+            "name": "Шахи Astra"
+          }
+        },
+        "icon_url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU2Ij4KICA8cmVjdCB3aWR0aD0iMjU2IiBoZWlnaHQ9IjI1NiIgcng9IjU2IiBmaWxsPSIjMTgxYjE4Ii8+CiAgPHBhdGggZD0iTTY3IDIwN2gxMjVNNzYgMTgxaDEwMmwtOC0zOWMtNC0yMC0xLTQxIDgtNTlsMTMtMjQtNTAtMzAtMTQgMzItMzUtMTItMzkgNDIgMzUgMTRjLTIxIDE3LTI5IDQzLTEyIDc2WiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZDdmMTcxIiBzdHJva2Utd2lkdGg9IjE0IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8cGF0aCBkPSJtMTI2IDY1IDI3IDEzIiBmaWxsPSJub25lIiBzdHJva2U9IiNkN2YxNzEiIHN0cm9rZS13aWR0aD0iMTQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8L3N2Zz4K",
+        "id": "astra-chess",
+        "license": "MIT",
+        "name": "Astra Chess",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/MINICE-AI/astra-chess/releases/download/v0.1.19/astra-chess-0.1.19-noarch.astraplugin",
+          "noarch": "https://github.com/MINICE-AI/astra-chess/releases/download/v0.1.19/astra-chess-0.1.19-noarch.astraplugin",
+          "windows-x64": "https://github.com/MINICE-AI/astra-chess/releases/download/v0.1.19/astra-chess-0.1.19-noarch.astraplugin"
+        },
+        "publisher": "KnlCE",
+        "readme": "# Astra Chess\n\nPlay chess against a classical local bot or the model currently selected in Astra, directly in a dedicated app tab.\n\n> Official Astra plugin by KNICE — Astra co-founder and main developer.\n\n## Features\n\n- complete chess rules: check, checkmate, stalemate, castling, en passant, and pawn promotion;\n- four local difficulty levels plus **Astra AI**, which plays through the provider and model selected in Astra;\n- move calculation in a Web Worker, keeping the interface responsive during local search;\n- smooth piece movement, including castling and history replay, with `prefers-reduced-motion` support;\n- play as White or Black, undo moves, and locally restore an unfinished game;\n- step through the entire game with first, previous, next, and current-position controls;\n- **Realism** mode enabled by default, adding a natural pause, a thought bubble, and readable chess remarks;\n- local levels work entirely offline;\n- Astra AI validates every model-selected move against the legal move list before changing the board;\n- built-in chat with Astra AI, including the current position and move history as context.\n- automatic restoration of the current game, history position, settings, and Astra chat after leaving the plugin tab;\n- **English, Russian and Ukrainian**, following the language Astra is set to when the board opens. Changing Astra's language while the board is already open does not repaint it: the strings are fetched once, in `initialize()`, and nothing listens for a change. Close the tab and open it again.\n\nRules and move validation use [chess.js](https://github.com/jhlywa/chess.js), distributed under BSD-2-Clause. In Astra AI mode, the model also receives the narrow `play_chess_move` tool, which accepts one UCI move for the active turn.\n\n## Languages\n\nThe plugin ships `locales/en.json`, `locales/ru.json` and `locales/uk.json` beside `plugin.toml`. English is the base; the other two are defined against it, and `locales.lock.json` records which English each translation was made from, so rewriting an English sentence marks its translations stale instead of leaving them quietly wrong.\n\nWhere each string is resolved is the thing to know before editing any of them.\n\n| | Rendered by | Written as |\n|---|---|---|\n| the store card — the name and summary in the catalogue | the **registry**, out of the bundle | `listing.name` / `listing.description`, the two reserved keys |\n| the board page, the chess remarks, every error a player reads | **this plugin**, at the moment it produces the string | a key, resolved through the SDK's `I18n` |\n| the page's label in Astra's sidebar | the **daemon** | a literal English string — deliberately, see below |\n\nThe page is an iframe and cannot read a file, so it asks the plugin process for the active language over one UI call (`get_locale`) and the plugin process resolves it with `I18n`. `src/en.generated.ts` is the English base compiled into the page bundle, so a page that has not heard back is English rather than a wall of identifiers; `npm run locales:gen` writes it from `locales/en.json`, and `npm test` fails if the two disagree.\n\nThe **sidebar label is not a `$key`**, and that is not an oversight. A daemon resolves plugin keys outside `[config] schema` only from a build newer than any published Astra release, and `plugin.min_astra_version` — the only thing that would stop an older daemon installing this plugin — has no release number to name yet. A key there would reach users as the literal text `$ui.chess.label`. When such a release exists, the label becomes a key and `min_astra_version` names that release.\n\nAdding a language:\n\n```bash\nastra-plugin locale add <code>     # seeds locales/<code>.json from en.json\n# translate the values in place; leave the keys alone\nastra-plugin locale sync           # restamps locales.lock.json\nastra-plugin locale check\nnpm run locales:gen && npm test\n```\n\nThe ten codes Astra can be set to are bare ISO-639-1 — `zh`, never `zh-CN`. A file named anything else is packed, signed, shipped and read by nothing.\n\n## Data sent to the selected model\n\nThe **Astra AI** level and in-game chat require the `send_chat_message` permission. After the user grants it, the plugin sends the selected Astra provider the current FEN position, move history, legal move list, and messages entered in the in-game chat. Local bot levels do not use the network.\n\nAstra shows this high-risk permission and its reason on the installation consent screen. A bundle imported manually cannot receive this permission; the Astra AI level and chat require the verified catalogue release.\n\n## Licences\n\nAuthor: KNICE. The plugin's original code is released under the MIT licence. The bundle also contains:\n\n- [chess.js 1.4.0](https://github.com/jhlywa/chess.js) — BSD-2-Clause;\n- [Astra Plugin SDK for TypeScript 0.5.0](https://github.com/mihailinl/AstraPlugins/tree/master/astra-plugin-sdk-ts) — MPL-2.0.\n\nFull notices and source links are in `LICENSE`, which is included in the plugin bundle.\n\n## Development\n\n```bash\nnpm install\nnpm run locales:gen        # after any edit to locales/en.json\nnpm test\nnpm run typecheck\nastra-plugin check --strict .\nastra-plugin test .        # the only gate that reads the sidebar label\n```\n\nTo load the source folder into a running Astra instance:\n\n```bash\nastra-plugin dev .\n```\n",
+        "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "astra-chess-0.1.19-noarch.astraplugin",
+                "sha256": "db5f6835fb499623d5b247663f59065ded724005f34ecf7acc9d293311b208a3",
+                "size": 322830,
+                "url": "https://github.com/MINICE-AI/astra-chess/releases/download/v0.1.19/astra-chess-0.1.19-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "send_chat_message": {
+                "reason": "Sends the position and in-game chat messages to the selected model so it can make moves and reply to the player."
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-11-12T06:16:05Z",
+            "release": {
+              "commit": "3e0b317fd8b83c83c7340e068904b58e4035399c",
+              "kind": "github_release",
+              "repo": "MINICE-AI/astra-chess",
+              "tag": "v0.1.19"
+            },
+            "review": "reviewed",
+            "version": "0.1.19"
+          }
+        ],
+        "repository_url": "https://github.com/MINICE-AI/astra-chess",
+        "source": {
+          "kind": "github",
+          "repo": "MINICE-AI/astra-chess"
+        },
+        "stars": 0,
+        "updated_at": "2026-11-12T06:16:05Z",
+        "version": "0.1.19"
+      },
+      {
         "added_at": "2026-10-28",
         "author": "Доктор Кот (superdedkot)",
         "capabilities": [
@@ -320,6 +392,7 @@
         "id": "astrapixelart",
         "license": "MIT",
         "name": "APA — Pixel Art for Astra",
+        "owner_id": 343763115,
         "platform_downloads": {
           "linux-x64": "https://github.com/superdedkot/astrapixelart/releases/download/v0.3.3/astrapixelart-0.3.3-noarch.astraplugin",
           "noarch": "https://github.com/superdedkot/astrapixelart/releases/download/v0.3.3/astrapixelart-0.3.3-noarch.astraplugin",
@@ -385,6 +458,7 @@
         "id": "auto-assistant",
         "license": "MIT",
         "name": "Auto Assistant",
+        "owner_id": 232130437,
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/auto-assistant/releases/download/v1.2.2/auto-assistant-1.2.2-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/auto-assistant/releases/download/v1.2.2/auto-assistant-1.2.2-noarch.astraplugin",
@@ -465,6 +539,7 @@
         ],
         "license": "MIT",
         "name": "Bad Apple",
+        "owner_id": 193032699,
         "platform_downloads": {
           "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/bad-apple-v0.1.2/bad-apple-0.1.2-linux-x64.astraplugin",
           "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/bad-apple-v0.1.2/bad-apple-0.1.2-windows-x64.astraplugin"
@@ -592,6 +667,7 @@
         "id": "browser-control",
         "license": "MIT",
         "name": "Browser Control",
+        "owner_id": 232130437,
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/browser-control/releases/download/v1.2.0/browser-control-1.2.0-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/browser-control/releases/download/v1.2.0/browser-control-1.2.0-noarch.astraplugin",
@@ -685,6 +761,7 @@
         ],
         "license": "MIT",
         "name": "Companion Cat",
+        "owner_id": 193032699,
         "platform_downloads": {
           "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/companion-cat-v0.1.7/companion-cat-0.1.7-linux-x64.astraplugin",
           "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/companion-cat-v0.1.7/companion-cat-0.1.7-windows-x64.astraplugin"
@@ -846,6 +923,7 @@
         "id": "companion-life",
         "license": "MIT",
         "name": "Companion Life",
+        "owner_id": 195410205,
         "platform_downloads": {
           "linux-x64": "https://github.com/FluffyTaill/astra-companion-life/releases/download/v1.6.0/companion-life-1.6.0-noarch.astraplugin",
           "noarch": "https://github.com/FluffyTaill/astra-companion-life/releases/download/v1.6.0/companion-life-1.6.0-noarch.astraplugin",
@@ -1054,6 +1132,7 @@
         "id": "denchik-vroid-manager",
         "license": "MIT",
         "name": "VRM Manager",
+        "owner_id": 326081654,
         "platform_downloads": {
           "linux-x64": "https://github.com/denchik2444/vrm-manager/releases/download/v1.1.7/denchik-vroid-manager-1.1.7-noarch.astraplugin",
           "noarch": "https://github.com/denchik2444/vrm-manager/releases/download/v1.1.7/denchik-vroid-manager-1.1.7-noarch.astraplugin",
@@ -1118,6 +1197,7 @@
         "id": "detective-game",
         "license": "MIT",
         "name": "Detective Case",
+        "owner_id": 232130437,
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/detective-game/releases/download/v0.4.2/detective-game-0.4.2-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/detective-game/releases/download/v0.4.2/detective-game-0.4.2-noarch.astraplugin",
@@ -1184,6 +1264,7 @@
         ],
         "license": "MIT",
         "name": "Dice Roller",
+        "owner_id": 193032699,
         "platform_downloads": {
           "linux-x64": "https://github.com/mihailinl/astra-dice-roller/releases/download/v0.1.3/dice-roller-0.1.3-linux-x64.astraplugin",
           "windows-x64": "https://github.com/mihailinl/astra-dice-roller/releases/download/v0.1.3/dice-roller-0.1.3-windows-x64.astraplugin"
@@ -1324,6 +1405,7 @@
         ],
         "license": "GPL-2.0-or-later",
         "name": "Doom",
+        "owner_id": 193032699,
         "platform_downloads": {
           "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/doom-v0.1.3/doom-0.1.3-linux-x64.astraplugin",
           "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/doom-v0.1.3/doom-0.1.3-windows-x64.astraplugin"
@@ -1486,6 +1568,7 @@
         "id": "dwertyfa-astra-tg",
         "license": "MIT",
         "name": "TG for Astra",
+        "owner_id": 296277844,
         "platform_downloads": {
           "linux-x64": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.24/dwertyfa-astra-tg-0.1.24-noarch.astraplugin",
           "noarch": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.24/dwertyfa-astra-tg-0.1.24-noarch.astraplugin",
@@ -1844,6 +1927,7 @@
         "id": "dwertyfa-prime-ai",
         "license": "MIT",
         "name": "PrimeAI",
+        "owner_id": 332264680,
         "platform_downloads": {
           "linux-x64": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.21/dwertyfa-prime-ai-0.2.21-noarch.astraplugin",
           "noarch": "https://github.com/SpherePrime/PrimeAi/releases/download/v0.2.21/dwertyfa-prime-ai-0.2.21-noarch.astraplugin",
@@ -2297,6 +2381,7 @@
         "id": "dwertyfa-primeautoaccept",
         "license": "MIT",
         "name": "PrimeAutoAccept",
+        "owner_id": 332264680,
         "platform_downloads": {
           "linux-x64": "https://github.com/SpherePrime/PrimeAutoAccept/releases/download/v0.1.0/dwertyfa-primeautoaccept-0.1.0-linux-x64.astraplugin",
           "windows-x64": "https://github.com/SpherePrime/PrimeAutoAccept/releases/download/v0.1.0/dwertyfa-primeautoaccept-0.1.0-windows-x64.astraplugin"
@@ -2370,6 +2455,7 @@
         "id": "enti-homeassistant",
         "license": "MIT",
         "name": "Home Assistant Connector",
+        "owner_id": 209273457,
         "platform_downloads": {
           "linux-x64": "https://github.com/entiedvard/enti-homeassistant/releases/download/v0.1.4/enti-homeassistant-0.1.4-linux-x64.astraplugin",
           "windows-x64": "https://github.com/entiedvard/enti-homeassistant/releases/download/v0.1.4/enti-homeassistant-0.1.4-windows-x64.astraplugin"
@@ -2480,6 +2566,7 @@
         "id": "game-buddy",
         "license": "MIT",
         "name": "GameBuddy",
+        "owner_id": 97849444,
         "platform_downloads": {
           "linux-x64": "https://github.com/YaniChap/game-buddy/releases/download/v0.1.2/game-buddy-0.1.2-linux-x64.astraplugin",
           "windows-x64": "https://github.com/YaniChap/game-buddy/releases/download/v0.1.2/game-buddy-0.1.2-windows-x64.astraplugin"
@@ -2566,6 +2653,7 @@
         "id": "game-companion",
         "license": "MIT",
         "name": "Game Companion",
+        "owner_id": 301429225,
         "platform_downloads": {
           "linux-x64": "https://github.com/iaroslaviskendirov-alt/game-companion/releases/download/v0.1.1/game-companion-0.1.1-noarch.astraplugin",
           "noarch": "https://github.com/iaroslaviskendirov-alt/game-companion/releases/download/v0.1.1/game-companion-0.1.1-noarch.astraplugin",
@@ -2643,6 +2731,7 @@
         ],
         "license": "MIT",
         "name": "JSON Tools",
+        "owner_id": 193032699,
         "platform_downloads": {
           "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/json-tools-v0.1.2/json-tools-0.1.2-noarch.astraplugin",
           "noarch": "https://github.com/mihailinl/AstraPlugins/releases/download/json-tools-v0.1.2/json-tools-0.1.2-noarch.astraplugin",
@@ -2730,6 +2819,7 @@
         "id": "knowledge-graph",
         "license": "MIT",
         "name": "Knowledge Graph",
+        "owner_id": 209764128,
         "platform_downloads": {
           "linux-x64": "https://github.com/Belnash3/knowledge-graph/releases/download/v0.2.0/knowledge-graph-0.2.0-noarch.astraplugin",
           "noarch": "https://github.com/Belnash3/knowledge-graph/releases/download/v0.2.0/knowledge-graph-0.2.0-noarch.astraplugin",
@@ -2825,6 +2915,7 @@
         "id": "minecraft-for-astra",
         "license": "MIT",
         "name": "Minecraft for Astra",
+        "owner_id": 228949876,
         "platform_downloads": {
           "linux-x64": "https://github.com/teletemagame-dev/minecraft-for-astra/releases/download/v0.3.3/minecraft-for-astra-0.3.3-noarch.astraplugin",
           "noarch": "https://github.com/teletemagame-dev/minecraft-for-astra/releases/download/v0.3.3/minecraft-for-astra-0.3.3-noarch.astraplugin",
@@ -2939,6 +3030,7 @@
         "id": "music-controller",
         "license": "MIT",
         "name": "Music Controller",
+        "owner_id": 232130437,
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/astra-music/releases/download/v2.5.0/music-controller-2.5.0-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/astra-music/releases/download/v2.5.0/music-controller-2.5.0-noarch.astraplugin",
@@ -3435,6 +3527,7 @@
         "id": "office-files",
         "license": "MIT",
         "name": "Office Files",
+        "owner_id": 114572819,
         "platform_downloads": {
           "linux-x64": "https://github.com/KnlCE/office-files/releases/download/v0.2.0/office-files-0.2.0-noarch.astraplugin",
           "noarch": "https://github.com/KnlCE/office-files/releases/download/v0.2.0/office-files-0.2.0-noarch.astraplugin",
@@ -3499,6 +3592,7 @@
         "id": "phone-remote",
         "license": "MIT",
         "name": "Phone Remote",
+        "owner_id": 195410205,
         "platform_downloads": {
           "linux-x64": "https://github.com/FluffyTaill/astra-remote/releases/download/v0.8.5/phone-remote-0.8.5-noarch.astraplugin",
           "noarch": "https://github.com/FluffyTaill/astra-remote/releases/download/v0.8.5/phone-remote-0.8.5-noarch.astraplugin",
@@ -3942,6 +4036,7 @@
         "id": "photo-frame",
         "license": "MIT",
         "name": "Photo Frame",
+        "owner_id": 232130437,
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/photo-frame/releases/download/v0.3.0/photo-frame-0.3.0-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/photo-frame/releases/download/v0.3.0/photo-frame-0.3.0-noarch.astraplugin",
@@ -4031,6 +4126,7 @@
         "id": "pixel-drummer",
         "license": "MIT",
         "name": "Pixel Drummer",
+        "owner_id": 232130437,
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/pixel-drummer/releases/download/v0.6.1/pixel-drummer-0.6.1-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/pixel-drummer/releases/download/v0.6.1/pixel-drummer-0.6.1-noarch.astraplugin",
@@ -4165,6 +4261,7 @@
         "id": "prime-vpn",
         "license": "MIT",
         "name": "PrimeBoost VPN",
+        "owner_id": 296277844,
         "platform_downloads": {
           "linux-x64": "https://github.com/dwertyfa288/PrimeBoostVPN/releases/download/v0.4.0/prime-vpn-0.4.0-linux-x64.astraplugin",
           "windows-x64": "https://github.com/dwertyfa288/PrimeBoostVPN/releases/download/v0.4.0/prime-vpn-0.4.0-windows-x64.astraplugin"
@@ -4330,6 +4427,7 @@
         "id": "screen-translator",
         "license": "MIT",
         "name": "Screen Translator",
+        "owner_id": 195410205,
         "platform_downloads": {
           "linux-x64": "https://github.com/FluffyTaill/astra-screen-translator/releases/download/v0.2.2/screen-translator-0.2.2-noarch.astraplugin",
           "noarch": "https://github.com/FluffyTaill/astra-screen-translator/releases/download/v0.2.2/screen-translator-0.2.2-noarch.astraplugin",
@@ -4457,6 +4555,7 @@
         "id": "sea-battle",
         "license": "MIT",
         "name": "Sea Battle",
+        "owner_id": 232130437,
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/astra-sea-battle/releases/download/v0.5.1/sea-battle-0.5.1-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/astra-sea-battle/releases/download/v0.5.1/sea-battle-0.5.1-noarch.astraplugin",
@@ -4524,6 +4623,7 @@
         "id": "sleep-pause-timer",
         "license": "MIT",
         "name": "Sleep Pause Timer",
+        "owner_id": 232130437,
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/SPT/releases/download/v1.3.2/sleep-pause-timer-1.3.2-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/SPT/releases/download/v1.3.2/sleep-pause-timer-1.3.2-noarch.astraplugin",
@@ -4784,6 +4884,7 @@
         "id": "sub-models-for-astra",
         "license": "MIT",
         "name": "Sub Models for Astra",
+        "owner_id": 228949876,
         "platform_downloads": {
           "linux-x64": "https://github.com/teletemagame-dev/sub-models-for-astra/releases/download/v0.14.0/sub-models-for-astra-0.14.0-noarch.astraplugin",
           "noarch": "https://github.com/teletemagame-dev/sub-models-for-astra/releases/download/v0.14.0/sub-models-for-astra-0.14.0-noarch.astraplugin",
@@ -4854,6 +4955,7 @@
         ],
         "license": "MIT",
         "name": "Telegram Bot",
+        "owner_id": 193032699,
         "platform_downloads": {
           "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.2.0/telegram-client-0.2.0-linux-x64.astraplugin",
           "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.2.0/telegram-client-0.2.0-windows-x64.astraplugin"
@@ -5030,6 +5132,7 @@
         ],
         "license": "MIT",
         "name": "Text Utils",
+        "owner_id": 193032699,
         "platform_downloads": {
           "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.4/text-utils-0.1.4-noarch.astraplugin",
           "noarch": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.4/text-utils-0.1.4-noarch.astraplugin",
@@ -5181,6 +5284,7 @@
         "id": "tg-voice",
         "license": "MIT",
         "name": "Voice Message Assistant",
+        "owner_id": 97849444,
         "platform_downloads": {
           "linux-x64": "https://github.com/YaniChap/astra-telegram-assistant/releases/download/v0.1.12/tg-voice-0.1.12-linux-x64.astraplugin",
           "windows-x64": "https://github.com/YaniChap/astra-telegram-assistant/releases/download/v0.1.12/tg-voice-0.1.12-windows-x64.astraplugin"
@@ -5263,6 +5367,7 @@
         "id": "tts-for-fish-audio",
         "license": "MIT",
         "name": "TTS for Fish Audio",
+        "owner_id": 232130437,
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/tts-for-fish-audio/releases/download/v0.5.0/tts-for-fish-audio-0.5.0-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/tts-for-fish-audio/releases/download/v0.5.0/tts-for-fish-audio-0.5.0-noarch.astraplugin",
@@ -5347,6 +5452,7 @@
         "id": "vc-discord",
         "license": "MIT",
         "name": "Voice communication-Discord",
+        "owner_id": 232130437,
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.5/vc-discord-1.4.5-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.5/vc-discord-1.4.5-noarch.astraplugin",
@@ -5468,6 +5574,7 @@
         "id": "voice-text-input",
         "license": "MIT",
         "name": "Voice Text Input",
+        "owner_id": 232130437,
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/voice-text-input/releases/download/v1.5.0/voice-text-input-1.5.0-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/voice-text-input/releases/download/v1.5.0/voice-text-input-1.5.0-noarch.astraplugin",
@@ -5651,6 +5758,7 @@
         "id": "vrm-workshop",
         "license": "MIT",
         "name": "VRM Workshop",
+        "owner_id": 256235971,
         "platform_downloads": {
           "linux-x64": "https://github.com/megapunk04/vrm-workshop/releases/download/v1.0.0/vrm-workshop-1.0.0-noarch.astraplugin",
           "noarch": "https://github.com/megapunk04/vrm-workshop/releases/download/v1.0.0/vrm-workshop-1.0.0-noarch.astraplugin",
@@ -5712,6 +5820,7 @@
         "id": "wallpaper-engine",
         "license": "MIT",
         "name": "Wallpaper Engine for Astra",
+        "owner_id": 258460601,
         "platform_downloads": {
           "linux-x64": "https://github.com/Dtierofficial/astra-wallpaper-engine/releases/download/v1.1.2/wallpaper-engine-1.1.2-noarch.astraplugin",
           "noarch": "https://github.com/Dtierofficial/astra-wallpaper-engine/releases/download/v1.1.2/wallpaper-engine-1.1.2-noarch.astraplugin",
@@ -5810,6 +5919,7 @@
         "id": "web-stt",
         "license": "MIT",
         "name": "Web Speech-to-Text",
+        "owner_id": 150132236,
         "platform_downloads": {
           "linux-x64": "https://github.com/LilKALINOV/Astra-Google-STT/releases/download/v0.6.1/web-stt-0.6.1-linux-x64.astraplugin",
           "windows-x64": "https://github.com/LilKALINOV/Astra-Google-STT/releases/download/v0.6.1/web-stt-0.6.1-windows-x64.astraplugin"
@@ -5936,6 +6046,7 @@
         "id": "yandex-smart-home",
         "license": "MIT",
         "name": "Yandex Smart Home",
+        "owner_id": 232130437,
         "platform_downloads": {
           "linux-x64": "https://github.com/Voltur792/Y-home-f-astra/releases/download/v0.6.0/yandex-smart-home-0.6.0-noarch.astraplugin",
           "noarch": "https://github.com/Voltur792/Y-home-f-astra/releases/download/v0.6.0/yandex-smart-home-0.6.0-noarch.astraplugin",
@@ -6095,6 +6206,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 160
+    "serial": 162
   }
 }

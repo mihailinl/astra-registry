@@ -1,0 +1,9 @@
+{
+  "date": "2026-11-20",
+  "action": "relist",
+  "plugin": "astra-chess",
+  "reason": "Перенос организации",
+  "category": "error",
+  "service_decision_id": "f82ec1b7-6dd7-4563-8cf1-d62b3a0c22a0",
+  "declared_interest": true
+}

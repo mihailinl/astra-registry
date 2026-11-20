@@ -86,7 +86,7 @@ export const DOCUMENT_MEMBERS = {
   "moderation-entry": {
     members: ["$comment", "date", "action", "plugin", "versions", "reason", "advisory", "appeal",
       "category", "reverses", "appeal_of", "outcome", "service_decision_id", "declared_interest",
-      "corrects", "previous_category"],
+      "corrects", "previous_category", "low_tools"],
     uuidOk: ["service_decision_id", "corrects"],
     handleOk: [],
     source: "contract MOD-33; bot/moderation/README.md; M-T1.6; `$comment` per bot/moderation/*.json on main",

@@ -102,6 +102,11 @@ struct ManifestFacts {
     dependencies: std::collections::BTreeMap<String, String>,
     ui_contribution_ids: Vec<String>,
     has_config_schema: bool,
+    /// The tools `[tools.danger]` declares Low (`<tool> = "low"`), sorted and
+    /// unique. Astra runs such a tool without asking only when the release's
+    /// signed review mark is `reviewed`, so a review has to cover exactly this
+    /// list; the bot records it on the version record for that reason.
+    low_tools: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -332,6 +337,7 @@ fn probe(request: &Request) -> Response {
             .map(|u| u.contributions.iter().map(|c| c.id.clone()).collect())
             .unwrap_or_default(),
         has_config_schema: manifest.config.is_some(),
+        low_tools: declared_low_tools(&request.plugin_toml),
     };
 
     Response {
@@ -387,6 +393,39 @@ fn reserved_item_keys(plugin_toml: &str) -> Option<Finding> {
         );
     }
     None
+}
+
+/// The tools `[tools.danger]` declares Low, sorted and unique.
+///
+/// **The same rule as Astra's `ToolDangerDeclarations::read`** in
+/// `astra-rs/astra-plugin-manifest/src/manifest.rs` (Astra #377): `tools` must
+/// be a table, `tools.danger` must be a table, and an entry is declared Low only
+/// when its value is exactly the string `"low"` and its name is not empty after
+/// trimming. Anything else declares nothing: a non-table `tools` or
+/// `tools.danger`, another value, an empty name.
+///
+/// The vendored crate at the pin does not read `[tools]` at all —
+/// `PluginManifest` ignores unknown top-level keys — so the rule is restated
+/// here, from the raw text. Once the vendored `astra-plugin-manifest` exposes
+/// `PluginManifest::tool_danger` (after AstraPlugins re-vendors Astra #377),
+/// this must switch to it: two copies of one rule drift, and the copy that
+/// drifts is the one a reviewer is shown.
+fn declared_low_tools(plugin_toml: &str) -> Vec<String> {
+    let Ok(top) = plugin_toml.parse::<toml::Table>() else {
+        return Vec::new();
+    };
+    let Some(toml::Value::Table(tools)) = top.get("tools") else {
+        return Vec::new();
+    };
+    let Some(toml::Value::Table(danger)) = tools.get("danger") else {
+        return Vec::new();
+    };
+    let low: std::collections::BTreeSet<String> = danger
+        .iter()
+        .filter(|(name, value)| !name.trim().is_empty() && value.as_str() == Some("low"))
+        .map(|(name, _)| name.clone())
+        .collect();
+    low.into_iter().collect()
 }
 
 /// The crate's prose, mapped onto a code the docs describe and a stranger can
@@ -2018,5 +2057,35 @@ id = "sink-panel"
         assert_eq!(v["ok"], true);
         assert_eq!(v["manifest"]["id"], "dice-roller");
         assert!(v["known_capabilities"].as_array().unwrap().contains(&"dom_access".into()));
+    }
+
+    /// `[tools.danger]` read by Astra #377's rule. A reviewer approves a version
+    /// whose Low tools Astra will then run without asking, so the list the bot
+    /// records must be exactly the list Astra reads — no more, no fewer.
+    #[test]
+    fn low_tools_are_read_by_astras_rule() {
+        let low = |extra: &str| -> Vec<String> {
+            let r = probe(&req(&format!("{GOOD}\n{extra}")));
+            assert!(r.ok, "{:?}", r.findings);
+            r.manifest.expect("facts").low_tools
+        };
+        // none
+        assert!(low("").is_empty());
+        assert!(low("[tools]\nother = 1\n").is_empty());
+        // two lows, sorted, alongside a value that is not "low"
+        assert_eq!(
+            low("[tools.danger]\nroll = \"low\"\nwipe = \"high\"\nflip = \"low\"\n"),
+            vec!["flip", "roll"]
+        );
+        // a value that is not exactly the string "low"
+        assert!(low("[tools.danger]\nroll = \"Low\"\nflip = true\nwipe = [\"low\"]\n").is_empty());
+        // an empty name, and one that is empty after trimming
+        assert_eq!(low("[tools.danger]\n\"\" = \"low\"\n\"  \" = \"low\"\nroll = \"low\"\n"), vec!["roll"]);
+        // `tools` not a table, `tools.danger` not a table
+        assert!(low("tools = \"low\"\n").is_empty());
+        assert!(low("[tools]\ndanger = \"low\"\n").is_empty());
+        // and the wire carries it
+        let v = serde_json::to_value(probe(&req(&format!("{GOOD}\n[tools.danger]\nroll = \"low\"\n")))).unwrap();
+        assert_eq!(v["manifest"]["low_tools"], serde_json::json!(["roll"]));
     }
 }

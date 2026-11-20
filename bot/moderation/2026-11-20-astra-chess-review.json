@@ -1,0 +1,12 @@
+{
+  "date": "2026-11-20",
+  "action": "review",
+  "plugin": "astra-chess",
+  "versions": [
+    "0.1.19"
+  ],
+  "reason": "Версия прочитана, замечаний нет.",
+  "category": "review_passed",
+  "service_decision_id": "cc848dde-5fb3-4ac8-97f3-e16133f48dca",
+  "declared_interest": true
+}

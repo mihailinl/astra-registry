@@ -26,6 +26,9 @@
 //
 // Both are matched case-insensitively, because GitHub logins are.
 
+import fs from "node:fs";
+import path from "node:path";
+
 /**
  * MOD-16's staging listing id, or null while none is reserved.
  *
@@ -57,6 +60,36 @@
 export function stagingListingId(reserved) {
   const id = reserved?.staging_listing_id;
   return typeof id === "string" && id !== "" ? id : null;
+}
+
+/**
+ * `stagingListingId` of a tree's own policy/reserved-ids.json: the one
+ * file-reading wrapper (`tools/moderation-coverage.mjs`, the decide job and the
+ * publish job all read the key through it). A missing or unreadable file is
+ * no staging listing.
+ */
+export function stagingListingIdAt(root) {
+  try {
+    return stagingListingId(JSON.parse(fs.readFileSync(path.join(root, "policy", "reserved-ids.json"), "utf8")));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What a publication writes for a listing's `unlisted` (MIG-27): exactly what
+ * the tree it lands on says, in both directions — a publication never lists
+ * or delists anything — and, for a listing the tree does not hold yet, `true`
+ * only for MOD-16's staging id. Only a moderation commit (`M_DELIST`,
+ * `M_RELIST`, with its log entry) or an operator's revert changes it.
+ *
+ * @param {{onTree: object|null, id: string, stagingId: string|null}} opts
+ *        `onTree` is the tree's own `plugins/<id>/plugin.json`, or null
+ * @returns {boolean}
+ */
+export function publicationUnlisted({ onTree, id, stagingId }) {
+  if (onTree) return onTree.unlisted === true;
+  return stagingId !== null && id === stagingId;
 }
 
 /**

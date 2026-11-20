@@ -21,6 +21,8 @@ import test from "node:test";
 import {
   IDENTITY_CODES,
   applyIdentity,
+  baselineNamedIds,
+  baselineNamesRepository,
   bindingDecision,
   checkDownloadRepository,
   compareActor,
@@ -286,6 +288,20 @@ test("a baseline ends at the newest voiding record, and the reset is not refused
     pluginId: "astra-chess",
   });
   assert.equal(rebaselined.baseline.repository_id, "2000000001", "a baseline written after the reset counts");
+});
+
+test("ID-64: a baseline names its repository only until a reset ends it", () => {
+  const records = [
+    { plugin_id: "beta", trigger: "migration", state: "published", decided_at: "2026-10-01T00:00:00Z", repo: "x/alpha", repository_id: "111", repository_owner_id: "222" },
+    { plugin_id: "gamma", trigger: "migration", state: "published", decided_at: "2026-10-01T00:00:00Z", repo: "x/alpha", repository_id: "111", repository_owner_id: "222" },
+    { plugin_id: "delta", trigger: "migration", state: "published", decided_at: "2026-10-01T00:00:00Z", repo: "x/other", repository_id: "777", repository_owner_id: "222" },
+    { plugin_id: "gamma", actor: "moderator", trigger: "moderation", category: "identity_reset", decided_at: "2026-11-01T00:00:00Z" },
+  ];
+  assert.equal(baselineNamesRepository(records, "beta", "111"), true, "the control: no reset, still named");
+  assert.equal(baselineNamesRepository(records, "gamma", "111"), false, "a reset baseline still named its repository");
+  assert.equal(baselineNamesRepository(records, "delta", "111"), false);
+  assert.equal(baselineNamesRepository(records, "beta", undefined), false);
+  assert.deepEqual(baselineNamedIds(records, "111"), ["beta"]);
 });
 
 test("a record that only looks like a reset voids nothing, so a permanent refusal stays permanent", () => {

@@ -438,6 +438,74 @@ export function effectiveBaseline({ records, pluginId }) {
 }
 
 /**
+ * The identity baseline for a listing with no identity record (TRUST-23;
+ * MIG-28; ID-74).
+ *
+ * MIG-20's `migration` record first, through `effectiveBaseline`, which ends
+ * a baseline at the newest voiding record. **Failing that, the first
+ * `published` record carrying both ids**, and this is a reading this module
+ * records rather than one the plan spells: a plugin first listed through the
+ * service path after R3 has no `migration` record by construction — MIG-20
+ * writes those once, over the listings that existed at R3 — and ID-74 says
+ * every later release of an id is "compared with that listing under DEC-17".
+ * Read as `migration` alone, MIG-28 would hold every update of every plugin
+ * listed after the baseline `R_IDENTITY_CHANGED` for ever. MIG-20's tree check
+ * ("every later version carries both ids in its own record") is what makes the
+ * first publication record a baseline in all but name.
+ */
+// The decide job's id grammar, kept exactly as it was in service-decide.mjs (at most 20 digits).
+const BASELINE_ID_RE = /^[0-9]{1,20}$/;
+
+export function baselineFor({ records, pluginId }) {
+  const { baseline, voidedAt } = effectiveBaseline({ records, pluginId });
+  if (baseline) return { baseline, source: "migration" };
+  const published = (records ?? [])
+    .filter((r) => r?.plugin_id === pluginId && r?.state === "published" && r?.trigger !== "migration")
+    .filter((r) => BASELINE_ID_RE.test(String(r.repository_id ?? "")) && BASELINE_ID_RE.test(String(r.repository_owner_id ?? "")))
+    .filter((r) => !voidedAt || String(r.decided_at) > voidedAt)
+    .sort((a, b) => String(a.decided_at).localeCompare(String(b.decided_at)));
+  return published.length ? { baseline: published[0], source: "first-publication" } : { baseline: null, source: null };
+}
+
+/**
+ * ID-64's baseline half: does listing `pluginId` name `repositoryId` through
+ * its MIG-20 baseline (`migration`) record, as `effectiveBaseline` reads it?
+ *
+ * The three sibling readers — service-decide's `siblingsOf`, publish-apply's
+ * `namesRepositoryOnMain` and detector A9's `namedBefore` — each matched raw
+ * `migration` records, so an `M_IDENTITY_RESET` that deleted a listing's
+ * `identity.json` left its old baseline still naming the repository. The next
+ * publication from that repository then counted the reset listing as a sibling
+ * and rebound it in the same commit, silently undoing the reset. Asking here
+ * ends the baseline where every other baseline reader ends it.
+ *
+ * @param {object[]} records decision records, any ids, any order — a caller
+ *   that may only see some (A9: those already on the parent) filters first.
+ * @returns {boolean}
+ */
+export function baselineNamesRepository(records, pluginId, repositoryId) {
+  if (repositoryId === undefined || repositoryId === null) return false;
+  const { baseline } = effectiveBaseline({ records, pluginId });
+  return !!baseline && String(baseline.repository_id) === String(repositoryId);
+}
+
+/**
+ * The ids whose effective MIG-20 baseline names `repositoryId`
+ * (`baselineNamesRepository`, for every id a record mentions).
+ *
+ * @returns {string[]}
+ */
+export function baselineNamedIds(records, repositoryId) {
+  const byId = new Map();
+  for (const r of records ?? []) {
+    if (typeof r?.plugin_id !== "string" || r.plugin_id === "") continue;
+    if (!byId.has(r.plugin_id)) byId.set(r.plugin_id, []);
+    byId.get(r.plugin_id).push(r);
+  }
+  return [...byId].filter(([id, mine]) => baselineNamesRepository(mine, id, repositoryId)).map(([id]) => id);
+}
+
+/**
  * TRUST-23, for a listing with no identity record: this release's certificate
  * against the migration baseline.
  *

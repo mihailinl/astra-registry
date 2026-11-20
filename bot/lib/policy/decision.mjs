@@ -397,6 +397,11 @@ export function decide(input) {
   if (onService) {
     if (!existing || held.some((f) => f.code === "R_FIRST_LISTING")) priority.push("a first listing");
     if (flagged.length) priority.push(`a check's flag for a person (${[...new Set(flagged)].join(", ")})`);
+    // The service decide job's own notes: what it let through that held before
+    // (a first-party rename). Strings it wrote.
+    for (const note of Array.isArray(input.priority) ? input.priority : []) {
+      if (typeof note === "string" && note !== "") priority.push(note);
+    }
   } else if (newHighRisk.length && !held.some((f) => f.code === "R_FIRST_LISTING")) {
     // A first listing already blocks, and saying "and also it wants dom_access"
     // twice does not make the human read it twice.
@@ -475,7 +480,7 @@ export function decide(input) {
       : "identity unchanged, permissions unchanged, every check green, version strictly greater");
     if (priority.length) {
       add("P_REVIEW_PRIORITY",
-        `under the rules before contract 3.0.0 this release would have waited for a person or a delay: ${priority.join("; ")}. ` +
+        `under earlier rules this release would have waited for a person or a delay: ${priority.join("; ")}. ` +
         "It is published now, marked unreviewed, and moderators read it first");
     }
     return finish({

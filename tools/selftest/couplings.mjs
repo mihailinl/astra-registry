@@ -1615,6 +1615,10 @@ export async function run() {
     // never this repository's, from the fixture's step 0 to its head.
     "tools/lib/rehearsal-resign.mjs › lineageProblem": [1, "the re-signs between a rehearsal canary's step 0 and its head, each judged one by one, no pathspec"],
     "tools/lib/rehearsal-resign.mjs › run": [1, "how many re-signs a rehearsal canary's head is past its step 0, printed, never a serial"],
+    // Phase 2's replay harness: the commits it may replay an export against.
+    // Each one's serial is `serialAt` in tools/export-stub.mjs, a `revCount`
+    // over CATALOGUE_PATHSPEC, so this line counts nothing itself.
+    "tools/export-replay.mjs › serialLine": [1, "main's first-parent line with no pathspec, the commits an export may be replayed against"],
   }));
 
   await test("entry 128 — every catalogue-serial count under tools/, bot/ and .github/ is one the head check above asks at a merge, and every other `rev-list` there is declared as counting something else", () => {

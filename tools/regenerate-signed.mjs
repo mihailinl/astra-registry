@@ -96,7 +96,9 @@ export const GENERATOR_PATHS = ["tools/build-index.mjs", "tools/lib", "bot/lib"]
 /** Inputs, from `--source`. INV-15 says these two and no others. */
 // `policy/first-party.json` since contract 6.32.0: the generator grants
 // `astra_team` from it, so a commit's catalogue depends on it.
-export const INPUT_PATHS = ["plugins", "publishers", "policy/first-party.json"];
+// `log/decisions` since contract 6.35.3: a listing with no identity record
+// takes `owner_id` from its effective baseline, which those records are.
+export const INPUT_PATHS = ["plugins", "publishers", "policy/first-party.json", "log/decisions"];
 /** The one module the closure starts from. */
 export const ENTRY = "tools/build-index.mjs";
 

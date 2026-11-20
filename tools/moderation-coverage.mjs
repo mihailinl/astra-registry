@@ -76,7 +76,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { ACTIONS, reasonProblems } from "../bot/lib/moderation.mjs";
-import { stagingListingId as reservedStagingListingId } from "./lib/reserved.mjs";
+import { stagingListingIdAt } from "./lib/reserved.mjs";
 import { ADVISORY_FILE } from "./lib/revocations.mjs";
 import { report } from "./coverage/rules.mjs";
 import {
@@ -364,10 +364,7 @@ export function loadLog(repo) {
  * id would silently stop reporting every listing with a malformed id.
  */
 export function stagingListingId(repo) {
-  const file = path.join(repo, "policy", "reserved-ids.json");
-  if (!fs.existsSync(file)) return null;
-  const { value } = readJsonFile(file);
-  return reservedStagingListingId(value ?? {});
+  return stagingListingIdAt(repo);
 }
 
 /** Author-action records (DEC-7), which cover a yank instead of a log entry. */
@@ -619,7 +616,17 @@ export function triggersOf(sha, repo, view = firstParentView(sha, repo)) {
     if (mPlugin && status !== "D") {
       const id = mPlugin[1];
       const now = jsonAt(sha, p, repo).value;
-      if (now?.unlisted !== true) continue;
+      if (now?.unlisted !== true) {
+        // A relist: `unlisted` gone from a listing that had it. Only a
+        // moderation commit (`M_RELIST`, a MOD-52 revert) does that, and it
+        // writes a `relist` entry; a publication never does
+        // (`publicationUnlisted`), so one without the entry is a defect or a
+        // hand edit, and the transparency log would read the plugin as
+        // withdrawn while it is listed (review of #521, finding 2).
+        const was = view.before(p, "unlisted");
+        if (was.present && was.value?.unlisted === true && view.ownWrite(p)) triggers.push({ kind: "relist", id, path: p });
+        continue;
+      }
       const before = view.before(p, "unlisted");
       if (!before.present) continue;            // created unlisted: never listed, never delisted
       if (before.value?.unlisted === true) continue; // already unlisted: this commit changed something else
@@ -674,6 +681,8 @@ function triggerCovered(trigger, added) {
   switch (trigger.kind) {
     case "delist":
       return entries.some((e) => e.action === "delist" && e.plugin === trigger.id);
+    case "relist":
+      return entries.some((e) => e.action === "relist" && e.plugin === trigger.id);
     case "yank":
       return entries.some((e) => e.action === "yank" && e.plugin === trigger.id
           && (!Array.isArray(e.versions) || e.versions.length === 0 || e.versions.includes(trigger.version)))
@@ -695,6 +704,7 @@ function triggerCovered(trigger, added) {
 const describe = (t) => ({
   "badge-narrowed": () => `${t.how} in ${t.path} (a badge withdrawn)`,
   delist: () => `delisted ${t.id}`,
+  relist: () => `relisted ${t.id}`,
   yank: () => `yanked ${t.id}@${t.version}`,
   "advisory-written": () => `wrote advisory ${t.advisory}`,
   "advisory-deleted": () => `deleted advisory ${t.advisory}`,
@@ -711,6 +721,7 @@ const describe = (t) => ({
 function retroCovers(trigger, entries, authorActions) {
   switch (trigger.kind) {
     case "delist": return entries.some((e) => e.action === "delist" && e.plugin === trigger.id);
+    case "relist": return entries.some((e) => e.action === "relist" && e.plugin === trigger.id);
     case "yank":
       return entries.some((e) => e.action === "yank" && e.plugin === trigger.id)
         || authorActions.some((a) => a.plugin_id === trigger.id);

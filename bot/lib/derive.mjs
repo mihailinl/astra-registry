@@ -376,6 +376,19 @@ export function deriveListing(input) {
   if (Number.isInteger(manifest.protocol)) version.protocol = manifest.protocol;
   if (facts.min_astra_version) version.min_astra_version = facts.min_astra_version;
   if (facts.capabilities.length) version.capabilities = [...facts.capabilities].sort();
+  // The tools `[tools.danger]` declares Low, written on EVERY record the probe
+  // read, `[]` included: present means "probed" and absent means "never
+  // probed" (records older than this member, which are immutable and never
+  // re-probed). Astra honours a declared Low tool only when the signed index
+  // entry carries this member AND lists the tool, so an absent member grants
+  // nothing and an empty one says the probe found none. `compileReview` moves
+  // a version carrying a non-empty list only when the decision names exactly
+  // that set. `facts.low_tools` is always an array from the probe (an answer
+  // without one is E_PROBE_UNAVAILABLE); anything else is left absent rather
+  // than written as a claim nothing made.
+  if (Array.isArray(facts.low_tools)) {
+    version.low_tools = [...new Set(facts.low_tools.map(String))].sort();
+  }
   // `permissions` is written ALWAYS, and `{}` is a value rather than a reason
   // to omit the key. The line above may test a length; this one may not.
   //

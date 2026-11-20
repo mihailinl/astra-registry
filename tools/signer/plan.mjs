@@ -193,6 +193,40 @@ export function pluginsWithoutPublisher(doc) {
 }
 
 /**
+ * ID-77's introduction at an equal serial: `candidate` with `owner_id` taken
+ * off every entry that gained it where `headDoc`'s entry has none.
+ *
+ * The generator learned `owner_id` after listings existed, so the commit that
+ * taught it renders them differently at an unchanged serial, and nothing under
+ * plugins/ can honestly move with it (BOT-54's door). Signing that content at
+ * the same serial would break TRUST-28; carrying the served catalogue instead
+ * pages on every run and lets it age towards expiry. So the gain is withheld:
+ * the signer signs what is served (re-signing it on schedule, as for any
+ * unchanged catalogue), and the next commit under plugins/ raises the serial
+ * and publishes every `owner_id` at once. An absent `owner_id` is today's
+ * behaviour in the client (the name pin), so nothing is lost meanwhile.
+ *
+ * Only a GAIN is withheld. An entry whose `owner_id` changed or was lost, a
+ * new entry, or any other difference is left in place, so TRUST-28 still
+ * refuses it.
+ *
+ * @returns {{doc: object, ids: string[]}} a copy of `candidate`, and the ids withheld
+ */
+export function withholdGainedOwnerIds(candidate, headDoc) {
+  const doc = structuredClone(candidate);
+  const plugins = (doc?.signed ?? doc)?.plugins ?? [];
+  const headHas = new Map(((headDoc?.signed ?? headDoc)?.plugins ?? []).map((e) => [e?.id, Object.hasOwn(e ?? {}, "owner_id")]));
+  const ids = [];
+  for (const entry of plugins) {
+    if (Object.hasOwn(entry ?? {}, "owner_id") && headHas.get(entry.id) === false) {
+      delete entry.owner_id;
+      ids.push(entry.id);
+    }
+  }
+  return { doc, ids };
+}
+
+/**
  * SERVE-49's cap, from policy/limits.json. Never a literal in a gate.
  *
  * Read from THIS repository, not from the tree being signed, which is
@@ -413,7 +447,17 @@ export async function catalogueGate({ root, serial, head, limit }) {
         // path the serial counts and may legitimately change under it.
         const now = stableStringify(pluginsWithoutPublisher(candidate));
         const then = stableStringify(pluginsWithoutPublisher(headDoc));
-        if (now !== then) {
+        const held = now === then ? null : withholdGainedOwnerIds(candidate, headDoc);
+        if (held?.ids.length && stableStringify(pluginsWithoutPublisher(held.doc)) === then) {
+          // The one known equal-serial difference: `owner_id` gained, nothing
+          // else (see `withholdGainedOwnerIds`). A note, not a carry.
+          candidate = held.doc;
+          bytes = stableStringify(candidate);
+          notes.push(
+            `${held.ids.length} entr${held.ids.length === 1 ? "y gains" : "ies gain"} \`owner_id\` (ID-77) at serial ` +
+            `${serial}; withheld until a commit under plugins/ raises the serial (TRUST-28): ${held.ids.join(", ")}`,
+          );
+        } else if (now !== then) {
           failures.push(
             `the catalogue differs from \`signed\`'s head at the same serial ${serial} (TRUST-28). ` +
             `An equal serial has to mean equal listings; the served catalogue is carried until a ` +

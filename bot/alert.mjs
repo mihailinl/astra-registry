@@ -227,6 +227,19 @@ async function sendMessage({ token, chatId, text, apiBase, fetchImpl }) {
 /** How long the same red state goes without a repeat page. */
 export const REPEAT_HOURS = 24;
 
+/**
+ * Checks whose (code, id) pairs page ONCE for as long as they stay red, with
+ * no 24-hour repeat.
+ *
+ * `signer-export` is sign.yml's assert-only export check (Phase 2 step 2,
+ * tools/signer/export-assert.mjs). Its ids are the foreign commits themselves,
+ * which stay in its range until the next signing — days, when the only change
+ * is under `log/`. A repeat would page about the same commit every day; a new
+ * commit is a new pair and still pages at once, and an outage that persists is
+ * one pair (no id) and pages once until it clears.
+ */
+export const NO_REPEAT_CHECKS = Object.freeze(["signer-export"]);
+
 const pairsOf = (verdict) => {
   const codes = verdict.codes?.length ? verdict.codes : [""];
   const ids = [...(verdict.ids ?? []), ...(verdict.hexes ?? [])];
@@ -355,6 +368,14 @@ export function alertDecision(verdict, state, { now = new Date() } = {}) {
   // forged or the clock is wrong, and either way the page goes out. Without
   // this a `last_sent` in year 9999 would quiet the state for ever.
   if (since < -5 * 60_000) return page(`the state says it was paged at ${prior.last_sent}, which is in the future`);
+  if (NO_REPEAT_CHECKS.includes(verdict.check)) {
+    return {
+      act: "quiet",
+      why: `every code and id here was paged at or after ${prior.first_red}, and ${verdict.check} never repeats a page`,
+      state: next,
+      changed: false,
+    };
+  }
   if (!(since < REPEAT_HOURS * 3600_000)) return page(`still red, and the last page was ${REPEAT_HOURS} hours or more ago`);
   return {
     act: "quiet",
