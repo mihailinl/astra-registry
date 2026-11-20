@@ -359,7 +359,7 @@
               "repo": "MINICE-AI/astra-chess",
               "tag": "v0.1.19"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.1.19"
           }
         ],
@@ -6166,6 +6166,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 161
+    "serial": 162
   }
 }
