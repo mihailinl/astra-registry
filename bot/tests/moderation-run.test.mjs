@@ -404,6 +404,8 @@ const SD_VALUES = Object.freeze({
   action: "block_install",
   moderator: "amoderator",
   declared_interest: false,
+  // 6.33.0: the Low tools an M_REVIEW approved.
+  low_tools: ["read_state"],
 });
 
 /** The token file's member table for `service_decisions[]`, which is `of[]`. */

@@ -277,6 +277,11 @@
           "$comment": "`M_CORRECT_CATEGORY` only (contract 6.7.0): the `service_decision_id` of the applied decision whose category this one corrects. The compiler finds that entry in the moderation log on the tree and refuses `target_changed` when it is not there.",
           "$ref": "#/$defs/uuid"
         },
+        "low_tools": {
+          "$comment": "`M_REVIEW` (contract 6.33.0): the tools the moderator saw declared Low and approved. A version whose record lists Low tools is marked reviewed only when this set equals the record's. Its finer shape (at most 64 distinct names of 1 to 128 characters) is the compiler's, which refuses a malformed list `target_changed`, as it does a malformed `versions`.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
         "outcome": {
           "$comment": "`M_APPEAL` only. `reversed` is the estate's one Recheck (FLOW-18); MOD-34 makes it a NEW artefact and leaves the originals alone.",
           "enum": [

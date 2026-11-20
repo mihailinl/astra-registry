@@ -1343,11 +1343,10 @@ function compileReview(root, d, listing, { decidedAt, date, reason, batch = null
       "nobody can check");
   }
 
-  // `low_tools` is not in schema/moderation-work-v{1,2}.json yet: that schema
-  // is held to the token file's `service_decisions[].of[]`, which the contract
-  // writes (bot/tests/moderation-run.test.mjs), so its shape is checked here
-  // until the contract names it. Malformed routes to `target_changed`, as a
-  // malformed `versions` does: it names what the review covers.
+  // schema/moderation-work-v{1,2}.json declares `low_tools` only as a list of
+  // strings; its finer shape is checked here, so a malformed list is refused
+  // `target_changed`, as a malformed `versions` is: it names what the review
+  // covers.
   if (d.low_tools !== undefined && !wellFormedLowTools(d.low_tools)) {
     return refuse(d, "target_changed",
       "low_tools, when present, must be a list of at most 64 distinct tool names, each 1 to 128 characters; this " +
