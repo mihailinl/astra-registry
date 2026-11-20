@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "xsqo6fSYhAFMZ2C4uwmG42s7VSBcXP8LcObF7b4bg1QX4kAmayDizI83ZRnPGGWK/GVPqz8GSn5hdydgq2EFDg=="
+      "sig": "iw1hRJH8fZUWOuk827P7a4+Octd9HaR6FTN1lpFTvRoDyu6FNMtAIwj9hpi+sa1+XZ19rmUUtIhRxsQ5liTvBg=="
     }
   ],
   "signed": {
-    "expires_at": "2026-12-20T18:42:26Z",
-    "issued_at": "2026-11-20T18:42:26Z",
+    "expires_at": "2026-12-20T18:53:24Z",
+    "issued_at": "2026-11-20T18:53:24Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
@@ -366,7 +366,7 @@
               "repo": "MINICE-AI/astra-chess",
               "tag": "v0.1.19"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.1.19"
           }
         ],
@@ -6173,6 +6173,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 161
+    "serial": 162
   }
 }
