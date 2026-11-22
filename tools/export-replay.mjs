@@ -40,7 +40,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { buildIndex } from "./build-index.mjs";
-import { stableStringify } from "./lib/canonical.mjs";
+import { catalogueStringify } from "./lib/canonical.mjs";
 import {
   STATE_ROOTS, blobsAt, compareStatePaths, exportFiles, stateAt, stateSha256, treeEntriesAt,
 } from "./lib/export-state.mjs";
@@ -100,7 +100,7 @@ export function compareStates(want, got) {
 
 function indexOf(root, serial) {
   try {
-    return { text: stableStringify(buildIndex({ root, serial })) };
+    return { text: catalogueStringify(buildIndex({ root, serial })) };
   } catch (e) {
     return { error: String(e?.message ?? e) };
   }

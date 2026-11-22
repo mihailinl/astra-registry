@@ -1,14 +1,25 @@
-// Canonical JSON: one serialiser, two shapes.
+// Canonical JSON: one serialiser, three shapes.
 //
-//   stableStringify()  pretty, sorted keys, trailing newline — what lands in
-//                      registry/v1/index.json, because the file is read by
-//                      humans in review diffs.
-//   jcs()              RFC 8785, compact, sorted keys — what Phase 3 signs.
+//   stableStringify()     pretty, sorted keys, trailing newline — every
+//                         committed document read by humans in review diffs
+//                         (plugin.json, revocations.json, state/**, ...).
+//   catalogueStringify()  one member or element per line, no indentation, no
+//                         space after `:`, trailing newline — the catalogue,
+//                         registry/v1/index.json, and the signed catalogue the
+//                         signer serves. Since 2026-11-22: the catalogue is
+//                         held to max_index_bytes (1 MiB, also the desktop's
+//                         CATALOGUE_MAX_BYTES), and indentation was 10 % of it.
+//                         A line per member keeps review diffs, `--check`'s
+//                         "first difference at line N" and git's line merges
+//                         working, for ~1 % of the file over fully compact.
+//   jcs()                 RFC 8785, compact, sorted keys — what Phase 3 signs.
 //
 // Both sort object keys with the default `Array.prototype.sort()`, which
 // compares UTF-16 code units. That is exactly RFC 8785 §3.2.3's ordering, so
-// the two shapes carry the same key order and a reviewer reading the pretty
-// file is reading the bytes that get signed, modulo whitespace.
+// every shape carries the same key order and a reviewer reading the pretty
+// file is reading the bytes that get signed, modulo whitespace. Whitespace is
+// never signed: a signature is over jcs(`signed`), so a document re-laid-out
+// in any of these shapes verifies under the same signature.
 //
 // Numbers: this registry only ever emits integers (serial, size, protocol).
 // RFC 8785 §3.2.2's number canonicalisation (ECMAScript Number::toString) is a
@@ -136,7 +147,12 @@ function sortedEntries(obj) {
     .map((k) => [k, obj[k]]);
 }
 
-function write(value, path, indent, level, out) {
+/**
+ * `layout.newline`: a newline before every member and element (and before the
+ * closing bracket). `layout.indent`: spaces per level after that newline, and
+ * whether `:` is followed by a space. {false, 0} is compact.
+ */
+function write(value, path, layout, level, out) {
   assertSerialisable(value, path);
   if (value === null) return out.push("null");
   if (typeof value === "boolean" || typeof value === "number") {
@@ -148,13 +164,13 @@ function write(value, path, indent, level, out) {
   }
   if (Array.isArray(value)) {
     if (value.length === 0) return out.push("[]");
-    const pad = indent ? "\n" + " ".repeat(indent * (level + 1)) : "";
-    const close = indent ? "\n" + " ".repeat(indent * level) : "";
+    const pad = layout.newline ? "\n" + " ".repeat(layout.indent * (level + 1)) : "";
+    const close = layout.newline ? "\n" + " ".repeat(layout.indent * level) : "";
     out.push("[");
     value.forEach((item, i) => {
       if (i) out.push(",");
       out.push(pad);
-      write(item, `${path}[${i}]`, indent, level + 1, out);
+      write(item, `${path}[${i}]`, layout, level + 1, out);
     });
     out.push(close, "]");
     return;
@@ -162,15 +178,15 @@ function write(value, path, indent, level, out) {
   if (typeof value === "object") {
     const entries = sortedEntries(value).filter(([, v]) => v !== undefined);
     if (entries.length === 0) return out.push("{}");
-    const pad = indent ? "\n" + " ".repeat(indent * (level + 1)) : "";
-    const close = indent ? "\n" + " ".repeat(indent * level) : "";
+    const pad = layout.newline ? "\n" + " ".repeat(layout.indent * (level + 1)) : "";
+    const close = layout.newline ? "\n" + " ".repeat(layout.indent * level) : "";
     out.push("{");
     entries.forEach(([k, v], i) => {
       const at = path ? `${path}${pathSegment(k)}` : pathSegment(k).replace(/^\./, "");
       refuseNonIJson(k, `${at} (the member name)`);
       if (i) out.push(",");
-      out.push(pad, JSON.stringify(k), indent ? ": " : ":");
-      write(v, at, indent, level + 1, out);
+      out.push(pad, JSON.stringify(k), layout.indent ? ": " : ":");
+      write(v, at, layout, level + 1, out);
     });
     out.push(close, "}");
     return;
@@ -178,10 +194,24 @@ function write(value, path, indent, level, out) {
   throw new Error(`${path}: ${typeof value} is not serialisable`);
 }
 
-/** Pretty canonical JSON with a trailing newline. */
+/** Pretty canonical JSON with a trailing newline. `indent` 0 is compact. */
 export function stableStringify(value, indent = 2) {
   const out = [];
-  write(value, "$", indent, 0, out);
+  write(value, "$", { newline: indent > 0, indent }, 0, out);
+  out.push("\n");
+  return out.join("");
+}
+
+/**
+ * The catalogue's form: canonical JSON, one member or element per line, no
+ * indentation, trailing newline. Every writer of registry/v1/index.json and of
+ * the signed catalogue, and every byte comparison against either, goes through
+ * this one function, so the committed file, `--check`, the bot's regeneration
+ * and the served bytes cannot drift into two forms.
+ */
+export function catalogueStringify(value) {
+  const out = [];
+  write(value, "$", { newline: true, indent: 0 }, 0, out);
   out.push("\n");
   return out.join("");
 }
@@ -189,6 +219,6 @@ export function stableStringify(value, indent = 2) {
 /** RFC 8785 JCS. Phase 3 signs SHA256(domain ‖ jcs(signed)). */
 export function jcs(value) {
   const out = [];
-  write(value, "$", 0, 0, out);
+  write(value, "$", { newline: false, indent: 0 }, 0, out);
   return out.join("");
 }

@@ -125,11 +125,18 @@ const REPO = path.resolve(HERE, "..", "..");
  * `CANARIES`, and it refuses every other. Adding a cut is a line here, a
  * regeneration, and a line there.
  */
+//
+// `index_layout: "indented"`: every cut below was made while the signer wrote
+// the catalogue indented two spaces per level, and canary-4 re-signs r2d's
+// step 0 every hour, so its `signed` must keep descending from the commit the
+// fixtures record. The signer writes the catalogue one member per line since
+// 2026-11-22; these cuts ask it for the old layout (`--index-layout`), and a
+// new cut omits the key.
 export const REHEARSALS = Object.freeze({
-  "rehearsal-r2": Object.freeze({ t0: "2026-09-22T00:00:00Z", hard_end: "2026-09-29T00:00:00Z" }),
-  "rehearsal-r2b": Object.freeze({ t0: "2026-09-26T00:00:00Z", hard_end: "2026-10-03T00:00:00Z" }),
-  "rehearsal-r2c": Object.freeze({ t0: "2026-10-24T00:00:00Z", hard_end: "2026-10-31T00:00:00Z" }),
-  "rehearsal-r2d": Object.freeze({ t0: "2026-10-03T00:00:00Z", hard_end: "2026-10-10T00:00:00Z" }),
+  "rehearsal-r2": Object.freeze({ t0: "2026-09-22T00:00:00Z", hard_end: "2026-09-29T00:00:00Z", index_layout: "indented" }),
+  "rehearsal-r2b": Object.freeze({ t0: "2026-09-26T00:00:00Z", hard_end: "2026-10-03T00:00:00Z", index_layout: "indented" }),
+  "rehearsal-r2c": Object.freeze({ t0: "2026-10-24T00:00:00Z", hard_end: "2026-10-31T00:00:00Z", index_layout: "indented" }),
+  "rehearsal-r2d": Object.freeze({ t0: "2026-10-03T00:00:00Z", hard_end: "2026-10-10T00:00:00Z", index_layout: "indented" }),
 });
 
 /** A cut's directory, and its manifest. */
@@ -402,6 +409,7 @@ function signStep(reg, { id, sourceCommit, now, testKeys, outDir, commitIt = tru
     ...testKeys.flatMap((k) => ["--test-key", k]),
     "--out", tree,
     "--record", recordFile,
+    ...(reg.indexLayout ? ["--index-layout", reg.indexLayout] : []),
   ];
   const signed = run(signArgv, { allowFailure: true });
   const rec = JSON.parse(fs.readFileSync(recordFile, "utf8"));
@@ -482,7 +490,7 @@ function signerNotes(notes) {
  * because a generator that quietly produced the wrong shape would write a
  * fixture the selftest then judged against the same wrong shape.
  */
-export function buildSeries({ outDir, work, t0 }) {
+export function buildSeries({ outDir, work, t0, indexLayout }) {
   // No default T0: a caller that forgot to say which cut it wanted would get
   // the first one, whose lists may already have expired, and no error.
   if (typeof t0 !== "string" || !/^\d{4}-\d{2}-\d{2}T00:00:00Z$/.test(t0)) {
@@ -495,6 +503,7 @@ export function buildSeries({ outDir, work, t0 }) {
   redactions = [[path.resolve(work), "$WORK"], [path.resolve(outDir), "$OUT"]]
     .sort((a, b) => b[0].length - a[0].length);
   const reg = makeRegistry(work);
+  reg.indexLayout = indexLayout;
   const steps = [];
 
   const note = (id, rec, expectations) => {
@@ -878,7 +887,7 @@ function writeManifest(dir, manifest) {
 /** One cut: rewrite its directory, check it against a fresh build, or print its commands. Returns an exit code. */
 function one(name, { check, printOnly }) {
   const fixtureDir = fixtureDirOf(name);
-  const { t0 } = REHEARSALS[name];
+  const { t0, index_layout: indexLayout } = REHEARSALS[name];
   const work = fs.mkdtempSync(path.join(os.tmpdir(), "rehearsal-r2-"));
   const outDir = check || printOnly
     ? fs.mkdtempSync(path.join(os.tmpdir(), "rehearsal-r2-out-"))
@@ -897,7 +906,7 @@ function one(name, { check, printOnly }) {
       if (kept) fs.writeFileSync(readme, kept);
     }
     fs.mkdirSync(outDir, { recursive: true });
-    const manifest = buildSeries({ outDir, work, t0 });
+    const manifest = buildSeries({ outDir, work, t0, indexLayout });
     writeManifest(outDir, manifest);
 
     if (printOnly) {

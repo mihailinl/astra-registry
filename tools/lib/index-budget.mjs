@@ -76,8 +76,8 @@ export function iconCost(iconUrl) {
  * over one catalogue name the same three.
  *
  * `bytes` is the listing as compact JSON. It is not the listing's share of the
- * pretty-printed file, which is indented, but it ranks the same way and needs
- * no second serialisation of the whole document to compute.
+ * catalogue file, which has a newline per member (catalogueStringify), but it
+ * ranks the same way and needs no second serialisation of the whole document.
  *
  * @param {object} doc  a catalogue: `{signed: {plugins: [...]}}`
  * @param {number} [n]

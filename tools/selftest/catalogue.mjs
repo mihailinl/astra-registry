@@ -5,6 +5,7 @@
 // the module boundaries are not the same line, and the printed order is the
 // thing under test.
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -12,11 +13,11 @@ import { cleanEnv, fixtureEnv } from "../lib/git-env.mjs";
 
 import { buildIndex, resolveSerial } from "../build-index.mjs";
 import { isShallow } from "../coverage/git.mjs";
-import { stableStringify } from "../lib/canonical.mjs";
+import { catalogueStringify, jcs, stableStringify } from "../lib/canonical.mjs";
 import { pluginsWithoutPublisher, withholdGainedOwnerIds } from "../signer/plan.mjs";
 import { validate as validateSchema } from "../lib/jsonschema.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
-import { test, assert, assertEqual, neverAsk, tmp, validateTree, errorsMatching } from "./harness.mjs";
+import { test, assert, assertEqual, assertCatalogueLayout, neverAsk, tmp, validateTree, errorsMatching } from "./harness.mjs";
 
 export async function run() {
   await test("the serial counts the commit being made, not the one behind it", () => {
@@ -72,8 +73,24 @@ export async function run() {
   console.log("\nthe real registry");
   await test("index.json is byte-identical to a fresh generation", () => {
     const committed = fs.readFileSync(path.join(REPO_ROOT, "registry/v1/index.json"), "utf8");
-    const regenerated = stableStringify(buildIndex({ serial: JSON.parse(committed).signed.serial }));
+    const regenerated = catalogueStringify(buildIndex({ serial: JSON.parse(committed).signed.serial }));
     assert(committed === regenerated, "registry/v1/index.json is not what tools/build-index.mjs produces");
+  });
+  // 2026-11-22: the catalogue is one member per line with no indentation, the
+  // 10 % of a 1 MiB-capped document that was whitespace and that nothing reads.
+  // Proved to be the same document as the indented form: what is signed is
+  // jcs(`signed`), so a layout change that moved the JCS digest would change
+  // what clients verify, not only how many bytes they fetch. The signer's own
+  // bytes are pinned in signer-run.mjs.
+  await test("the catalogue is one member per line, unindented, and the same JCS digest as the indented form", () => {
+    const committed = fs.readFileSync(path.join(REPO_ROOT, "registry/v1/index.json"), "utf8");
+    assertCatalogueLayout(committed, "registry/v1/index.json");
+    const indented = stableStringify(JSON.parse(committed));
+    assert(Buffer.byteLength(committed) < Buffer.byteLength(indented) * 0.95,
+      `the layout saves ${Buffer.byteLength(indented) - Buffer.byteLength(committed)} bytes, not the ~10 % it was for`);
+    const digest = (s) => crypto.createHash("sha256").update(jcs(JSON.parse(s).signed)).digest("hex");
+    assertEqual(digest(committed), digest(indented), "the two layouts canonicalise to different `signed` members");
+    assertEqual(stableStringify(JSON.parse(committed)), indented, "the layouts are not one document");
   });
   // A catalogue-wide canary for the bug above, on the real document rather than a
   // fixture. The predicate is proved able to fail on the very next line, because
