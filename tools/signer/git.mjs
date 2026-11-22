@@ -17,7 +17,7 @@
 // ── why there are two readers and not one ───────────────────────────────────
 //
 // `gitText` trims and `gitBytes` does not, and the difference is a carry.
-// `stableStringify` ends every document with a newline (tools/lib/canonical.mjs),
+// `stableStringify` and `catalogueStringify` end every document with a newline (canonical.mjs),
 // so a `git show signed:registry/v1/index.json` read through a trimming wrapper
 // hands back bytes that are one byte short of what `signed` holds. D4 carries a
 // failing document forward **byte for byte**; a carry written from a trimmed

@@ -33,7 +33,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { fixtureEnv } from "../lib/git-env.mjs";
 
 import { buildIndex } from "../build-index.mjs";
-import { stableStringify } from "../lib/canonical.mjs";
+import { catalogueStringify, stableStringify } from "../lib/canonical.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { loadTestRoot } from "../testkeys/regenerate.mjs";
 import { signIndex } from "../../bot/sign-index.mjs";
@@ -43,7 +43,7 @@ import { RETIREMENTS_PATH, RETIREMENTS_SCHEMA, WINDOW_EXEMPT_KEY_IDS } from "../
 import { RESIGN_AFTER_HOURS, RESIGN_HOURS_BY_EVENT, SIGNED_FILES, fetchSignedHead, planRun, serialsAt } from "../signer/plan.mjs";
 import { trailersOf } from "../served-set/provenance.mjs";
 import { buildSignedCommit, commitMessage, pushSigned, signRun, writeTree } from "../signer/run.mjs";
-import { test, assert, assertEqual, tmp } from "./harness.mjs";
+import { test, assert, assertEqual, assertCatalogueLayout, tmp } from "./harness.mjs";
 
 const KEY_A = "TEST-ONLY-DO-NOT-TRUST-index-2026a";
 const KEY_B = "TEST-ONLY-DO-NOT-TRUST-index-2026b";
@@ -157,7 +157,8 @@ function headFrom({ index, revocations, trust, sha = "0".repeat(40) }) {
   const bytes = {};
   const documents = {};
   for (const [name, doc] of Object.entries({ index, revocations, trust, root: ROOT_DOC })) {
-    bytes[name] = stableStringify(doc);
+    // In the layout the signer writes each document in (run.mjs).
+    bytes[name] = name === "index" ? catalogueStringify(doc) : stableStringify(doc);
     documents[name] = JSON.parse(bytes[name]);
   }
   return { present: true, reason: null, sha, ref: "refs/astra-signer/signed", bytes, documents, parseErrors: [] };
@@ -257,6 +258,11 @@ export async function run() {
       assertEqual(record.files[SIGNED_FILES[name]], onMain, `${SIGNED_FILES[name]} is not main's bytes`);
     }
     assertEqual(record.index_source_commit, sourceCommit, "a freshly generated catalogue's Index-Source-Commit");
+    // The served catalogue is the layout the committed one has (2026-11-22),
+    // and the list keeps the indented layout every other document has.
+    assertCatalogueLayout(record.files[SIGNED_FILES.index], "the signed catalogue");
+    assertEqual(record.files[SIGNED_FILES.revocations], stableStringify(JSON.parse(record.files[SIGNED_FILES.revocations])),
+      "the signed withdrawal list is not in the indented layout");
 
     // And `writeTree` puts them on disk untouched. A carry is byte-for-byte or
     // it is a new document whose signature was made over other bytes, so a
@@ -888,9 +894,9 @@ export async function run() {
     const now = "2026-09-20T00:00:00Z";
     const serial = serialsAt({ root: t.dir, sha: sourceCommit }).index;
     const candidate = buildIndex({ root: t.dir, serial });
-    const unsigned = Buffer.byteLength(stableStringify(candidate), "utf8");
+    const unsigned = Buffer.byteLength(catalogueStringify(candidate), "utf8");
     const served = Buffer.byteLength(
-      stableStringify(signIndex(candidate, { signer: signerFor(signer), issuedAt: new Date(now) })), "utf8");
+      catalogueStringify(signIndex(candidate, { signer: signerFor(signer), issuedAt: new Date(now) })), "utf8");
     assert(served > unsigned + 1, `signing added ${served - unsigned} byte(s), so no cap sits between the two`);
     return { t, sourceCommit, now, head: builtHead, unsigned, served };
   };
@@ -993,7 +999,7 @@ export async function run() {
     const sourceCommit = t.commit("a third listing, with a 3,000-byte icon");
     const now = "2026-09-20T00:00:00Z";
     const serial = serialsAt({ root: t.dir, sha: sourceCommit }).index;
-    const served = Buffer.byteLength(stableStringify(signIndex(buildIndex({ root: t.dir, serial }), {
+    const served = Buffer.byteLength(catalogueStringify(signIndex(buildIndex({ root: t.dir, serial }), {
       signer: signerFor(KEY_A), issuedAt: new Date(now),
     })), "utf8");
     const run = ({ limit, headOverride = head, at = now }) => signRun({

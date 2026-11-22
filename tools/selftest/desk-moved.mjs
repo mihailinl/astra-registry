@@ -85,7 +85,13 @@ export const VENDORED_BY_ASTRA = Object.freeze({
   "bot/lib/sign.mjs": "7934b01b55ba76c9ba7249ded19c47cfcc5543fc2b55a66e13588a376ae83003",
   // Moved by contract 2.16.0 (lane S18): it refuses a string that is not
   // I-JSON instead of escaping it. Astra re-vendored it at VENDORED_AT.
-  "tools/lib/canonical.mjs": "58debc90215fab34c9f8a6c3d7496345cb7931e65c953441a093ecca9abc98b8",
+  //
+  // Moved 2026-11-22 (the catalogue's layout), and the answer is THE COPIES
+  // MAY DIFFER: this file gained `catalogueStringify` and `write` takes a
+  // layout object, while `stableStringify` and `jcs` give the same bytes as
+  // before. Astra's moved signer calls only those two, so its copy answers
+  // every question it asks the same way; a re-vendor is not needed.
+  "tools/lib/canonical.mjs": "f2175ea8263cf5a169a8119d04b59d36660bc2d47e1cac589b9a80aaa67b9dc8",
   // Moved by contract 2.16.0 (lane S21), and the answer is ASTRA RE-VENDORS:
   // a version is at most 256 characters, in parseSemver and in SEMVER_PATTERN.
   // Astra's moved signer orders its own desktop release versions with this

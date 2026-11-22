@@ -58,7 +58,7 @@
   ],
   "status": "red",
   "commit": false,
-  "$command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 3c177c81845f97d092b2bdd5a738aa541eddb864 --now 2026-09-22T05:00:00Z --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-compromise-01-trust-only-blocked.json",
+  "$command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 3c177c81845f97d092b2bdd5a738aa541eddb864 --now 2026-09-22T05:00:00Z --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-compromise-01-trust-only-blocked.json --index-layout indented",
   "$signed_sha": null,
   "$commit_message": null,
   "$sign_exit": 1

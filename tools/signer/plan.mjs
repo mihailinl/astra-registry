@@ -79,7 +79,7 @@ import path from "node:path";
 
 import { CATALOGUE_PATHSPEC, buildIndex } from "../build-index.mjs";
 import { SERIAL_FLAGS, SERIAL_PATHSPEC, buildRevocations } from "../lib/revocations.mjs";
-import { stableStringify } from "../lib/canonical.mjs";
+import { catalogueStringify, stableStringify } from "../lib/canonical.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { runValidation } from "../validate.mjs";
 import { blobAt, gitMaybe, revCount } from "./git.mjs";
@@ -405,13 +405,13 @@ export async function catalogueGate({ root, serial, head, limit }) {
   let bytes = null;
   try {
     candidate = buildIndex({ root, serial });
-    bytes = stableStringify(candidate);
+    bytes = catalogueStringify(candidate);
     // Generate twice and diff. Not a formality: the generator walks a
     // directory, reads icons and READMEs off disk and sorts what it finds, and
     // the day one of those orderings stops being total is the day two runs an
     // hour apart publish two different catalogues at one serial, each verifying
     // perfectly.
-    const again = stableStringify(buildIndex({ root, serial }));
+    const again = catalogueStringify(buildIndex({ root, serial }));
     if (again !== bytes) {
       failures.push("two generations of the catalogue at one serial produced different bytes");
     }
@@ -452,7 +452,7 @@ export async function catalogueGate({ root, serial, head, limit }) {
           // The one known equal-serial difference: `owner_id` gained, nothing
           // else (see `withholdGainedOwnerIds`). A note, not a carry.
           candidate = held.doc;
-          bytes = stableStringify(candidate);
+          bytes = catalogueStringify(candidate);
           notes.push(
             `${held.ids.length} entr${held.ids.length === 1 ? "y gains" : "ies gain"} \`owner_id\` (ID-77) at serial ` +
             `${serial}; withheld until a commit under plugins/ raises the serial (TRUST-28): ${held.ids.join(", ")}`,

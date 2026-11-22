@@ -52,7 +52,7 @@ import { indexSignersFromEnv } from "../../bot/lib/sign.mjs";
 import { loadTestRoot } from "../testkeys/regenerate.mjs";
 import { signIndex } from "../../bot/sign-index.mjs";
 import { signRevocations } from "../sign-revocations.mjs";
-import { stableStringify } from "../lib/canonical.mjs";
+import { catalogueStringify, stableStringify } from "../lib/canonical.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { recordStringProblems } from "../validate.mjs";
 // One spelling of the trailer grammar and of the receipt's name, shared with
@@ -127,6 +127,9 @@ function signDocument({ name, candidate, signers, now }) {
  * @param {Map<string,string>} [o.delegatedAt]
  * @param {number} [o.resignAfterHours]
  * @param {number} [o.limit]
+ * @param {"lines"|"indented"} [o.indexLayout]  the catalogue's bytes: `lines`
+ *   (catalogueStringify), or `indented` for the rehearsal cuts that live
+ *   canaries serve byte for byte (tools/testkeys/make-rehearsal-r2.mjs)
  */
 export async function signRun({
   root,
@@ -137,6 +140,7 @@ export async function signRun({
   delegatedAt = new Map(),
   resignAfterHours,
   limit,
+  indexLayout = "lines",
 }) {
   const candidateTrust = trustAtCommit({ root, sha: sourceCommit });
   if (candidateTrust === null) {
@@ -236,7 +240,11 @@ export async function signRun({
     }
 
     const signed = signDocument({ name, candidate: decided.candidate, signers, now });
-    const bytes = stableStringify(signed);
+    // The catalogue one member per line, with no indentation (2026-11-22,
+    // policy/limits.json max_index_bytes_note): the signature is over jcs of
+    // `signed`, so whitespace is never signed, and it was 10 % of a document
+    // every client refuses over 1 MiB.
+    const bytes = name === "index" && indexLayout !== "indented" ? catalogueStringify(signed) : stableStringify(signed);
 
     // SERVE-49 on the bytes a client receives (ops couplings 155). These are
     // the bytes `writeTree` puts on `signed`, the service holds to SERVE-50's
@@ -564,7 +572,7 @@ export function pushSigned({ root, sha, parent, remote = "origin", branch = SIGN
 function parseArgs(argv) {
   const args = {
     step: "sign", root: REPO_ROOT, out: null, record: null, tree: null, site: null,
-    sourceCommit: null, now: null, testKeys: [], event: null,
+    sourceCommit: null, now: null, testKeys: [], event: null, indexLayout: "lines",
   };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
@@ -578,6 +586,7 @@ function parseArgs(argv) {
     else if (flag === "--now") args.now = argv[++i];
     else if (flag === "--event") args.event = argv[++i] ?? "";
     else if (flag === "--test-key") args.testKeys.push(argv[++i]);
+    else if (flag === "--index-layout") args.indexLayout = argv[++i];
     else throw new Error(`unknown argument: ${flag}`);
   }
   return args;
@@ -679,6 +688,18 @@ async function stepSign(args) {
   try {
     if (event === "") throw new Error("--event was given an empty value; sign.yml passes the run's GITHUB_EVENT_NAME, which Actions always sets");
     resignAfterHours = resignAfterHoursFor(event);
+    // `indented` is the catalogue's layout before 2026-11-22, kept so that
+    // `make-rehearsal-r2 --check` and `rehearsal-push --export-source` reproduce
+    // the fixture SHAs of the four cuts made then. canary-4's hourly re-sign
+    // does not need it: rehearsal-resign compares content, and lineage is git
+    // parentage. Test keys only, so a production run cannot be asked for a
+    // second layout.
+    if (!["lines", "indented"].includes(args.indexLayout)) {
+      throw new Error(`--index-layout is lines or indented, not ${JSON.stringify(args.indexLayout)}`);
+    }
+    if (args.indexLayout !== "lines" && !args.testKeys.length) {
+      throw new Error("--index-layout indented reproduces the rehearsal cuts made before 2026-11-22 and is for --test-key runs only");
+    }
   } catch (e) {
     console.error(`FAIL  ${e.message}`);
     return 2;
@@ -704,7 +725,9 @@ async function stepSign(args) {
     return 1;
   }
 
-  const record = await signRun({ root, sourceCommit, head, now, available, delegatedAt, resignAfterHours });
+  const record = await signRun({
+    root, sourceCommit, head, now, available, delegatedAt, resignAfterHours, indexLayout: args.indexLayout,
+  });
   writeTree({ out: args.out ?? "dist/signed", files: record.files });
   // The bytes are on disk; the record is what every step after this one reads,
   // and it never carries them — a document in a JSON field is a document

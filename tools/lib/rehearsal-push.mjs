@@ -478,7 +478,7 @@ export function exportSource(into, { gitConfig = [], fixtures = CANARIES[DEFAULT
     const work = path.join(tmp, "registry");
     const out = path.join(tmp, "out");
     fs.mkdirSync(out);
-    const manifest = buildSeries({ outDir: out, work, t0: REHEARSALS[fixtures].t0 });
+    const manifest = buildSeries({ outDir: out, work, t0: REHEARSALS[fixtures].t0, indexLayout: REHEARSALS[fixtures].index_layout });
     const src = gitAt(work, gitConfig);
     const heads = {
       rotation: src(["rev-parse", "refs/heads/main"]).out,

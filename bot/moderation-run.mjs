@@ -234,7 +234,7 @@ import {
 import { Refusal as ActRefusal, applyOperatorAct } from "./lib/operator-acts.mjs";
 import { reasonOf } from "./lib/service-decide.mjs";
 import { buildIndex } from "../tools/build-index.mjs";
-import { stableStringify } from "../tools/lib/canonical.mjs";
+import { catalogueStringify, stableStringify } from "../tools/lib/canonical.mjs";
 import { validate } from "../tools/lib/jsonschema.mjs";
 import { REPO_ROOT } from "../tools/lib/sources.mjs";
 import {
@@ -1159,7 +1159,7 @@ export function regenerateDocuments({ root = REPO_ROOT, paths = [] } = {}) {
       throw new Error(`${rel} is a generated document BOT-33's moderation allowlist does not carry`);
     }
     const full = path.join(root, ...rel.split("/"));
-    const text = stableStringify(doc);
+    const text = documentText(rel, doc);
     if (fs.existsSync(full) && fs.readFileSync(full, "utf8") === text) continue;
     // A commit that changes no advisory does not rewrite the withdrawal list.
     // b41b72b (the stray-hold cleanup for 3f996cae) moved its `serial` 17 → 18
@@ -1177,6 +1177,9 @@ export function regenerateDocuments({ root = REPO_ROOT, paths = [] } = {}) {
   }
   return { changed, serials: { index: index.signed.serial, revocations: list.signed.serial } };
 }
+
+/** The committed form of a generated document: the catalogue one member per line, the list pretty. */
+const documentText = (rel, doc) => (rel === INDEX_FILE ? catalogueStringify(doc) : stableStringify(doc));
 
 /** Does the committed list at `full` carry exactly `doc`'s withdrawals, whatever its serial? */
 function listSaysSame(full, doc) {
@@ -1215,7 +1218,7 @@ export function documentsAtHead({ root = REPO_ROOT } = {}) {
     const have = fs.existsSync(full) ? fs.readFileSync(full, "utf8") : null;
     if (have === null) continue;
     if (rel === REVOCATIONS_FILE && !touched.includes(REVOCATIONS_FILE) && listSaysSame(full, doc)) continue;
-    if (have !== stableStringify(doc)) {
+    if (have !== documentText(rel, doc)) {
       problems.push(`${rel} at HEAD is not what the generator produces there` +
         (rel === REVOCATIONS_FILE ? ` at serial ${doc.signed.serial}` : "") +
         "; the commit was made against a `main` that has since moved, and pushing it would publish a document the signer disagrees with");

@@ -59,7 +59,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { cleanEnv } from "./lib/git-env.mjs";
 
-import { ijsonProblems, stableStringify } from "./lib/canonical.mjs";
+import { catalogueStringify, ijsonProblems, stableStringify } from "./lib/canonical.mjs";
 import { compareSemver } from "./lib/semver.mjs";
 import { loadIdentities, loadPublishers, loadRecords, loadSources, REPO_ROOT } from "./lib/sources.mjs";
 import { baselineFor, isVoidingRecord } from "../bot/lib/identity.mjs";
@@ -791,7 +791,7 @@ function main(argv) {
     }
     const claimed = parsed.signed.serial;
     const fresh = buildIndex({ root: opts.root, serial: claimed });
-    const regenerated = stableStringify(fresh);
+    const regenerated = catalogueStringify(fresh);
 
     // Two comparisons, and the second is the one that must always hold. A file
     // that has been through bot/sign-index.mjs carries `issued_at`,
@@ -824,7 +824,7 @@ function main(argv) {
     return 1;
   }
 
-  const text = stableStringify(buildIndex({ root: opts.root, serial: opts.serial }));
+  const text = catalogueStringify(buildIndex({ root: opts.root, serial: opts.serial }));
   if (opts.stdout) {
     process.stdout.write(text);
     return 0;
