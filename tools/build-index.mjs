@@ -65,7 +65,8 @@ import { loadIdentities, loadPublishers, loadRecords, loadSources, REPO_ROOT } f
 import { baselineFor, isVoidingRecord } from "../bot/lib/identity.mjs";
 import { canonicalGithubId, firstPartyClaimProblems, isFirstPartyRecord, loadFirstParty } from "./lib/first-party.mjs";
 import { INDEX_SCHEMA } from "../bot/lib/sign.mjs";
-import { MAX_README_BYTES, iconDataUri } from "../bot/lib/assets.mjs";
+import { ICON_FORMATS, MAX_README_BYTES, iconDataUri } from "../bot/lib/assets.mjs";
+import { iconAsset, readmeAsset } from "./lib/catalogue-assets.mjs";
 import { SUPPORTED_KEYS } from "./lib/platform.mjs";
 
 const BANNER =
@@ -275,8 +276,22 @@ function presentation(root, plugin) {
   const dir = path.join(root, "plugins", plugin.dir);
   const p = plugin.doc;
   const out = {};
+  const files = [];
   const errors = [];
   const bad = (file, message) => errors.push({ file, message });
+  // Contract 6.28.0: the same two files, also as content-addressed assets
+  // beside the catalogue (tools/lib/catalogue-assets.mjs says why). The inline
+  // form above each stays, so an old client reads what it read.
+  const asset = (file, make) => {
+    try {
+      const made = make();
+      if (made) files.push(made.file);
+      return made?.member ?? null;
+    } catch (e) {
+      bad(file, e.message);
+      return null;
+    }
+  };
 
   // BOT-79. `icon_url` was passed through into the signed catalogue whenever no
   // icon file was committed, and that was the one path by which an `https://`
@@ -305,7 +320,11 @@ function presentation(root, plugin) {
     if (!fs.existsSync(file)) {
       bad(`plugins/${plugin.dir}/plugin.json`, `names icon ${JSON.stringify(p.icon)}, which is not in the directory`);
     } else {
-      out.icon_url = iconDataUri({ name: p.icon, bytes: fs.readFileSync(file) });
+      const bytes = fs.readFileSync(file);
+      out.icon_url = iconDataUri({ name: p.icon, bytes });
+      const media = ICON_FORMATS.find((f) => f.name === p.icon)?.media;
+      const member = asset(`plugins/${plugin.dir}/${p.icon}`, () => iconAsset({ media, bytes }));
+      if (member) out.icon = member;
     }
   } else {
     out.icon_url = "";
@@ -326,11 +345,13 @@ function presentation(root, plugin) {
         bad(`plugins/${plugin.dir}/${p.readme}`, `is ${bytes} bytes, over the ${MAX_README_BYTES} the index allows`);
       } else {
         out.readme = text;
+        const member = asset(`plugins/${plugin.dir}/${p.readme}`, () => readmeAsset(text));
+        if (member) out.readme_file = member;
       }
     }
   }
 
-  return { out, errors };
+  return { out, files, errors };
 }
 
 /**
@@ -508,7 +529,21 @@ export function publisherKeyProblems(doc, publishers) {
   return problems;
 }
 
-export function buildIndex({ root = REPO_ROOT, serial } = {}) {
+export function buildIndex(opts = {}) {
+  return buildCatalogue(opts).doc;
+}
+
+/**
+ * The catalogue and the asset files its `icon` and `readme_file` members name
+ * (contract 6.28.0), from one read of the sources: `assets` maps each file's
+ * path in a `signed` commit, `registry/v1/assets/<sha256>.<ext>`, to its
+ * bytes. The signer writes them beside the catalogue (BOT-109) and the
+ * regeneration compares them (TRUST-49); every other caller wants `doc` alone
+ * and calls `buildIndex`.
+ *
+ * @returns {{doc: object, assets: Map<string, Buffer>}}
+ */
+export function buildCatalogue({ root = REPO_ROOT, serial } = {}) {
   const { errors, plugins } = loadSources(root);
   const { errors: pubErrors, publishers } = loadPublishers(root);
   errors.push(...pubErrors);
@@ -543,6 +578,7 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
   // The build still fails — it just says everything it knows first.
   const entryErrors = [];
   const entries = [];
+  const assets = new Map();
   for (const plugin of plugins) {
     if (plugin.doc.unlisted === true) continue;
     const releases = listedReleases(plugin);
@@ -577,6 +613,7 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
       entryErrors.push(...pres.errors);
       continue;
     }
+    for (const f of pres.files) assets.set(f.path, f.bytes);
     const badge = publisherFor({ plugin, publishers, identity: identityOf.get(plugin.dir) ?? null, firstParty });
 
     entries.push({
@@ -709,7 +746,7 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
       `meets one refuses the whole catalogue (contract §0.7):\n${unholdable.join("\n")}`,
     );
   }
-  return doc;
+  return { doc, assets };
 }
 
 /**

@@ -379,7 +379,12 @@ export async function run() {
     const { dir, head } = fixtureClone("candidate");
     const commit = head();
     const document = path.join(tmp, "candidate-good.json");
-    const agreeing = regen(["--generator", commit, "--source", commit, "--repo", dir, "--out", document]);
+    // The asset files beside it (TRUST-49), where a carrier keeps them: the
+    // `assets/` directory next to the candidate.
+    const agreeing = regen([
+      "--generator", commit, "--source", commit, "--repo", dir, "--out", document,
+      "--out-assets", path.join(tmp, "assets"),
+    ]);
     assertEqual(agreeing.status, 0, agreeing.stderr);
 
     // The carrier's document, whole: a signed envelope with a publication
@@ -412,6 +417,46 @@ export async function run() {
       assertEqual(JSON.parse(r.stdout).serial, content.serial,
         "the candidate's serial reached the regenerated document. The serial is a property of the history; a " +
         "document that could assert its own would be a monotonic counter anybody can set");
+    }
+  });
+
+  await test("TRUST-49: a candidate whose asset files are not the derived set disagrees, by name and by bytes", () => {
+    // Contract 6.28.0. The members are part of the content compared above, so
+    // a wrong path, digest or size already disagrees; this is the other half,
+    // the files themselves. Each mutation below is one a carrier's tree can
+    // hold and the plugins service would refuse the whole commit for
+    // (SERVE-115), or serve a file no catalogue names.
+    const { dir, head } = fixtureClone("trust49");
+    const commit = head();
+    const at = path.join(tmp, "trust49");
+    fs.mkdirSync(at, { recursive: true });
+    const candidate = path.join(at, "index.json");
+    const assets = path.join(at, "assets");
+    const made = regen(["--generator", commit, "--source", commit, "--repo", dir, "--out", candidate, "--out-assets", assets]);
+    assertEqual(made.status, 0, made.stderr);
+    const names = fs.readdirSync(assets).sort();
+    const doc = JSON.parse(fs.readFileSync(candidate, "utf8"));
+    const named = doc.plugins.flatMap((p) => [p.icon?.path, p.readme_file?.path]).filter(Boolean).map((x) => x.slice(7));
+    assertEqual(names.join(","), [...new Set(named)].sort().join(","), "--out-assets did not write exactly the files the members name");
+    assert(names.length >= 2, `the fixture names ${names.length} asset file(s); the mutations below need some`);
+
+    const compare = () => regen(["--generator", commit, "--source", commit, "--repo", dir, "--candidate", candidate, "--quiet"]);
+    assertEqual(compare().status, 0, "the candidate beside its own asset files did not agree");
+
+    const victim = path.join(assets, names[0]);
+    const bytes = fs.readFileSync(victim);
+    const mutations = [
+      ["a missing file", () => fs.rmSync(victim), "missing:"],
+      ["a file of other bytes", () => fs.writeFileSync(victim, Buffer.concat([bytes, Buffer.from(" ")])), "differing:"],
+      ["a file nothing names", () => fs.writeFileSync(path.join(assets, `${"0".repeat(64)}.png`), bytes), "extra:"],
+    ];
+    for (const [what, mutate, word] of mutations) {
+      mutate();
+      const r = compare();
+      assertEqual(r.status, 1, `${what} under assets/ was not a disagreement:\n${r.stderr}`);
+      assert(r.stderr.includes("TRUST-49") && r.stderr.includes(word), `${what} was refused for something else:\n${r.stderr}`);
+      fs.rmSync(assets, { recursive: true, force: true });
+      assertEqual(regen(["--generator", commit, "--source", commit, "--repo", dir, "--out-assets", assets, "--quiet"]).status, 0);
     }
   });
 
@@ -551,11 +596,11 @@ export async function run() {
     const gen = path.join(dir, "tools", "build-index.mjs");
     const src = fs.readFileSync(gen, "utf8");
     const marked = src.replace(
-      "export function buildIndex({ root = REPO_ROOT, serial } = {}) {",
-      "export function buildIndex({ root = REPO_ROOT, serial } = {}) {\n" +
+      "export function buildCatalogue({ root = REPO_ROOT, serial } = {}) {",
+      "export function buildCatalogue({ root = REPO_ROOT, serial } = {}) {\n" +
       "  fetch(\"https://example.invalid/counts\");",
     );
-    assert(marked !== src, "the fixture could not add a fetch to buildIndex; this test would prove nothing");
+    assert(marked !== src, "the fixture could not add a fetch to buildCatalogue; this test would prove nothing");
     fs.writeFileSync(gen, marked);
     git("add", "-A"); git("commit", "-qm", "a fetch on the generator's own path");
     const withFetch = head();
@@ -575,8 +620,8 @@ export async function run() {
     const gen = path.join(dir, "tools", "build-index.mjs");
     const src = fs.readFileSync(gen, "utf8");
     fs.writeFileSync(gen, src.replace(
-      "export function buildIndex({ root = REPO_ROOT, serial } = {}) {",
-      "export function buildIndex({ root = REPO_ROOT, serial } = {}) {\n" +
+      "export function buildCatalogue({ root = REPO_ROOT, serial } = {}) {",
+      "export function buildCatalogue({ root = REPO_ROOT, serial } = {}) {\n" +
       "  if (process.env.PICK) import(process.env.PICK);",
     ));
     git("add", "-A"); git("commit", "-qm", "a computed import in the generator");

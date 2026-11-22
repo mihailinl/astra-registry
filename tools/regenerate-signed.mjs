@@ -455,7 +455,13 @@ export async function regenerate({ repo, generator, source, work }) {
   const gen = await import(pathToFileURL(path.join(work, ENTRY)).href);
   const canonical = await import(pathToFileURL(path.join(work, "tools/lib/canonical.mjs")).href);
 
-  const doc = gen.buildIndex({ root: work, serial });
+  // TRUST-49 (contract 6.28.0): the asset files the members name, from the
+  // same read. A pinned generator from before 6.28.0 has no `buildCatalogue`
+  // and emits no member, so its set is empty, which is what it names.
+  const built = typeof gen.buildCatalogue === "function"
+    ? gen.buildCatalogue({ root: work, serial })
+    : { doc: gen.buildIndex({ root: work, serial }), assets: new Map() };
+  const doc = built.doc;
   if (doc?.signed?.serial !== serial) {
     throw new Refused(
       `the pinned generator wrote serial ${doc?.signed?.serial} where ${serial} was passed in; the serial in ` +
@@ -469,6 +475,8 @@ export async function regenerate({ repo, generator, source, work }) {
   return {
     ...commits, serial, closure, assembled, content,
     text: canonical.stableStringify(content),
+    // `registry/v1/assets/<sha256>.<ext>` → bytes: the set TRUST-49 compares.
+    assets: built.assets,
     // Handed back rather than re-imported by the caller. A `--candidate` is
     // compared through the PINNED `indexContent` and the PINNED
     // `stableStringify` — the same two functions that produced the other side
@@ -485,7 +493,7 @@ export async function regenerate({ repo, generator, source, work }) {
 function parseArgs(argv) {
   const opts = {
     repo: DEFAULT_REPO, generator: null, source: null,
-    candidate: null, out: null, work: null, keep: false, quiet: false,
+    candidate: null, candidateAssets: null, out: null, outAssets: null, work: null, keep: false, quiet: false,
   };
   const need = (i, name) => {
     if (i >= argv.length) throw new Refused(`${name} needs a value`);
@@ -497,6 +505,8 @@ function parseArgs(argv) {
     else if (a === "--source") opts.source = need(++i, a);
     else if (a === "--repo") opts.repo = path.resolve(need(++i, a));
     else if (a === "--candidate") opts.candidate = path.resolve(need(++i, a));
+    else if (a === "--candidate-assets") opts.candidateAssets = path.resolve(need(++i, a));
+    else if (a === "--out-assets") opts.outAssets = path.resolve(need(++i, a));
     else if (a === "--out") opts.out = path.resolve(need(++i, a));
     else if (a === "--work") opts.work = path.resolve(need(++i, a));
     else if (a === "--keep") opts.keep = true;
@@ -508,20 +518,53 @@ function parseArgs(argv) {
 }
 
 const USAGE = `usage: node tools/regenerate-signed.mjs --generator <sha> --source <sha>
-                                     [--repo DIR] [--candidate FILE] [--out FILE]
+                                     [--repo DIR] [--candidate FILE] [--candidate-assets DIR] [--out FILE]
+                                     [--out-assets DIR]
                                      [--work DIR] [--keep] [--quiet]
 
   --generator <ref>   the reviewed commit the generator code is taken from
   --source <ref>      the Source-Commit the inputs are taken from
   --repo <dir>        the clone to read both out of (default: this file's own)
   --candidate <file>  a carried catalogue to compare the regeneration against
+  --candidate-assets <dir>
+                      the candidate's asset files (TRUST-49); default: the
+                      assets/ directory beside --candidate, none if absent
   --out <file>        write the document here instead of to stdout
+  --out-assets <dir>  write the asset files the members name into this
+                      directory, as <sha256>.<ext> (TRUST-49's set)
   --work <dir>        assemble into this directory instead of a fresh temp one
   --keep              leave the assembled tree behind, to be looked at
   --quiet             the document and nothing else
 
 exit: 0 regenerated (and agreed, if --candidate); 1 the candidate disagrees;
       2 the command could not run.`;
+
+/** The files of a candidate's `assets/` directory, name → bytes; empty when there is none. */
+export function readAssetDir(dir) {
+  const out = new Map();
+  if (!fs.existsSync(dir)) return out;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    out.set(entry.name, entry.isFile() ? fs.readFileSync(path.join(dir, entry.name)) : null);
+  }
+  return out;
+}
+
+/**
+ * TRUST-49's comparison: `derived` (`registry/v1/assets/<name>` → bytes, from
+ * the regeneration) against `candidate` (`<name>` → bytes). Every difference,
+ * sorted; empty when the sets agree.
+ */
+export function compareAssetSets(derived, candidate) {
+  const want = new Map([...derived].map(([rel, bytes]) => [path.posix.basename(rel), bytes]));
+  const out = [];
+  for (const [name, bytes] of want) {
+    const got = candidate.get(name);
+    if (got === undefined) out.push(`missing: assets/${name}`);
+    else if (got === null || !Buffer.from(got).equals(Buffer.from(bytes))) out.push(`differing: assets/${name}`);
+  }
+  for (const name of candidate.keys()) if (!want.has(name)) out.push(`extra: assets/${name}`);
+  return out.sort();
+}
 
 function firstDifference(a, b) {
   const x = a.split("\n");
@@ -578,6 +621,12 @@ async function run(opts, work, note) {
     process.stdout.write(result.text);
   }
 
+  if (opts.outAssets) {
+    fs.mkdirSync(opts.outAssets, { recursive: true });
+    for (const [rel, bytes] of result.assets) fs.writeFileSync(path.join(opts.outAssets, path.posix.basename(rel)), bytes);
+    note(`wrote ${result.assets.size} asset file(s) to ${opts.outAssets}`);
+  }
+
   if (!opts.candidate) return 0;
 
   let parsed;
@@ -592,9 +641,27 @@ async function run(opts, work, note) {
   const carried = result.pinned.gen.indexContent(parsed);
   const carriedText = result.pinned.canonical.stableStringify(carried);
 
-  if (carriedText === result.text) {
-    note(`ok    the candidate is the regeneration of ${result.source} under ${result.generator}`);
+  // TRUST-49: the candidate's set of asset files against the derived set, by
+  // name and by bytes. A file the regeneration names and the candidate lacks,
+  // one it carries and nothing names, and one whose bytes differ are each a
+  // disagreement; the members themselves are part of the content compared
+  // above, so a path, digest or size that is not the derived one already is.
+  const assetsDir = opts.candidateAssets ?? path.join(path.dirname(opts.candidate), "assets");
+  const assetDiff = compareAssetSets(result.assets, readAssetDir(assetsDir));
+
+  if (carriedText === result.text && !assetDiff.length) {
+    note(
+      `ok    the candidate is the regeneration of ${result.source} under ${result.generator}` +
+        (result.assets.size ? `, with its ${result.assets.size} asset file(s)` : ""),
+    );
     return 0;
+  }
+  if (carriedText === result.text) {
+    process.stderr.write(
+      `FAIL  the candidate's asset files in ${assetsDir} are not the set ${result.source} derives (TRUST-49):\n` +
+        assetDiff.slice(0, 20).map((d) => `      ${d}\n`).join(""),
+    );
+    return 1;
   }
   process.stderr.write(
     `FAIL  the candidate is not what ${result.source} regenerates to under ${result.generator}.\n` +
@@ -602,7 +669,8 @@ async function run(opts, work, note) {
     (carried?.serial !== result.serial
       ? `      the candidate claims serial ${carried?.serial} and the history behind --source says ` +
         `${result.serial}; the computed one is the one that was used\n`
-      : ""),
+      : "") +
+    assetDiff.slice(0, 20).map((d) => `      asset ${d}\n`).join(""),
   );
   return 1;
 }

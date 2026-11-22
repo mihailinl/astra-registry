@@ -190,6 +190,17 @@
           "maxLength": 16384,
           "description": "The plugin's own README, for the store's detail view. GitHub-flavoured markdown with NO RAW HTML and no image pointing anywhere but GitHub's asset hosts — both guaranteed by bot/lib/assets.mjs when this was derived, because by the time a client reads this the author is a stranger and the renderer is inside Astra's window. Inlined rather than linked so the bytes are covered by the index signature and so opening the store makes no request to a third party. Absent when the plugin ships no README. The 16384 here is a character bound and is the backstop, not the budget: what the registry enforces is 16384 UTF-8 BYTES, in bot/lib/assets.mjs (MAX_README_BYTES), which truncates to it, and in tools/build-index.mjs and tools/validate.mjs, which refuse over it. Bytes are never fewer than characters, so anything this schema accepts the byte cap has already had the final say on."
         },
+        "readme_file": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "size"],
+          "properties": {
+            "path": { "type": "string", "pattern": "^assets/[0-9a-f]{64}\\.md$" },
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "size": { "type": "integer", "minimum": 1, "maximum": 16384 }
+          },
+          "description": "Contract 6.28.0: the README as a content-addressed UTF-8 file beside the catalogue, `registry/v1/assets/<sha256>.md` on the `signed` branch (BOT-109). Its bytes are the UTF-8 of the inline `readme`, which stays beside it as the fallback (CLIENT-104). Absent when the listing has no README or an empty one."
+        },
         "author": {
           "type": "string",
           "maxLength": 64
@@ -230,6 +241,19 @@
         "repository_url": {
           "type": "string",
           "pattern": "^https://github\\.com/"
+        },
+        "icon": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "size", "media_type"],
+          "properties": {
+            "path": { "type": "string", "pattern": "^assets/[0-9a-f]{64}\\.(png|webp|jpg)$" },
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "size": { "type": "integer", "minimum": 1, "maximum": 131072 },
+            "media_type": { "type": "string", "enum": ["image/png", "image/webp", "image/jpeg"] }
+          },
+          "description": "Contract 6.28.0: the icon as a content-addressed file beside the catalogue, `registry/v1/assets/<sha256>.<ext>` on the `signed` branch, written there by the signer (BOT-109) from the same committed icon `icon_url` inlines. `path` is relative to the URL the index was fetched from and its hex is `sha256`; `media_type` agrees with the extension. A client fetches it, checks the size, the digest and the magic bytes, and falls back to `icon_url` on any failure (CLIENT-104). Absent for an SVG or ICO icon, which 6.28.0's path rule has no extension for: those listings carry `icon_url` alone.",
+          "$comment": "The grammar the plugins service (SERVE-115, minice plugins-signed src/assets.rs) and the client (Astra astra-daemon src/plugins/catalogue_assets.rs) hold the member to. tools/lib/catalogue-assets.mjs namedAssets is the registry's copy of the service's rule, and also checks what a pattern cannot: that the path's hex is `sha256`."
         },
         "icon_url": {
           "type": "string",
