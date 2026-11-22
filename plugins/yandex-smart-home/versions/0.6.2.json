@@ -1,0 +1,30 @@
+{
+  "$comment": "Derived from Voltur792/Y-home-f-astra@v0.6.2. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "yandex-smart-home",
+  "version": "0.6.2",
+  "published_at": "2026-10-25T09:22:46Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "Voltur792/Y-home-f-astra",
+    "tag": "v0.6.2",
+    "commit": "c3fbbd6f0a14a97366b488f0a0e383d815e53022"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/Voltur792/Y-home-f-astra/releases/download/v0.6.2/yandex-smart-home-0.6.2-noarch.astraplugin",
+      "filename": "yandex-smart-home-0.6.2-noarch.astraplugin",
+      "sha256": "d4a695f85d45670dc04cbeb2aaf4e8b7adaa65c8e8b3a70e6e74376960ec5bd0",
+      "size": 95050
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "actions",
+    "tools",
+    "ui_contributions"
+  ],
+  "low_tools": [],
+  "permissions": {}
+}
