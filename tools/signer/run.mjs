@@ -244,7 +244,7 @@ export async function signRun({
     // policy/limits.json max_index_bytes_note): the signature is over jcs of
     // `signed`, so whitespace is never signed, and it was 10 % of a document
     // every client refuses over 1 MiB.
-    const bytes = name === "index" && indexLayout === "lines" ? catalogueStringify(signed) : stableStringify(signed);
+    const bytes = name === "index" && indexLayout !== "indented" ? catalogueStringify(signed) : stableStringify(signed);
 
     // SERVE-49 on the bytes a client receives (ops couplings 155). These are
     // the bytes `writeTree` puts on `signed`, the service holds to SERVE-50's
@@ -688,10 +688,12 @@ async function stepSign(args) {
   try {
     if (event === "") throw new Error("--event was given an empty value; sign.yml passes the run's GITHUB_EVENT_NAME, which Actions always sets");
     resignAfterHours = resignAfterHoursFor(event);
-    // `indented` is the catalogue's layout before 2026-11-22, kept for the
-    // rehearsal cuts made then: canary-4 re-signs one of them hourly, and its
-    // `signed` has to descend from the commit the fixtures record. Test keys
-    // only, so a production run cannot be asked for a second layout.
+    // `indented` is the catalogue's layout before 2026-11-22, kept so that
+    // `make-rehearsal-r2 --check` and `rehearsal-push --export-source` reproduce
+    // the fixture SHAs of the four cuts made then. canary-4's hourly re-sign
+    // does not need it: rehearsal-resign compares content, and lineage is git
+    // parentage. Test keys only, so a production run cannot be asked for a
+    // second layout.
     if (!["lines", "indented"].includes(args.indexLayout)) {
       throw new Error(`--index-layout is lines or indented, not ${JSON.stringify(args.indexLayout)}`);
     }

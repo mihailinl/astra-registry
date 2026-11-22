@@ -127,9 +127,10 @@ const REPO = path.resolve(HERE, "..", "..");
  */
 //
 // `index_layout: "indented"`: every cut below was made while the signer wrote
-// the catalogue indented two spaces per level, and canary-4 re-signs r2d's
-// step 0 every hour, so its `signed` must keep descending from the commit the
-// fixtures record. The signer writes the catalogue one member per line since
+// the catalogue indented two spaces per level, so `--check` and
+// `rehearsal-push --export-source` reproduce the fixture SHAs only in that
+// layout. (canary-4's hourly re-sign of r2d does not need it: rehearsal-resign
+// compares content, and lineage is git parentage.) The signer writes the catalogue one member per line since
 // 2026-11-22; these cuts ask it for the old layout (`--index-layout`), and a
 // new cut omits the key.
 export const REHEARSALS = Object.freeze({

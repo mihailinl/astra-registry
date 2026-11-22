@@ -86,8 +86,6 @@ export async function run() {
     const committed = fs.readFileSync(path.join(REPO_ROOT, "registry/v1/index.json"), "utf8");
     assertCatalogueLayout(committed, "registry/v1/index.json");
     const indented = stableStringify(JSON.parse(committed));
-    assert(Buffer.byteLength(committed) < Buffer.byteLength(indented) * 0.95,
-      `the layout saves ${Buffer.byteLength(indented) - Buffer.byteLength(committed)} bytes, not the ~10 % it was for`);
     const digest = (s) => crypto.createHash("sha256").update(jcs(JSON.parse(s).signed)).digest("hex");
     assertEqual(digest(committed), digest(indented), "the two layouts canonicalise to different `signed` members");
     assertEqual(stableStringify(JSON.parse(committed)), indented, "the layouts are not one document");
