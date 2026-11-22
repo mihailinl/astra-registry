@@ -199,7 +199,7 @@
             "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
             "size": { "type": "integer", "minimum": 1, "maximum": 16384 }
           },
-          "description": "Contract 6.28.0: the README as a content-addressed UTF-8 file beside the catalogue, `registry/v1/assets/<sha256>.md` on the `signed` branch (BOT-109). Its bytes are the UTF-8 of the inline `readme`, which stays beside it as the fallback (CLIENT-104). Absent when the listing has no README or an empty one."
+          "description": "Contract 6.28.0: the README as a content-addressed UTF-8 file beside the catalogue, `registry/v1/assets/<sha256>.md` on the `signed` branch (BOT-109). Its bytes are the UTF-8 of the README; the inline `readme` stays beside it as the fallback (CLIENT-104) unless the registry omitted it for the whole catalogue (contract 6.38.0, BOT-109), so a reader of `readme_file` must not require `readme`. Absent when the listing has no README or an empty one."
         },
         "author": {
           "type": "string",

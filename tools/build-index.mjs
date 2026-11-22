@@ -66,6 +66,7 @@ import { baselineFor, isVoidingRecord } from "../bot/lib/identity.mjs";
 import { canonicalGithubId, firstPartyClaimProblems, isFirstPartyRecord, loadFirstParty } from "./lib/first-party.mjs";
 import { INDEX_SCHEMA } from "../bot/lib/sign.mjs";
 import { ICON_FORMATS, MAX_README_BYTES, iconDataUri } from "../bot/lib/assets.mjs";
+import { FLOOR_READS_README_FILE, applyReadmeRule } from "./lib/index-budget.mjs";
 import { iconAsset, readmeAsset } from "./lib/catalogue-assets.mjs";
 import { FLAT_PROJECTION_KEYS } from "./lib/platform.mjs";
 
@@ -530,6 +531,18 @@ export function publisherKeyProblems(doc, publishers) {
   return problems;
 }
 
+/**
+ * `max_index_bytes` from the source tree's `policy/limits.json`, else from the
+ * generator's own checkout (a fixture tree carries no policy of its own).
+ */
+function maxIndexBytes(root) {
+  for (const dir of [root, REPO_ROOT]) {
+    const file = path.join(dir, "policy", "limits.json");
+    if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, "utf8")).max_index_bytes;
+  }
+  throw new Error(`cannot generate the index: no policy/limits.json under ${root} or ${REPO_ROOT}, so max_index_bytes is unknown`);
+}
+
 export function buildIndex(opts = {}) {
   return buildCatalogue(opts).doc;
 }
@@ -544,7 +557,7 @@ export function buildIndex(opts = {}) {
  *
  * @returns {{doc: object, assets: Map<string, Buffer>}}
  */
-export function buildCatalogue({ root = REPO_ROOT, serial } = {}) {
+export function buildCatalogue({ root = REPO_ROOT, serial, floorReadsReadmeFile = FLOOR_READS_README_FILE } = {}) {
   const { errors, plugins } = loadSources(root);
   const { errors: pubErrors, publishers } = loadPublishers(root);
   errors.push(...pubErrors);
@@ -747,6 +760,14 @@ export function buildCatalogue({ root = REPO_ROOT, serial } = {}) {
       `meets one refuses the whole catalogue (contract §0.7):\n${unholdable.join("\n")}`,
     );
   }
+  // Contract 6.38.0 (BOT-109, TRUST-49): measured on this unsigned build, the
+  // same place the cap is first measured; the regeneration runs this same code.
+  // After the Unicode check, because catalogueStringify refuses what that names.
+  applyReadmeRule(doc, {
+    cap: maxIndexBytes(root),
+    floorReads: floorReadsReadmeFile,
+    stringify: catalogueStringify,
+  });
   return { doc, assets };
 }
 

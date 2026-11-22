@@ -22,9 +22,10 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fixtureEnv } from "../lib/git-env.mjs";
 
-import { buildIndex, indexContent } from "../build-index.mjs";
+import { buildCatalogue, buildIndex, indexContent } from "../build-index.mjs";
+import { FLOOR_READS_README_FILE, applyReadmeRule, omitReadmeLine } from "../lib/index-budget.mjs";
 import { isShallow } from "../coverage/git.mjs";
-import { stableStringify } from "../lib/canonical.mjs";
+import { catalogueStringify, stableStringify } from "../lib/canonical.mjs";
 import { validate as validateSchema } from "../lib/jsonschema.mjs";
 import { REPO_ROOT, loadPublishers, loadSchemas, publisherRecords } from "../lib/sources.mjs";
 import { checkPublisherRecords } from "../validate.mjs";
@@ -76,6 +77,8 @@ function fixtureClone(name) {
   for (const rel of ["plugins", "publishers", "policy"]) {
     fs.cpSync(path.join(FIXTURE, rel), path.join(dir, rel), { recursive: true });
   }
+  // `max_index_bytes`, which the generator's README rule (contract 6.38.0) reads.
+  fs.copyFileSync(path.join(REPO_ROOT, "policy", "limits.json"), path.join(dir, "policy", "limits.json"));
   git("add", "-A");
   git("commit", "-qm", "the fixture tree");
   return { dir, git, head: () => git("rev-parse", "HEAD") };
@@ -608,8 +611,8 @@ export async function run() {
     const gen = path.join(dir, "tools", "build-index.mjs");
     const src = fs.readFileSync(gen, "utf8");
     const marked = src.replace(
-      "export function buildCatalogue({ root = REPO_ROOT, serial } = {}) {",
-      "export function buildCatalogue({ root = REPO_ROOT, serial } = {}) {\n" +
+      "export function buildCatalogue({ root = REPO_ROOT, serial, floorReadsReadmeFile = FLOOR_READS_README_FILE } = {}) {",
+      "export function buildCatalogue({ root = REPO_ROOT, serial, floorReadsReadmeFile = FLOOR_READS_README_FILE } = {}) {\n" +
       "  fetch(\"https://example.invalid/counts\");",
     );
     assert(marked !== src, "the fixture could not add a fetch to buildCatalogue; this test would prove nothing");
@@ -632,8 +635,8 @@ export async function run() {
     const gen = path.join(dir, "tools", "build-index.mjs");
     const src = fs.readFileSync(gen, "utf8");
     fs.writeFileSync(gen, src.replace(
-      "export function buildCatalogue({ root = REPO_ROOT, serial } = {}) {",
-      "export function buildCatalogue({ root = REPO_ROOT, serial } = {}) {\n" +
+      "export function buildCatalogue({ root = REPO_ROOT, serial, floorReadsReadmeFile = FLOOR_READS_README_FILE } = {}) {",
+      "export function buildCatalogue({ root = REPO_ROOT, serial, floorReadsReadmeFile = FLOOR_READS_README_FILE } = {}) {\n" +
       "  if (process.env.PICK) import(process.env.PICK);",
     ));
     git("add", "-A"); git("commit", "-qm", "a computed import in the generator");
@@ -670,5 +673,89 @@ export async function run() {
     assertEqual(sealed.status, 0, `the command failed with the network switched off:\n${sealed.stderr}`);
     assertSameDocument(sealed.stdout, open.stdout,
       `the document regenerated under \`${usable.join(" ")}\` differs from the one regenerated with a network`);
+  });
+
+  // ── contract 6.38.0 (BOT-109, TRUST-49): the inline README leaves the catalogue ──
+  await test("the README rule: the line is ceil(90%), the boundary is exact, and only listings with readme_file lose theirs", () => {
+    assertEqual(omitReadmeLine(1048576), 943719, "90% of 1 MiB, rounded up");
+    assertEqual(FLOOR_READS_README_FILE, false, "the floor constant ships false until the oldest supported Astra reads readme_file");
+    const make = () => ({
+      signed: { plugins: [
+        { id: "a", readme: "# a", readme_file: { path: "assets/x.md", sha256: "0".repeat(64), size: 3 } },
+        { id: "b", readme: "# b", readme_file: { path: "assets/y.md", sha256: "1".repeat(64), size: 3 } },
+        { id: "c", readme: "# c" },
+      ] },
+    });
+    const sized = (n) => () => "x".repeat(n);
+    const cap = 1048576;
+    const below = make();
+    const rb = applyReadmeRule(below, { cap, floorReads: false, stringify: sized(943718) });
+    assertEqual(rb.omitted, false, "one byte under the line omitted");
+    assert(below.signed.plugins.every((p) => p.readme !== undefined), "a README went below the line");
+    const at = make();
+    const ra = applyReadmeRule(at, { cap, floorReads: false, stringify: sized(943719) });
+    assertEqual(ra.omitted, true, "at the line did not omit");
+    assertEqual(at.signed.plugins.map((p) => p.readme).join("|"), "||# c", "all-or-none, and the listing without readme_file keeps its README");
+    assertEqual(at.signed.plugins[0].readme_file.size, 3, "readme_file untouched");
+    const floor = make();
+    assertEqual(applyReadmeRule(floor, { cap, floorReads: true, stringify: sized(10) }).omitted, true, "(a) omits regardless of size");
+    assertEqual(floor.signed.plugins.filter((p) => p.readme !== undefined).length, 1, "(a) kept a README that has a readme_file");
+  });
+
+  await test("the generator measures the build WITH every inline README, and omits only at the line", () => {
+    const full = buildCatalogue({ root: FIXTURE, serial: 1 }).doc;
+    assert(full.signed.plugins.every((p) => p.readme_file && typeof p.readme === "string"), "the fixture stopped carrying both members");
+    const bytes = Buffer.byteLength(catalogueStringify(full), "utf8");
+    // A cap whose 90% line is exactly `bytes` omits; one more byte of cap, whose line is one past it, keeps.
+    const capAt = Math.floor((bytes * 100) / 90);
+    let cap = capAt;
+    while (omitReadmeLine(cap) > bytes) cap--;
+    while (omitReadmeLine(cap + 1) <= bytes) cap++;
+    const withCap = (n) => {
+      const dir = fs.mkdtempSync(path.join(tmp, "readme-rule-"));
+      fs.cpSync(FIXTURE, dir, { recursive: true });
+      fs.mkdirSync(path.join(dir, "policy"), { recursive: true });
+      const limits = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "policy", "limits.json"), "utf8"));
+      fs.writeFileSync(path.join(dir, "policy", "limits.json"), JSON.stringify({ ...limits, max_index_bytes: n }));
+      return buildCatalogue({ root: dir, serial: 1 }).doc;
+    };
+    const omitted = withCap(cap);
+    const kept = withCap(cap + 1);
+    assert(omitted.signed.plugins.every((p) => p.readme === undefined && p.readme_file), "at the line the READMEs were not all omitted");
+    assert(kept.signed.plugins.every((p) => typeof p.readme === "string"), "one byte under the line a README was omitted");
+    assert(buildCatalogue({ root: FIXTURE, serial: 1, floorReadsReadmeFile: true }).doc.signed.plugins.every((p) => p.readme === undefined),
+      "(a) did not omit");
+  });
+
+  await test("the regeneration applies the README rule: agrees with a correct candidate, exits 1 on a wrong omission and a wrong keep", () => {
+    const { dir, git, head } = fixtureClone("readme-rule");
+    const limitsFile = path.join(dir, "policy", "limits.json");
+    const limits = JSON.parse(fs.readFileSync(limitsFile, "utf8"));
+    const keepCommit = head();
+    fs.writeFileSync(limitsFile, JSON.stringify({ ...limits, max_index_bytes: 1000 }));
+    git("add", "-A");
+    git("commit", "-qm", "a cap so small the README rule fires");
+    const omitCommit = head();
+    const at = path.join(tmp, "readme-rule-out");
+    fs.mkdirSync(at, { recursive: true });
+    const make = (commit, name) => {
+      const out = path.join(at, `${name}.json`);
+      const assets = path.join(at, `${name}-assets`);
+      const r = regen(["--generator", commit, "--source", commit, "--repo", dir, "--out", out, "--out-assets", assets, "--quiet"]);
+      assertEqual(r.status, 0, r.stderr);
+      return { out, assets };
+    };
+    const kept = make(keepCommit, "kept");
+    const omitted = make(omitCommit, "omitted");
+    assert(JSON.parse(fs.readFileSync(kept.out, "utf8")).plugins.every((p) => typeof p.readme === "string"), "the roomy cap omitted");
+    assert(JSON.parse(fs.readFileSync(omitted.out, "utf8")).plugins.every((p) => p.readme === undefined), "the tiny cap kept");
+    const compare = (commit, cand) => regen(["--generator", commit, "--source", commit, "--repo", dir,
+      "--candidate", cand.out, "--candidate-assets", cand.assets, "--quiet"]);
+    assertEqual(compare(omitCommit, omitted).status, 0, "a correct omission disagreed");
+    assertEqual(compare(keepCommit, kept).status, 0, "a correct keep disagreed");
+    const wrongOmission = compare(keepCommit, omitted);
+    assertEqual(wrongOmission.status, 1, `a wrong omission was not a disagreement:\n${wrongOmission.stderr}`);
+    const wrongKeep = compare(omitCommit, kept);
+    assertEqual(wrongKeep.status, 1, `a wrong keep was not a disagreement:\n${wrongKeep.stderr}`);
   });
 }
