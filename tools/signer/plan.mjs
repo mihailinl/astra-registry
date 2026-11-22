@@ -533,6 +533,9 @@ export async function catalogueGate({ root, serial, head, limit }) {
           // `withholdGainedMembers`, `withholdReadmeLoss`). Notes, not a carry.
           candidate = held.doc;
           bytes = catalogueStringify(candidate);
+          // The restore grew the catalogue past the size the early gate measured.
+          const after = indexSizeVerdict(Buffer.byteLength(bytes, "utf8"), limit);
+          if (size.ok && !after.ok) failures.push(after.message);
           if (lost.ids.length) notes.push(readmeLossNote(lost, serial));
           if (held.ids.length) notes.push(withheldNote(held, serial));
         } else if (now !== then) {
