@@ -41,7 +41,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { stableStringify } from "../tools/lib/canonical.mjs";
+import { catalogueStringify } from "../tools/lib/canonical.mjs";
 import {
   CATALOG_TTL_DAYS,
   INDEX_SCHEMA,
@@ -217,7 +217,7 @@ function main(argv) {
 
   const doc = JSON.parse(fs.readFileSync(inFile, "utf8"));
   const out = signIndex(doc, { signers, issuedAt, ttlDays });
-  const text = stableStringify(out);
+  const text = catalogueStringify(out);
   if (outFile) {
     fs.mkdirSync(path.dirname(outFile), { recursive: true });
     fs.writeFileSync(outFile, text);

@@ -52,7 +52,7 @@ import { indexSignersFromEnv } from "../../bot/lib/sign.mjs";
 import { loadTestRoot } from "../testkeys/regenerate.mjs";
 import { signIndex } from "../../bot/sign-index.mjs";
 import { signRevocations } from "../sign-revocations.mjs";
-import { stableStringify } from "../lib/canonical.mjs";
+import { catalogueStringify, stableStringify } from "../lib/canonical.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { recordStringProblems } from "../validate.mjs";
 // One spelling of the trailer grammar and of the receipt's name, shared with
@@ -74,6 +74,7 @@ import {
 } from "./plan.mjs";
 import { armingState, pagesRegistryFiles, pagesTree } from "./pages.mjs";
 import { budgetLine, budgetWarning, indexBudget } from "../lib/index-budget.mjs";
+import { ASSETS_DIR, ASSETS_TOTAL_MAX_BYTES, assetFilesFor } from "../lib/catalogue-assets.mjs";
 
 /** D2's four trailers, in the order they are written. */
 export const SIGNER_TRAILER = "sign.yml";
@@ -92,6 +93,11 @@ export const CODES = {
   // moderator reads a listing before it is signed, and SERVE-49's carry is the
   // next thing anybody would otherwise hear.
   nearCap: "SIGNER_INDEX_NEAR_CAP",
+  // BOT-109 (contract 6.28.0/6.29.0): a catalogue whose `icon`/`readme_file`
+  // members name files this run cannot write as stated — over a cap, over the
+  // 32 MiB total, or bytes that are not the member's. SERVE-115 would refuse
+  // the whole `signed` commit, so the catalogue is carried or nothing commits.
+  assets: "SIGNER_ASSET_REFUSED",
 };
 
 const rfc3339 = (d) => new Date(d).toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -127,6 +133,9 @@ function signDocument({ name, candidate, signers, now }) {
  * @param {Map<string,string>} [o.delegatedAt]
  * @param {number} [o.resignAfterHours]
  * @param {number} [o.limit]
+ * @param {"lines"|"indented"} [o.indexLayout]  the catalogue's bytes: `lines`
+ *   (catalogueStringify), or `indented` for the rehearsal cuts that live
+ *   canaries serve byte for byte (tools/testkeys/make-rehearsal-r2.mjs)
  */
 export async function signRun({
   root,
@@ -137,6 +146,7 @@ export async function signRun({
   delegatedAt = new Map(),
   resignAfterHours,
   limit,
+  indexLayout = "lines",
 }) {
   const candidateTrust = trustAtCommit({ root, sha: sourceCommit });
   if (candidateTrust === null) {
@@ -228,6 +238,22 @@ export async function signRun({
       }
     };
 
+    // BOT-109, before a key is touched: the files the candidate's members
+    // name, from the generator's own read of plugins/**. A candidate that
+    // names one it cannot write as stated is carried like any other
+    // catalogue this run may not publish (D4), and the list still commits.
+    if (name === "index") {
+      const made = assetFilesFor(decided.candidate, (a) => plan.gates.index.assets?.get(a.rel) ?? null);
+      if (made.problems.length) {
+        carryOrBlock(
+          `the catalogue names asset files that cannot be written as its members state (BOT-109): ` +
+            made.problems.slice(0, 3).join("; "),
+          [CODES.assets],
+        );
+        continue;
+      }
+    }
+
     // `changed` or `resign`: this run signs it, if a key may.
     const signers = keys[name].signers;
     if (signers.length === 0) {
@@ -236,7 +262,11 @@ export async function signRun({
     }
 
     const signed = signDocument({ name, candidate: decided.candidate, signers, now });
-    const bytes = stableStringify(signed);
+    // The catalogue one member per line, with no indentation (2026-11-22,
+    // policy/limits.json max_index_bytes_note): the signature is over jcs of
+    // `signed`, so whitespace is never signed, and it was 10 % of a document
+    // every client refuses over 1 MiB.
+    const bytes = name === "index" && indexLayout !== "indented" ? catalogueStringify(signed) : stableStringify(signed);
 
     // SERVE-49 on the bytes a client receives (ops couplings 155). These are
     // the bytes `writeTree` puts on `signed`, the service holds to SERVE-50's
@@ -281,6 +311,36 @@ export async function signRun({
       decision: "copied", serial: null, bytes, doc: null,
       raw: blobRawAt({ root, ref: sourceCommit, path: SIGNED_FILES[name] }),
     };
+  }
+
+  // BOT-109: the asset files of the catalogue this commit carries, whatever
+  // its decision, because a `signed` commit is a fresh tree of exactly what is
+  // listed here (`buildSignedCommit`) and SERVE-115 refuses a commit whose
+  // catalogue names a file it does not hold. A signed candidate's files come
+  // from the generator's read (checked above); a carried or unchanged
+  // catalogue's from the `signed` head it was published in. Exactly the named
+  // set, each held to its member, and the total to 6.29.0's cap.
+  let assetFiles = {};
+  if (documents.index?.doc) {
+    const fromHead = (a) => (head?.present && head.sha ? blobRawAt({ root, ref: head.sha, path: a.rel }) : null);
+    const made = assetFilesFor(documents.index.doc, (a) => plan.gates.index.assets?.get(a.rel) ?? fromHead(a));
+    if (made.problems.length) {
+      codes.push(CODES.assets);
+      for (const problem of made.problems.slice(0, 8)) {
+        refusals.push(
+          `BLOCKED ${ASSETS_DIR}/: ${problem} (BOT-109). SERVE-115 refuses a \`signed\` commit whose catalogue names ` +
+          "a file it does not hold as stated, so the run commits nothing.",
+        );
+      }
+    } else {
+      assetFiles = made.files;
+      if (made.count) {
+        notes.push(
+          `${made.count} asset file(s) beside the catalogue, ${made.total} of the ${ASSETS_TOTAL_MAX_BYTES} bytes ` +
+            "one catalogue may name (BOT-109, contract 6.29.0)",
+        );
+      }
+    }
   }
 
   // The early word before SERVE-49 (tools/lib/index-budget.mjs), over the
@@ -405,6 +465,7 @@ export async function signRun({
   for (const [name, rel] of Object.entries(SIGNED_FILES)) {
     if (typeof documents[name]?.bytes === "string") files[rel] = documents[name].bytes;
   }
+  Object.assign(files, assetFiles);
 
   return {
     schema: "astra.registry.signer-run/1",
@@ -564,7 +625,7 @@ export function pushSigned({ root, sha, parent, remote = "origin", branch = SIGN
 function parseArgs(argv) {
   const args = {
     step: "sign", root: REPO_ROOT, out: null, record: null, tree: null, site: null,
-    sourceCommit: null, now: null, testKeys: [], event: null,
+    sourceCommit: null, now: null, testKeys: [], event: null, indexLayout: "lines",
   };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
@@ -578,6 +639,7 @@ function parseArgs(argv) {
     else if (flag === "--now") args.now = argv[++i];
     else if (flag === "--event") args.event = argv[++i] ?? "";
     else if (flag === "--test-key") args.testKeys.push(argv[++i]);
+    else if (flag === "--index-layout") args.indexLayout = argv[++i];
     else throw new Error(`unknown argument: ${flag}`);
   }
   return args;
@@ -679,6 +741,18 @@ async function stepSign(args) {
   try {
     if (event === "") throw new Error("--event was given an empty value; sign.yml passes the run's GITHUB_EVENT_NAME, which Actions always sets");
     resignAfterHours = resignAfterHoursFor(event);
+    // `indented` is the catalogue's layout before 2026-11-22, kept so that
+    // `make-rehearsal-r2 --check` and `rehearsal-push --export-source` reproduce
+    // the fixture SHAs of the four cuts made then. canary-4's hourly re-sign
+    // does not need it: rehearsal-resign compares content, and lineage is git
+    // parentage. Test keys only, so a production run cannot be asked for a
+    // second layout.
+    if (!["lines", "indented"].includes(args.indexLayout)) {
+      throw new Error(`--index-layout is lines or indented, not ${JSON.stringify(args.indexLayout)}`);
+    }
+    if (args.indexLayout !== "lines" && !args.testKeys.length) {
+      throw new Error("--index-layout indented reproduces the rehearsal cuts made before 2026-11-22 and is for --test-key runs only");
+    }
   } catch (e) {
     console.error(`FAIL  ${e.message}`);
     return 2;
@@ -704,7 +778,9 @@ async function stepSign(args) {
     return 1;
   }
 
-  const record = await signRun({ root, sourceCommit, head, now, available, delegatedAt, resignAfterHours });
+  const record = await signRun({
+    root, sourceCommit, head, now, available, delegatedAt, resignAfterHours, indexLayout: args.indexLayout,
+  });
   writeTree({ out: args.out ?? "dist/signed", files: record.files });
   // The bytes are on disk; the record is what every step after this one reads,
   // and it never carries them — a document in a JSON field is a document
@@ -742,6 +818,38 @@ async function stepSign(args) {
   return record.refusals.length ? 1 : 0;
 }
 
+/**
+ * What the commit step commits: the four documents the signing step wrote,
+ * and the asset files beside them held once more to the catalogue — exactly
+ * its named set, each as its member says (BOT-109) — because SERVE-115
+ * refuses the whole commit for one that is not, and the tree sat on disk
+ * between two steps.
+ *
+ * @returns {{files: Record<string, string|Buffer>, problems: string[]}}
+ */
+export function readSignedTree(tree) {
+  const files = {};
+  const problems = [];
+  for (const rel of Object.values(SIGNED_FILES)) {
+    const file = path.join(tree, rel);
+    if (!fs.existsSync(file)) {
+      problems.push(`${file} is not in the signed tree; the signing step writes all four documents (D2)`);
+      continue;
+    }
+    files[rel] = fs.readFileSync(file, "utf8");
+  }
+  if (problems.length) return { files: {}, problems };
+  const written = readTree(path.join(tree, ASSETS_DIR));
+  const assets = assetFilesFor(JSON.parse(files[SIGNED_FILES.index]), (a) => written[a.rel.slice(ASSETS_DIR.length + 1)] ?? null);
+  problems.push(...assets.problems.map((p) => `${p} (BOT-109)`));
+  for (const n of Object.keys(written)) {
+    if (!Object.hasOwn(assets.files, `${ASSETS_DIR}/${n}`)) {
+      problems.push(`${ASSETS_DIR}/${n} is in the signed tree and the catalogue names no such file`);
+    }
+  }
+  return problems.length ? { files: {}, problems } : { files: { ...files, ...assets.files }, problems };
+}
+
 function stepCommit(args) {
   const root = args.root;
   const record = JSON.parse(fs.readFileSync(args.record, "utf8"));
@@ -753,16 +861,12 @@ function stepCommit(args) {
     output({ committed: "false", signed_sha: "", receipt: "" });
     return 0;
   }
-  const tree = args.tree ?? "dist/signed";
-  const files = {};
-  for (const rel of Object.values(SIGNED_FILES)) {
-    const file = path.join(tree, rel);
-    if (!fs.existsSync(file)) {
-      console.error(`::error::${file} is not in the signed tree; the signing step writes all four documents (D2)`);
-      return 1;
-    }
-    files[rel] = fs.readFileSync(file, "utf8");
+  const read = readSignedTree(args.tree ?? "dist/signed");
+  if (read.problems.length) {
+    for (const p of read.problems) console.error(`::error::${p}`);
+    return 1;
   }
+  const files = read.files;
 
   const runUrl = `${process.env.GITHUB_SERVER_URL ?? "https://github.com"}/${process.env.GITHUB_REPOSITORY}` +
     `/actions/runs/${process.env.GITHUB_RUN_ID}`;

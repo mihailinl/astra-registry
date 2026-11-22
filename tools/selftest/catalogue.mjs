@@ -5,6 +5,7 @@
 // the module boundaries are not the same line, and the printed order is the
 // thing under test.
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -12,11 +13,11 @@ import { cleanEnv, fixtureEnv } from "../lib/git-env.mjs";
 
 import { buildIndex, resolveSerial } from "../build-index.mjs";
 import { isShallow } from "../coverage/git.mjs";
-import { stableStringify } from "../lib/canonical.mjs";
-import { pluginsWithoutPublisher, withholdGainedOwnerIds } from "../signer/plan.mjs";
+import { catalogueStringify, jcs, stableStringify } from "../lib/canonical.mjs";
+import { pluginsWithoutPublisher, withheldNote, withholdGainedMembers } from "../signer/plan.mjs";
 import { validate as validateSchema } from "../lib/jsonschema.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
-import { test, assert, assertEqual, neverAsk, tmp, validateTree, errorsMatching } from "./harness.mjs";
+import { test, assert, assertEqual, assertCatalogueLayout, neverAsk, tmp, validateTree, errorsMatching } from "./harness.mjs";
 
 export async function run() {
   await test("the serial counts the commit being made, not the one behind it", () => {
@@ -72,8 +73,22 @@ export async function run() {
   console.log("\nthe real registry");
   await test("index.json is byte-identical to a fresh generation", () => {
     const committed = fs.readFileSync(path.join(REPO_ROOT, "registry/v1/index.json"), "utf8");
-    const regenerated = stableStringify(buildIndex({ serial: JSON.parse(committed).signed.serial }));
+    const regenerated = catalogueStringify(buildIndex({ serial: JSON.parse(committed).signed.serial }));
     assert(committed === regenerated, "registry/v1/index.json is not what tools/build-index.mjs produces");
+  });
+  // 2026-11-22: the catalogue is one member per line with no indentation, the
+  // 10 % of a 1 MiB-capped document that was whitespace and that nothing reads.
+  // Proved to be the same document as the indented form: what is signed is
+  // jcs(`signed`), so a layout change that moved the JCS digest would change
+  // what clients verify, not only how many bytes they fetch. The signer's own
+  // bytes are pinned in signer-run.mjs.
+  await test("the catalogue is one member per line, unindented, and the same JCS digest as the indented form", () => {
+    const committed = fs.readFileSync(path.join(REPO_ROOT, "registry/v1/index.json"), "utf8");
+    assertCatalogueLayout(committed, "registry/v1/index.json");
+    const indented = stableStringify(JSON.parse(committed));
+    const digest = (s) => crypto.createHash("sha256").update(jcs(JSON.parse(s).signed)).digest("hex");
+    assertEqual(digest(committed), digest(indented), "the two layouts canonicalise to different `signed` members");
+    assertEqual(stableStringify(JSON.parse(committed)), indented, "the layouts are not one document");
   });
   // A catalogue-wide canary for the bug above, on the real document rather than a
   // fixture. The predicate is proved able to fail on the very next line, because
@@ -368,18 +383,18 @@ export async function run() {
       console.log(`      (serial ${baseDoc.signed.serial} → ${serial}: the catalogue's version rose, so a difference publishes)`);
       return;
     }
-    // ID-77's introduction, and only that. The generator learned `owner_id` (6.34.0, then 6.35.2's effective
-    // baseline) after listings already existed, so the commit teaching it renders them differently at an
-    // unchanged serial, and nothing under plugins/ could honestly move with it. The signer withholds the gain
-    // until the next listing change raises the serial (`withholdGainedOwnerIds`, the same function here), so
-    // an entry GAINING `owner_id` where the base entry has none is not compared; an entry whose `owner_id`
-    // changes, or loses it, at an equal serial is red like any other difference.
-    const held = withholdGainedOwnerIds(buildIndex({ root: REPO_ROOT, serial }), baseDoc);
+    // A member's introduction, and only that. The generator learned `owner_id` (ID-77: 6.34.0, then 6.35.2's
+    // effective baseline) and the `icon`/`readme_file` pair (6.28.0) after listings already existed, so the
+    // commit teaching it renders them differently at an unchanged serial, and nothing under plugins/ could
+    // honestly move with it. The signer withholds the gain until the next listing change raises the serial
+    // (`withholdGainedMembers`, the same function here), so an entry GAINING one where the base entry has none
+    // is not compared; an entry whose member changes, or loses it, at an equal serial is red like any other
+    // difference.
+    const held = withholdGainedMembers(buildIndex({ root: REPO_ROOT, serial }), baseDoc);
     const before = stableStringify(pluginsWithoutPublisher(baseDoc)).split("\n");
     const after = stableStringify(pluginsWithoutPublisher(held.doc)).split("\n");
     if (held.ids.length) {
-      console.log(`      (${held.ids.length} entr${held.ids.length === 1 ? "y gains" : "ies gain"} \`owner_id\` (ID-77) at serial ${serial}; ` +
-        "withheld by the signer until the next listing change raises the serial)");
+      console.log(`      (${withheldNote(held, serial)}; the signer withholds it the same way)`);
     }
     let first = null;
     for (let i = 0; i < Math.max(before.length, after.length); i++) {

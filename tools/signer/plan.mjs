@@ -77,16 +77,21 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { CATALOGUE_PATHSPEC, buildIndex } from "../build-index.mjs";
+import { CATALOGUE_PATHSPEC, buildCatalogue } from "../build-index.mjs";
 import { SERIAL_FLAGS, SERIAL_PATHSPEC, buildRevocations } from "../lib/revocations.mjs";
-import { stableStringify } from "../lib/canonical.mjs";
+import { catalogueStringify, stableStringify } from "../lib/canonical.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { runValidation } from "../validate.mjs";
 import { blobAt, gitMaybe, revCount } from "./git.mjs";
 
 export const SIGNED_BRANCH = "signed";
 
-/** D2: each `signed` commit holds exactly these four files. */
+/**
+ * D2: each `signed` commit holds these four documents, and since contract
+ * 6.28.0 beside them exactly the asset files the catalogue's `icon` and
+ * `readme_file` members name, under `registry/v1/assets/` (BOT-109,
+ * tools/lib/catalogue-assets.mjs; written in tools/signer/run.mjs).
+ */
 export const SIGNED_FILES = {
   index: "registry/v1/index.json",
   revocations: "registry/v1/revocations.json",
@@ -193,37 +198,66 @@ export function pluginsWithoutPublisher(doc) {
 }
 
 /**
- * ID-77's introduction at an equal serial: `candidate` with `owner_id` taken
- * off every entry that gained it where `headDoc`'s entry has none.
+ * The listing members a commit outside plugins/ may teach the generator, and
+ * which the signer therefore withholds at an equal serial when an entry GAINS
+ * them (`withholdGainedMembers`).
  *
- * The generator learned `owner_id` after listings existed, so the commit that
- * taught it renders them differently at an unchanged serial, and nothing under
- * plugins/ can honestly move with it (BOT-54's door). Signing that content at
- * the same serial would break TRUST-28; carrying the served catalogue instead
- * pages on every run and lets it age towards expiry. So the gain is withheld:
- * the signer signs what is served (re-signing it on schedule, as for any
- * unchanged catalogue), and the next commit under plugins/ raises the serial
- * and publishes every `owner_id` at once. An absent `owner_id` is today's
- * behaviour in the client (the name pin), so nothing is lost meanwhile.
- *
- * Only a GAIN is withheld. An entry whose `owner_id` changed or was lost, a
- * new entry, or any other difference is left in place, so TRUST-28 still
- * refuses it.
- *
- * @returns {{doc: object, ids: string[]}} a copy of `candidate`, and the ids withheld
+ *   - `owner_id` (ID-77, contract 6.34.0/6.35.2);
+ *   - `icon` and `readme_file` (contract 6.28.0): the content-addressed pair
+ *     beside the unchanged inline `icon_url` and `readme`.
  */
-export function withholdGainedOwnerIds(candidate, headDoc) {
+export const WITHHELD_ON_GAIN = Object.freeze(["owner_id", "icon", "readme_file"]);
+
+/**
+ * A member's introduction at an equal serial: `candidate` with each of
+ * `members` taken off every entry that gained it where `headDoc`'s entry has
+ * none.
+ *
+ * The generator learned these members after listings existed, so the commit
+ * that taught it renders them differently at an unchanged serial, and nothing
+ * under plugins/ can honestly move with it (BOT-54's door). Signing that
+ * content at the same serial would break TRUST-28; carrying the served
+ * catalogue instead pages on every run and lets it age towards expiry. So the
+ * gain is withheld: the signer signs what is served (re-signing it on
+ * schedule, as for any unchanged catalogue), and the next commit under
+ * plugins/ raises the serial and publishes every gained member at once. An
+ * absent `owner_id` is today's behaviour in the client (the name pin), and an
+ * absent pair is the inline `icon_url` and `readme` every client reads, so
+ * nothing is lost meanwhile.
+ *
+ * Only a GAIN is withheld. An entry whose member changed or was lost, a new
+ * entry, or any other difference is left in place, so TRUST-28 still refuses
+ * it.
+ *
+ * @returns {{doc: object, ids: string[], members: string[]}} a copy of
+ *   `candidate`, the ids of the entries something was withheld from, and the
+ *   members withheld
+ */
+export function withholdGainedMembers(candidate, headDoc, members = WITHHELD_ON_GAIN) {
   const doc = structuredClone(candidate);
   const plugins = (doc?.signed ?? doc)?.plugins ?? [];
-  const headHas = new Map(((headDoc?.signed ?? headDoc)?.plugins ?? []).map((e) => [e?.id, Object.hasOwn(e ?? {}, "owner_id")]));
-  const ids = [];
+  const headEntries = new Map(((headDoc?.signed ?? headDoc)?.plugins ?? []).map((e) => [e?.id, e ?? {}]));
+  const ids = new Set();
+  const withheld = new Set();
   for (const entry of plugins) {
-    if (Object.hasOwn(entry ?? {}, "owner_id") && headHas.get(entry.id) === false) {
-      delete entry.owner_id;
-      ids.push(entry.id);
+    const before = headEntries.get(entry?.id);
+    if (!before) continue;
+    for (const member of members) {
+      if (Object.hasOwn(entry ?? {}, member) && !Object.hasOwn(before, member)) {
+        delete entry[member];
+        ids.add(entry.id);
+        withheld.add(member);
+      }
     }
   }
-  return { doc, ids };
+  return { doc, ids: [...ids], members: members.filter((m) => withheld.has(m)) };
+}
+
+/** The note a withheld gain leaves, one spelling for the signer and the selftest that predicts it. */
+export function withheldNote(held, serial) {
+  const n = held.ids.length;
+  return `${n} entr${n === 1 ? "y gains" : "ies gain"} ${held.members.map((m) => `\`${m}\``).join(", ")} at serial ` +
+    `${serial}; withheld until a commit under plugins/ raises the serial (TRUST-28): ${held.ids.join(", ")}`;
 }
 
 /**
@@ -403,21 +437,25 @@ export async function catalogueGate({ root, serial, head, limit }) {
 
   let candidate = null;
   let bytes = null;
+  // The files the candidate's `icon` and `readme_file` members name (contract
+  // 6.28.0), from the same read of the sources; the run writes them beside it
+  // (BOT-109, tools/signer/run.mjs).
+  let assets = new Map();
   try {
-    candidate = buildIndex({ root, serial });
-    bytes = stableStringify(candidate);
+    ({ doc: candidate, assets } = buildCatalogue({ root, serial }));
+    bytes = catalogueStringify(candidate);
     // Generate twice and diff. Not a formality: the generator walks a
     // directory, reads icons and READMEs off disk and sorts what it finds, and
     // the day one of those orderings stops being total is the day two runs an
     // hour apart publish two different catalogues at one serial, each verifying
     // perfectly.
-    const again = stableStringify(buildIndex({ root, serial }));
+    const again = catalogueStringify(buildCatalogue({ root, serial }).doc);
     if (again !== bytes) {
       failures.push("two generations of the catalogue at one serial produced different bytes");
     }
   } catch (e) {
     failures.push(`the catalogue does not generate: ${e.message}`);
-    return { ok: false, failures, notes, candidate: null, bytes: null, serial };
+    return { ok: false, failures, notes, candidate: null, bytes: null, assets: new Map(), serial };
   }
 
   // The generator's output, before signing. A necessary condition only:
@@ -447,16 +485,14 @@ export async function catalogueGate({ root, serial, head, limit }) {
         // path the serial counts and may legitimately change under it.
         const now = stableStringify(pluginsWithoutPublisher(candidate));
         const then = stableStringify(pluginsWithoutPublisher(headDoc));
-        const held = now === then ? null : withholdGainedOwnerIds(candidate, headDoc);
+        const held = now === then ? null : withholdGainedMembers(candidate, headDoc);
         if (held?.ids.length && stableStringify(pluginsWithoutPublisher(held.doc)) === then) {
-          // The one known equal-serial difference: `owner_id` gained, nothing
-          // else (see `withholdGainedOwnerIds`). A note, not a carry.
+          // The known equal-serial differences: a member the generator learned
+          // gained, nothing else (see `withholdGainedMembers`). A note, not a
+          // carry.
           candidate = held.doc;
-          bytes = stableStringify(candidate);
-          notes.push(
-            `${held.ids.length} entr${held.ids.length === 1 ? "y gains" : "ies gain"} \`owner_id\` (ID-77) at serial ` +
-            `${serial}; withheld until a commit under plugins/ raises the serial (TRUST-28): ${held.ids.join(", ")}`,
-          );
+          bytes = catalogueStringify(candidate);
+          notes.push(withheldNote(held, serial));
         } else if (now !== then) {
           failures.push(
             `the catalogue differs from \`signed\`'s head at the same serial ${serial} (TRUST-28). ` +
@@ -468,7 +504,7 @@ export async function catalogueGate({ root, serial, head, limit }) {
     }
   }
 
-  return { ok: failures.length === 0, failures, notes, candidate, bytes, serial };
+  return { ok: failures.length === 0, failures, notes, candidate, bytes, assets, serial };
 }
 
 /**

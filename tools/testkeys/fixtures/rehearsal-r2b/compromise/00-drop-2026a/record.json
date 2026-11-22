@@ -58,7 +58,7 @@
   ],
   "status": "green",
   "commit": true,
-  "$command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 091320fb8485bb66265a0fcb6b0a5bbd5dc07280 --now 2026-09-26T05:00:00Z --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-compromise-00-drop-2026a.json",
+  "$command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 091320fb8485bb66265a0fcb6b0a5bbd5dc07280 --now 2026-09-26T05:00:00Z --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-compromise-00-drop-2026a.json --index-layout indented",
   "$signed_sha": "b51edb7146254db8f9549c8176206c4ca0b88b8d",
   "$commit_message": "signed: catalogue 4, withdrawal list 5 at 091320fb8485\n\nregistry/v1/index.json: changed at serial 4\nregistry/v1/revocations.json: changed at serial 5\n\nSource-Commit: 091320fb8485bb66265a0fcb6b0a5bbd5dc07280\nRun: https://github.com/mihailinl/astra-registry/actions/runs/0\nSigner: sign.yml\nIndex-Source-Commit: 091320fb8485bb66265a0fcb6b0a5bbd5dc07280"
 }

@@ -35,7 +35,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { isTime } from "../lib/time.mjs";
-import { blobAt, gitMaybe } from "./git.mjs";
+import { blobAt, blobRawAt, gitMaybe } from "./git.mjs";
+import { ASSETS_DIR } from "../lib/catalogue-assets.mjs";
 import { SIGNED_FILES } from "./plan.mjs";
 
 /** The flag. Its content is `schema` and `armed_at`, a §0.7 time, exactly (contract B.4, since 2.11.0). */
@@ -240,13 +241,19 @@ export function flagPermanenceProblems({ root, ref = "HEAD", flagPath = FLAG_PAT
 }
 
 /**
- * The four `registry/v1/` files Pages serves, as bytes.
+ * The four `registry/v1/` files Pages serves, as bytes, and the asset files
+ * beside them.
  *
  * Three of them are always `signed`'s head. The fourth is the latch:
  *
  *   * armed   → `signed`'s list, signed, which is what arms a 0.2.x client;
  *   * not yet → main's committed unsigned list, exactly as today, so those
  *               clients stay `NotEnforced`.
+ *
+ * The asset files (contract 6.28.0) are the head's `registry/v1/assets/`, as
+ * committed: a client that fetched this host's index resolves an `icon` or
+ * `readme_file` path against it (CLIENT-104), and a file missing here is a
+ * fallback to the inline form on every card.
  *
  * @param {{root: string, head: object, arming: {armed: boolean}, sourceCommit: string}} opts
  */
@@ -262,6 +269,7 @@ export function pagesRegistryFiles({ root, head, arming, sourceCommit }) {
     }
     files[SIGNED_FILES[name]] = bytes;
   }
+  Object.assign(files, headAssetFiles({ root, sha: head.sha }));
 
   if (arming.armed) {
     const bytes = head.bytes.revocations;
@@ -277,6 +285,22 @@ export function pagesRegistryFiles({ root, head, arming, sourceCommit }) {
     throw new Error(`the latch is open and main@${sourceCommit.slice(0, 12)} has no ${SIGNED_FILES.revocations}`);
   }
   return { files: { ...files, [SIGNED_FILES.revocations]: unsigned }, list_source: "main" };
+}
+
+/** Every file under `registry/v1/assets/` at a `signed` commit, path → bytes. */
+export function headAssetFiles({ root, sha }) {
+  // A head that names no commit here holds no files (the suite's synthetic
+  // heads); a real head always resolves, because `fetchSignedHead` resolved it.
+  if (!gitMaybe(["rev-parse", "--verify", "--quiet", `${sha}^{commit}`], { root }).ok) return {};
+  const listed = gitMaybe(["ls-tree", "-r", "--name-only", sha, "--", `${ASSETS_DIR}/`], { root });
+  if (!listed.ok) throw new Error(`cannot list ${ASSETS_DIR}/ at \`signed\`@${String(sha).slice(0, 12)}: ${listed.error}`);
+  const files = {};
+  for (const rel of listed.out.split("\n").filter(Boolean)) {
+    const bytes = blobRawAt({ root, ref: sha, path: rel });
+    if (bytes === null) throw new Error(`\`signed\`@${String(sha).slice(0, 12)} lists ${rel} and has no blob for it`);
+    files[rel] = bytes;
+  }
+  return files;
 }
 
 /**

@@ -27,7 +27,7 @@ import crypto from "node:crypto";
 
 import { validate as validateSchema } from "./lib/jsonschema.mjs";
 import { POSITIVE_INTEGER_LITERAL, topLevelMembers } from "./lib/json-literal.mjs";
-import { ijsonProblems, pathSegment, stableStringify } from "./lib/canonical.mjs";
+import { catalogueStringify, ijsonProblems, pathSegment, stableStringify } from "./lib/canonical.mjs";
 import { compareSemver, parseSemver } from "./lib/semver.mjs";
 import { reservedPrefixViolation, stagingListingId } from "./lib/reserved.mjs";
 import {
@@ -977,7 +977,7 @@ function checkIndex(ctx) {
 
   let regenerated;
   try {
-    regenerated = stableStringify(buildIndex({ root, serial: signed.serial }));
+    regenerated = catalogueStringify(buildIndex({ root, serial: signed.serial }));
   } catch (e) {
     report.error(rel, `cannot be regenerated from plugins/: ${e.message}`);
     return;

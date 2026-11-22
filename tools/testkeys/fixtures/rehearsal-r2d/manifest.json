@@ -134,7 +134,7 @@
           "signed_by": null
         }
       },
-      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 8a7d50409ebffe193f1556f7ec2845620a9fbcba --now 2026-10-03T00:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --out $WORK/.dist-signed --record $WORK/.record-rotation-00-baseline.json",
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 8a7d50409ebffe193f1556f7ec2845620a9fbcba --now 2026-10-03T00:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --out $WORK/.dist-signed --record $WORK/.record-rotation-00-baseline.json --index-layout indented",
       "what": "The state the rehearsal starts from: one index key, one signature on each document.",
       "trust_serial": 2
     },
@@ -178,7 +178,7 @@
           "signed_by": null
         }
       },
-      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit fa210b585134997d67caa9129775c4391b751808 --now 2026-10-03T01:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-01-delegate.json",
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit fa210b585134997d67caa9129775c4391b751808 --now 2026-10-03T01:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-01-delegate.json --index-layout indented",
       "what": "ROLL-60's trust.json at serial + 1. Dual-signed list; catalogue by the outgoing key alone.",
       "trust_serial": 3,
       "delegated_at": "2026-10-03T01:00:00Z",
@@ -224,7 +224,7 @@
           "signed_by": null
         }
       },
-      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 2600a2dbda23dadf4fc86d1e5fec1c3fe05a6ad8 --now 2026-10-03T04:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-02-mid-window.json",
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 2600a2dbda23dadf4fc86d1e5fec1c3fe05a6ad8 --now 2026-10-03T04:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-02-mid-window.json --index-layout indented",
       "what": "Three hours after the delegation: SERVE-30's seven still have not passed.",
       "trust_serial": 3,
       "delegated_at": "2026-10-03T01:00:00Z",
@@ -271,7 +271,7 @@
           "signed_by": null
         }
       },
-      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit af34a47d56a8ba755afabb80a9b50510d2452bed --now 2026-10-03T05:00:00Z --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-compromise-00-drop-2026a.json",
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit af34a47d56a8ba755afabb80a9b50510d2452bed --now 2026-10-03T05:00:00Z --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-compromise-00-drop-2026a.json --index-layout indented",
       "what": "D10 as proposed, as ONE commit that verifies whole: trust.json at serial + 2 dropping the outgoing key, a list signed by the incoming key alone, and the catalogue re-signed with it.",
       "trust_serial": 4,
       "forks_from": "rotation/02-mid-window",
@@ -319,7 +319,7 @@
           "signed_by": null
         }
       },
-      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit d6c9efd4e0eb421459782eca00663024a0e9cf7a --now 2026-10-03T05:00:00Z --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-compromise-01-trust-only-blocked.json",
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit d6c9efd4e0eb421459782eca00663024a0e9cf7a --now 2026-10-03T05:00:00Z --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-compromise-01-trust-only-blocked.json --index-layout indented",
       "what": "D10's procedure with nothing in the Source-Commit but trust.json. The signer commits NOTHING: both documents are `unchanged`, so the head's bytes — signed by the dropped key — would be re-committed, and SERVE-95 refuses them. No documents, a record only.",
       "trust_serial": 4,
       "forks_from": "rotation/02-mid-window",
@@ -366,7 +366,7 @@
           "signed_by": null
         }
       },
-      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit fe933c112ce0e9c3460582840cba97e13162f743 --now 2026-10-03T09:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-03-window-open.json",
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit fe933c112ce0e9c3460582840cba97e13162f743 --now 2026-10-03T09:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-03-window-open.json --index-layout indented",
       "what": "Eight hours after the delegation: SERVE-30's seven have passed and the catalogue is dual-signed.",
       "trust_serial": 3,
       "delegated_at": "2026-10-03T01:00:00Z",
@@ -413,7 +413,7 @@
           "signed_by": null
         }
       },
-      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 496d349d48fb869600085dfdeec9596cc96130c6 --now 2026-10-03T10:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-04-root-change.json",
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 496d349d48fb869600085dfdeec9596cc96130c6 --now 2026-10-03T10:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-04-root-change.json --index-layout indented",
       "what": "SERVE-16 and SERVE-92: root.json drops the retiring root and trust.json is re-signed by the new active root at the same serial, with a byte-identical `signed` payload (SERVE-20).",
       "trust_serial": 3,
       "root_set": [
@@ -462,7 +462,7 @@
           "signed_by": null
         }
       },
-      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 0f215cbd96a921dc327ea854ebf9765310b4b0fd --now 2026-10-03T11:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-05-after-root.json",
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 0f215cbd96a921dc327ea854ebf9765310b4b0fd --now 2026-10-03T11:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-05-after-root.json --index-layout indented",
       "what": "ROLL-60's last clause: the trust.json and catalogue that FOLLOW the root change, which the daemon must keep accepting because it compiles both test roots and reads root.json never.",
       "trust_serial": 3,
       "root_set": [
@@ -475,7 +475,7 @@
       "command": "node tools/testkeys/sign-trust.mjs --key TEST-ONLY-DO-NOT-TRUST-root-a --in $WORK/.trust-unsigned-baseline.json --out $WORK/registry/v1/trust.json --banner TEST-ONLY REHEARSAL FIXTURE (RC-R2-5 / ROLL-60). Signed with the throwaway keys in tools/testkeys/, whose private halves are published in this repository. No production daemon trusts these roots and nothing a user installs may be signed with them."
     },
     {
-      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 8a7d50409ebffe193f1556f7ec2845620a9fbcba --now 2026-10-03T00:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --out $WORK/.dist-signed --record $WORK/.record-rotation-00-baseline.json"
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 8a7d50409ebffe193f1556f7ec2845620a9fbcba --now 2026-10-03T00:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --out $WORK/.dist-signed --record $WORK/.record-rotation-00-baseline.json --index-layout indented"
     },
     {
       "command": "node tools/signer/run.mjs --step commit --root $WORK --record $WORK/.record-rotation-00-baseline.json --tree $WORK/.dist-signed",
@@ -491,7 +491,7 @@
       "command": "node tools/testkeys/sign-trust.mjs --key TEST-ONLY-DO-NOT-TRUST-root-a --in $WORK/.trust-unsigned-delegate.json --out $WORK/registry/v1/trust.json --banner TEST-ONLY REHEARSAL FIXTURE (RC-R2-5 / ROLL-60). Signed with the throwaway keys in tools/testkeys/, whose private halves are published in this repository. No production daemon trusts these roots and nothing a user installs may be signed with them."
     },
     {
-      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit fa210b585134997d67caa9129775c4391b751808 --now 2026-10-03T01:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-01-delegate.json"
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit fa210b585134997d67caa9129775c4391b751808 --now 2026-10-03T01:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-01-delegate.json --index-layout indented"
     },
     {
       "command": "node tools/signer/run.mjs --step commit --root $WORK --record $WORK/.record-rotation-01-delegate.json --tree $WORK/.dist-signed",
@@ -504,7 +504,7 @@
       }
     },
     {
-      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 2600a2dbda23dadf4fc86d1e5fec1c3fe05a6ad8 --now 2026-10-03T04:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-02-mid-window.json"
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 2600a2dbda23dadf4fc86d1e5fec1c3fe05a6ad8 --now 2026-10-03T04:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-02-mid-window.json --index-layout indented"
     },
     {
       "command": "node tools/signer/run.mjs --step commit --root $WORK --record $WORK/.record-rotation-02-mid-window.json --tree $WORK/.dist-signed",
@@ -520,7 +520,7 @@
       "command": "node tools/testkeys/sign-trust.mjs --key TEST-ONLY-DO-NOT-TRUST-root-a --in $WORK/.trust-unsigned-compromise.json --out $WORK/registry/v1/trust.json --banner TEST-ONLY REHEARSAL FIXTURE (RC-R2-5 / ROLL-60). Signed with the throwaway keys in tools/testkeys/, whose private halves are published in this repository. No production daemon trusts these roots and nothing a user installs may be signed with them."
     },
     {
-      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit af34a47d56a8ba755afabb80a9b50510d2452bed --now 2026-10-03T05:00:00Z --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-compromise-00-drop-2026a.json"
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit af34a47d56a8ba755afabb80a9b50510d2452bed --now 2026-10-03T05:00:00Z --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-compromise-00-drop-2026a.json --index-layout indented"
     },
     {
       "command": "node tools/signer/run.mjs --step commit --root $WORK --record $WORK/.record-compromise-00-drop-2026a.json --tree $WORK/.dist-signed",
@@ -539,13 +539,13 @@
       "command": "node tools/testkeys/sign-trust.mjs --key TEST-ONLY-DO-NOT-TRUST-root-a --in $WORK/.trust-unsigned-blocked.json --out $WORK/registry/v1/trust.json --banner TEST-ONLY REHEARSAL FIXTURE (RC-R2-5 / ROLL-60). Signed with the throwaway keys in tools/testkeys/, whose private halves are published in this repository. No production daemon trusts these roots and nothing a user installs may be signed with them."
     },
     {
-      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit d6c9efd4e0eb421459782eca00663024a0e9cf7a --now 2026-10-03T05:00:00Z --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-compromise-01-trust-only-blocked.json"
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit d6c9efd4e0eb421459782eca00663024a0e9cf7a --now 2026-10-03T05:00:00Z --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-compromise-01-trust-only-blocked.json --index-layout indented"
     },
     {
       "command": "git -C $WORK reset -q --hard 2600a2dbda23dadf4fc86d1e5fec1c3fe05a6ad8"
     },
     {
-      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit fe933c112ce0e9c3460582840cba97e13162f743 --now 2026-10-03T09:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-03-window-open.json"
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit fe933c112ce0e9c3460582840cba97e13162f743 --now 2026-10-03T09:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-03-window-open.json --index-layout indented"
     },
     {
       "command": "node tools/signer/run.mjs --step commit --root $WORK --record $WORK/.record-rotation-03-window-open.json --tree $WORK/.dist-signed",
@@ -561,7 +561,7 @@
       "command": "node tools/testkeys/sign-trust.mjs --key TEST-ONLY-DO-NOT-TRUST-root-b --in $WORK/.trust-unsigned-rootchange.json --out $WORK/registry/v1/trust.json --banner TEST-ONLY REHEARSAL FIXTURE (RC-R2-5 / ROLL-60). Signed with the throwaway keys in tools/testkeys/, whose private halves are published in this repository. No production daemon trusts these roots and nothing a user installs may be signed with them."
     },
     {
-      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 496d349d48fb869600085dfdeec9596cc96130c6 --now 2026-10-03T10:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-04-root-change.json"
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 496d349d48fb869600085dfdeec9596cc96130c6 --now 2026-10-03T10:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-04-root-change.json --index-layout indented"
     },
     {
       "command": "node tools/signer/run.mjs --step commit --root $WORK --record $WORK/.record-rotation-04-root-change.json --tree $WORK/.dist-signed",
@@ -574,7 +574,7 @@
       }
     },
     {
-      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 0f215cbd96a921dc327ea854ebf9765310b4b0fd --now 2026-10-03T11:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-05-after-root.json"
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 0f215cbd96a921dc327ea854ebf9765310b4b0fd --now 2026-10-03T11:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-05-after-root.json --index-layout indented"
     },
     {
       "command": "node tools/signer/run.mjs --step commit --root $WORK --record $WORK/.record-rotation-05-after-root.json --tree $WORK/.dist-signed",

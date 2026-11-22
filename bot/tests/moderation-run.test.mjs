@@ -114,7 +114,7 @@ const FIXTURE_BOUND = 3;
 import { BOT_AUDIENCE } from "../lib/oidc.mjs";
 import { BODIES, CALL_TIMEOUT_MS } from "../lib/service.mjs";
 import { buildIndex } from "../../tools/build-index.mjs";
-import { stableStringify } from "../../tools/lib/canonical.mjs";
+import { catalogueStringify, stableStringify } from "../../tools/lib/canonical.mjs";
 import { ID_PATTERN } from "../../tools/lib/ids.mjs";
 import {
   ACTIONS,
@@ -2118,7 +2118,7 @@ test("a run with nothing to commit leaves the commit step nothing to fail on", a
  */
 function withDocuments(root) {
   writeAll(root, {
-    [INDEX_FILE]: stableStringify(buildIndex({ root })),
+    [INDEX_FILE]: catalogueStringify(buildIndex({ root })),
     [REVOCATIONS_FILE]: stableStringify(buildRevocations({ root })),
   });
   sh(["add", "-A"], root);

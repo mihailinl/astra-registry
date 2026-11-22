@@ -56,7 +56,7 @@
   ],
   "status": "green",
   "commit": true,
-  "$command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 57e9b86b7c9c95bf3be11b218dc6350e84956696 --now 2026-09-22T09:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-03-window-open.json",
+  "$command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 57e9b86b7c9c95bf3be11b218dc6350e84956696 --now 2026-09-22T09:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-03-window-open.json --index-layout indented",
   "$signed_sha": "bc4502bf3f40ad2092e518603e26cbf8795f251f",
   "$commit_message": "signed: catalogue 4, withdrawal list 5 at 57e9b86b7c9c\n\nregistry/v1/index.json: changed at serial 4\nregistry/v1/revocations.json: changed at serial 5\n\nSource-Commit: 57e9b86b7c9c95bf3be11b218dc6350e84956696\nRun: https://github.com/mihailinl/astra-registry/actions/runs/0\nSigner: sign.yml\nIndex-Source-Commit: 57e9b86b7c9c95bf3be11b218dc6350e84956696"
 }

@@ -19,8 +19,9 @@
 //   3. they are compared with the commit's plugins/** and log/**, read from git
 //      objects, and every missing, extra and differing path is named; the
 //      export's `state_sha256` is held to its own files and to the commit's;
-//   4. `buildIndex` runs at that serial over the scratch tree and over the
-//      commit's own tree, and the two catalogues are compared byte for byte.
+//   4. `buildCatalogue` runs at that serial over the scratch tree and over the
+//      commit's own tree, and the two catalogues and their asset files are
+//      compared byte for byte.
 //
 // Exit 0 when every export is equal on all of it, 1 on any difference, 2 on a
 // usage error.
@@ -39,8 +40,9 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { buildIndex } from "./build-index.mjs";
-import { stableStringify } from "./lib/canonical.mjs";
+import { buildCatalogue } from "./build-index.mjs";
+import { catalogueStringify } from "./lib/canonical.mjs";
+import { sha256Hex } from "../bot/lib/assets.mjs";
 import {
   STATE_ROOTS, blobsAt, compareStatePaths, exportFiles, stateAt, stateSha256, treeEntriesAt,
 } from "./lib/export-state.mjs";
@@ -98,9 +100,18 @@ export function compareStates(want, got) {
   };
 }
 
+/**
+ * The catalogue at `serial` over a tree, and its asset files (contract 6.28.0)
+ * folded into the text compared: one line per file, `<path> <sha256 of the
+ * bytes>`, after the document. The members already name each file by its
+ * digest, so this adds the one thing they cannot say — that the files the
+ * signer would write from this tree are those bytes (TRUST-49's set).
+ */
 function indexOf(root, serial) {
   try {
-    return { text: stableStringify(buildIndex({ root, serial })) };
+    const { doc, assets } = buildCatalogue({ root, serial });
+    const files = [...assets].map(([rel, bytes]) => `${rel} ${sha256Hex(bytes)}`).sort();
+    return { text: catalogueStringify(doc) + files.map((l) => `${l}\n`).join("") };
   } catch (e) {
     return { error: String(e?.message ?? e) };
   }

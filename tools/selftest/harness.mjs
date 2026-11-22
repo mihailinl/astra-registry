@@ -11,6 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { cleanEnv } from "../lib/git-env.mjs";
+import { catalogueStringify } from "../lib/canonical.mjs";
 
 import { runValidation } from "../validate.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
@@ -229,6 +230,19 @@ export function assertEqual(actual, expected, message) {
 
 export function assert(cond, message) {
   if (!cond) throw new Error(message);
+}
+
+/**
+ * The catalogue's layout since 2026-11-22 (tools/lib/canonical.mjs,
+ * catalogueStringify): one member or element per line, no line indented, and
+ * not one compact line either. `what` names the bytes in the failure.
+ */
+export function assertCatalogueLayout(text, what) {
+  const lines = text.split("\n");
+  const indented = lines.findIndex((l) => /^[ \t]/.test(l));
+  assert(indented === -1, `${what}: line ${indented + 1} is indented: ${JSON.stringify(lines[indented]?.slice(0, 80))}`);
+  assert(lines.length > 3, `${what} is ${lines.length} line(s), not one member per line`);
+  assert(text === catalogueStringify(JSON.parse(text)), `${what} is not in catalogueStringify's layout`);
 }
 
 /** Run the validator in-process against a tree and return its report. */
