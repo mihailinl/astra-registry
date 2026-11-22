@@ -647,6 +647,18 @@ async function run(opts, work, note) {
   // disagreement; the members themselves are part of the content compared
   // above, so a path, digest or size that is not the derived one already is.
   const assetsDir = opts.candidateAssets ?? path.join(path.dirname(opts.candidate), "assets");
+  // A directory nobody supplied and that is not beside the candidate is "I could
+  // not check" (2), never "every file is missing" (1): the service keeps its
+  // asset files in their own tree (plugins-signed origin/assets.rs), so a caller
+  // that names only --candidate would otherwise mark every catalogue that names
+  // an asset as disagreeing (the review of #527, finding 1).
+  if (result.assets.size && !opts.candidateAssets && !fs.existsSync(assetsDir)) {
+    process.stderr.write(
+      `could not check: the regeneration names ${result.assets.size} asset file(s) and no asset set was supplied ` +
+        `(no --candidate-assets, and ${assetsDir} does not exist)\n`,
+    );
+    return 2;
+  }
   const assetDiff = compareAssetSets(result.assets, readAssetDir(assetsDir));
 
   if (carriedText === result.text && !assetDiff.length) {

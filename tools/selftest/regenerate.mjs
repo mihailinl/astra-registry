@@ -458,6 +458,18 @@ export async function run() {
       fs.rmSync(assets, { recursive: true, force: true });
       assertEqual(regen(["--generator", commit, "--source", commit, "--repo", dir, "--out-assets", assets, "--quiet"]).status, 0);
     }
+
+    // No asset set supplied and none beside the candidate: "could not check"
+    // (2), not "every file is missing" (1). The service keeps its files in a
+    // tree of their own, so a caller that names only --candidate must not
+    // condemn every catalogue that names an asset (the review of #527, finding 1).
+    fs.rmSync(assets, { recursive: true, force: true });
+    const unsupplied = compare();
+    assertEqual(unsupplied.status, 2, `an unsupplied asset set was not "could not check":\n${unsupplied.stderr}`);
+    assert(unsupplied.stderr.includes("no asset set was supplied"), `refused for something else:\n${unsupplied.stderr}`);
+    const named2 = regen(["--generator", commit, "--source", commit, "--repo", dir, "--candidate", candidate,
+      "--candidate-assets", path.join(at, "nowhere"), "--quiet"]);
+    assertEqual(named2.status, 1, `an explicitly named empty asset directory is a disagreement:\n${named2.stderr}`);
   });
 
   // ── the fixture is a tree the registry would accept ───────────────────────
