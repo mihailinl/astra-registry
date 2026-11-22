@@ -66,7 +66,7 @@ import { baselineFor, isVoidingRecord } from "../bot/lib/identity.mjs";
 import { canonicalGithubId, firstPartyClaimProblems, isFirstPartyRecord, loadFirstParty } from "./lib/first-party.mjs";
 import { INDEX_SCHEMA } from "../bot/lib/sign.mjs";
 import { MAX_README_BYTES, iconDataUri } from "../bot/lib/assets.mjs";
-import { SUPPORTED_KEYS } from "./lib/platform.mjs";
+import { FLAT_PROJECTION_KEYS } from "./lib/platform.mjs";
 
 const BANNER =
   "GENERATED FILE — DO NOT EDIT. Source of truth: plugins/<id>/plugin.json and " +
@@ -76,13 +76,14 @@ const BANNER =
   "Only the `signed` member is covered by the signatures below; nothing outside it is " +
   "authenticated and nothing may be read out of it.";
 
-// Every supported key but `noarch` itself: `flatDownloads` writes a `noarch`
-// artifact under each of them "so no client has to learn the word", and
-// `schema/index-v1.json` describes `platform_downloads` the same way. Derived
-// rather than typed, so a key `tools/lib/platform.mjs` starts supporting is a
-// key a noarch plugin is downloadable under; `tools/selftest/validation.mjs`
-// asks the built index which keys it wrote.
-const PLATFORM_KEYS_FOR_NOARCH = SUPPORTED_KEYS.filter((k) => k !== "noarch");
+// The keys `flatDownloads` writes a `noarch` artifact under "so no client has
+// to learn the word": FLAT_PROJECTION_KEYS (tools/lib/platform.mjs), the hosts
+// a flat-field daemon runs on. Not every supported key: a host added since
+// (`macos-arm64`) has only daemons that read `releases[]` and fall back to
+// `noarch` themselves, so writing it here would only move the catalogue at an
+// unchanged serial (TRUST-28). `tools/selftest/validation.mjs` asks the built
+// index which keys it wrote.
+const PLATFORM_KEYS_FOR_NOARCH = FLAT_PROJECTION_KEYS;
 
 /**
  * The pathspec the catalogue's serial is counted over — `git rev-list --count

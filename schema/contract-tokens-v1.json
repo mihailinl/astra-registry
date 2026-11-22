@@ -1,6 +1,6 @@
 {
-  "contract_version": "6.35.0",
-  "source_commit": "4d06c263c510dcbb6fbb6c62d173afdcf300b740",
+  "contract_version": "6.37.0",
+  "source_commit": "1125a2a3e22635ddd1d7079ec3e2cdf83968a17e",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -7619,7 +7619,7 @@
       "fix": "new_tag",
       "panel_only": false,
       "title": "Astra ships no daemon for that platform",
-      "remedy": "`linux-x64`, `windows-x64` and `noarch` are the hosts that exist. macOS and arm64 names are reserved and unusable."
+      "remedy": "`linux-x64`, `windows-x64`, `macos-arm64` and `noarch` are the hosts that exist. Intel Mac and arm64 Linux and Windows names are reserved and unusable."
     },
     {
       "code": "E_PLUGIN_TOML_MISSING",
