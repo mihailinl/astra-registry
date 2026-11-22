@@ -532,15 +532,21 @@ export function publisherKeyProblems(doc, publishers) {
 }
 
 /**
- * `max_index_bytes` from the source tree's `policy/limits.json`, else from the
- * generator's own checkout (a fixture tree carries no policy of its own).
+ * `max_index_bytes` for the README rule (b), always from the tree being built
+ * and never from the generator's own checkout. Deliberate: the 90% line is an
+ * input of the generator (TRUST-4 determinism, and whoever writes the source can
+ * already drop READMEs), so the regeneration reads it from the same source
+ * commit. SERVE-49's wall is the other number and is read from the signer's own
+ * repository (`tools/signer/plan.mjs` `maxIndexBytes`), never from the tree it
+ * judges.
+ *
+ * A tree with no `policy/limits.json` (a fixture; a real source tree always has
+ * one, and tools/validate.mjs refuses its absence) has no line: `null`, rule (b)
+ * does not fire, and every reader of that tree decides the same.
  */
 function maxIndexBytes(root) {
-  for (const dir of [root, REPO_ROOT]) {
-    const file = path.join(dir, "policy", "limits.json");
-    if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, "utf8")).max_index_bytes;
-  }
-  throw new Error(`cannot generate the index: no policy/limits.json under ${root} or ${REPO_ROOT}, so max_index_bytes is unknown`);
+  const file = path.join(root, "policy", "limits.json");
+  return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")).max_index_bytes : null;
 }
 
 export function buildIndex(opts = {}) {

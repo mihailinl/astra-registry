@@ -89,12 +89,12 @@ export function omitReadmeLine(cap) {
  * Decided only from the generator's own inputs; mutates `doc`.
  *
  * @param {object} doc  the unsigned catalogue
- * @param {{cap: number, floorReads: boolean, stringify: (doc: object) => string}} o
+ * @param {{cap: number|null, floorReads: boolean, stringify: (doc: object) => string}} o
  * @returns {{omitted: boolean, inlineBytes: number}}
  */
 export function applyReadmeRule(doc, { cap, floorReads, stringify }) {
   const inlineBytes = Buffer.byteLength(stringify(doc), "utf8");
-  const omitted = floorReads === true || inlineBytes >= omitReadmeLine(cap);
+  const omitted = floorReads === true || (cap !== null && inlineBytes >= omitReadmeLine(cap));
   if (omitted) {
     for (const p of doc.signed.plugins) if (p.readme_file !== undefined) delete p.readme;
   }

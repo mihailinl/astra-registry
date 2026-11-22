@@ -261,6 +261,46 @@ export function withheldNote(held, serial) {
 }
 
 /**
+ * Contract 6.38.0: the inline `readme` the generator now omits (BOT-109) can
+ * leave every listing at an UNCHANGED serial, because what moves it is a
+ * commit outside plugins/ (a publisher, a decision, a policy file, the
+ * generator, or the `FLOOR_READS_README_FILE` flip) that pushes the inline
+ * build over the 90% line. Signed as it is, that is a TRUST-28 difference at
+ * one serial, and the run would carry and page until the next plugins/ commit.
+ * So the loss is withheld like a gain: for each entry whose head entry has a
+ * `readme` and whose candidate has none but has a `readme_file`, the head's
+ * `readme` is put back (plugins/ is unchanged at equal serial, so it is the
+ * same text). The next commit under plugins/ raises the serial and the
+ * omission publishes at once.
+ *
+ * ONLY that case. An entry losing `readme` without a `readme_file`, or
+ * changing it, is left alone, so TRUST-28 still refuses it.
+ *
+ * @returns {{doc: object, ids: string[]}}
+ */
+export function withholdReadmeLoss(candidate, headDoc) {
+  const doc = structuredClone(candidate);
+  const plugins = (doc?.signed ?? doc)?.plugins ?? [];
+  const headEntries = new Map(((headDoc?.signed ?? headDoc)?.plugins ?? []).map((e) => [e?.id, e ?? {}]));
+  const ids = [];
+  for (const entry of plugins) {
+    const before = headEntries.get(entry?.id);
+    if (!before || !Object.hasOwn(before, "readme")) continue;
+    if (Object.hasOwn(entry ?? {}, "readme") || !Object.hasOwn(entry ?? {}, "readme_file")) continue;
+    entry.readme = before.readme;
+    ids.push(entry.id);
+  }
+  return { doc, ids };
+}
+
+/** The note a withheld README omission leaves, one spelling for the signer and the selftest that predicts it. */
+export function readmeLossNote(held, serial) {
+  const n = held.ids.length;
+  return `${n} entr${n === 1 ? "y loses" : "ies lose"} the inline \`readme\` at serial ${serial} (contract 6.38.0); ` +
+    `withheld until a commit under plugins/ raises the serial (TRUST-28): ${held.ids.join(", ")}`;
+}
+
+/**
  * SERVE-49's cap, from policy/limits.json. Never a literal in a gate.
  *
  * Read from THIS repository, not from the tree being signed, which is
@@ -485,14 +525,16 @@ export async function catalogueGate({ root, serial, head, limit }) {
         // path the serial counts and may legitimately change under it.
         const now = stableStringify(pluginsWithoutPublisher(candidate));
         const then = stableStringify(pluginsWithoutPublisher(headDoc));
-        const held = now === then ? null : withholdGainedMembers(candidate, headDoc);
-        if (held?.ids.length && stableStringify(pluginsWithoutPublisher(held.doc)) === then) {
+        const lost = now === then ? null : withholdReadmeLoss(candidate, headDoc);
+        const held = now === then ? null : withholdGainedMembers(lost.doc, headDoc);
+        if ((lost?.ids.length || held?.ids.length) && stableStringify(pluginsWithoutPublisher(held.doc)) === then) {
           // The known equal-serial differences: a member the generator learned
-          // gained, nothing else (see `withholdGainedMembers`). A note, not a
-          // carry.
+          // gained, or the inline README it now omits (see
+          // `withholdGainedMembers`, `withholdReadmeLoss`). Notes, not a carry.
           candidate = held.doc;
           bytes = catalogueStringify(candidate);
-          notes.push(withheldNote(held, serial));
+          if (lost.ids.length) notes.push(readmeLossNote(lost, serial));
+          if (held.ids.length) notes.push(withheldNote(held, serial));
         } else if (now !== then) {
           failures.push(
             `the catalogue differs from \`signed\`'s head at the same serial ${serial} (TRUST-28). ` +
