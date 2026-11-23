@@ -321,15 +321,11 @@ token, and the first release of an existing listing to carry a binding line.
 Each waits for a moderator's approval and then the windows below. An approved
 one still publishes marked not reviewed, because an approval is not a review.
 
-**Through an issue here, until the cutover removes that path**, three events
-wait for a maintainer, with an SLA of **48 hours**: a first listing, a newly
-requested high-risk permission (`client`, `dom_access`, `send_chat_message`,
-`set_theme_contribution`), and an identity or repository change. Everything
-else on that path publishes itself with nobody in the loop — immediately for a
-routine release, and after a 24-hour delay (6 hours for an author with a clean
-release history here) when the permission set grew or when the plugin holds any
-high-risk permission at all. That number is a commitment about three events
-precisely because it is three events.
+**The issue path is retired.** No workflow runs it, and the bot refuses any
+publication delay on the service path (a delay there is a defect and fails the
+job). The 24-hour and 6-hour publication delays that path once carried no
+longer apply to anything. What a person must decide still carries an SLA of
+**48 hours**.
 
 **`docs/POLICY.md` is the whole publication policy**: every outcome the bot can
 post, what the review mark says and does not say, what each delay on the issue
@@ -346,7 +342,9 @@ service reports that its notice was accepted, so that the account the listing
 was bound to can stop a release it did not make before it reaches anybody. An
 approved update made under the binding the listing already has waits for no
 notice, because that notice would only tell its author about their own
-release; it still waits for the operator alert's window. And a maintainer's
+release. The operator alert's window is 0 (since contract 6.32.0), so an
+approved change of hands waits for it not at all; it waits only those 6 hours
+after its notice. And a maintainer's
 approval does not expire: it clears the hold it was given for until the
 release it names changes (since contract 5.8.0; until then it lapsed after 7
 days). On that path every approved release is a change of hands, which is
