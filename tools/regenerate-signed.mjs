@@ -98,7 +98,9 @@ export const GENERATOR_PATHS = ["tools/build-index.mjs", "tools/lib", "bot/lib"]
 // `astra_team` from it, so a commit's catalogue depends on it.
 // `log/decisions` since contract 6.35.3: a listing with no identity record
 // takes `owner_id` from its effective baseline, which those records are.
-export const INPUT_PATHS = ["plugins", "publishers", "policy/first-party.json", "log/decisions"];
+// `policy/limits.json` since contract 6.38.0: the generator omits the inline
+// README when the catalogue nears `max_index_bytes`, so the cap is an input.
+export const INPUT_PATHS = ["plugins", "publishers", "policy/first-party.json", "policy/limits.json", "log/decisions"];
 /** The one module the closure starts from. */
 export const ENTRY = "tools/build-index.mjs";
 

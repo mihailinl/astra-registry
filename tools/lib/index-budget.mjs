@@ -41,6 +41,19 @@
 /** Percent of `max_index_bytes` at which the catalogue is called near its cap. */
 export const WARN_PERCENT = 75;
 
+/**
+ * Percent of `max_index_bytes` at which the generator stops inlining READMEs
+ * that also have a `readme_file` (contract 6.38.0, BOT-109).
+ */
+export const OMIT_README_PERCENT = 90;
+
+/**
+ * Contract 6.38.0 (BOT-109) (a): the oldest Astra the registry supports reads
+ * `readme_file` (0.2.8+). Shipped `false`: until the floor moves, READMEs stay
+ * inline unless the catalogue nears its wall, rule (b).
+ */
+export const FLOOR_READS_README_FILE = false;
+
 /** How many listings the warning names. */
 export const NAMED_LISTINGS = 3;
 
@@ -55,6 +68,37 @@ const DATA_URI = /^data:([^;,]+);base64,([A-Za-z0-9+/]*={0,2})$/;
 export function warnLine(cap) {
   if (!Number.isSafeInteger(cap) || cap <= 0) throw new Error(`the cap is ${JSON.stringify(cap)}, not a positive integer`);
   return Math.ceil((cap * WARN_PERCENT) / 100);
+}
+
+/**
+ * The byte count at which READMEs leave the catalogue: OMIT_README_PERCENT of
+ * the cap, rounded UP (943,719 at 1,048,576).
+ *
+ * @param {number} cap
+ */
+export function omitReadmeLine(cap) {
+  if (!Number.isSafeInteger(cap) || cap <= 0) throw new Error(`the cap is ${JSON.stringify(cap)}, not a positive integer`);
+  return Math.ceil((cap * OMIT_README_PERCENT) / 100);
+}
+
+/**
+ * Contract 6.38.0 (BOT-109, TRUST-49): drop the inline `readme` of EVERY
+ * listing that carries `readme_file` (all or none), when (a) the floor reads
+ * `readme_file`, or (b) the catalogue built WITH every inline README is at or
+ * over `omitReadmeLine(cap)`. A listing with no `readme_file` keeps its README.
+ * Decided only from the generator's own inputs; mutates `doc`.
+ *
+ * @param {object} doc  the unsigned catalogue
+ * @param {{cap: number|null, floorReads: boolean, stringify: (doc: object) => string}} o
+ * @returns {{omitted: boolean, inlineBytes: number}}
+ */
+export function applyReadmeRule(doc, { cap, floorReads, stringify }) {
+  const inlineBytes = Buffer.byteLength(stringify(doc), "utf8");
+  const omitted = floorReads === true || (cap !== null && inlineBytes >= omitReadmeLine(cap));
+  if (omitted) {
+    for (const p of doc.signed.plugins) if (p.readme_file !== undefined) delete p.readme;
+  }
+  return { omitted, inlineBytes };
 }
 
 /**

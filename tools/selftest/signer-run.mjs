@@ -45,7 +45,7 @@ import { signRevocations } from "../sign-revocations.mjs";
 import { REVOCATIONS_SCHEMA, TRUST_SCHEMA } from "../../bot/lib/sign.mjs";
 import { RETIREMENTS_PATH, RETIREMENTS_SCHEMA, WINDOW_EXEMPT_KEY_IDS } from "../signer/key-window.mjs";
 import {
-  RESIGN_AFTER_HOURS, RESIGN_HOURS_BY_EVENT, SIGNED_FILES, fetchSignedHead, planRun, serialsAt, withholdGainedMembers,
+  RESIGN_AFTER_HOURS, RESIGN_HOURS_BY_EVENT, SIGNED_FILES, catalogueGate, fetchSignedHead, planRun, serialsAt, readmeLossNote, withholdGainedMembers, withholdReadmeLoss, withheldNote,
 } from "../signer/plan.mjs";
 import { trailersOf } from "../served-set/provenance.mjs";
 import { headAssetFiles } from "../signer/pages.mjs";
@@ -156,6 +156,8 @@ function makeTree(name, { trustKeys = [KEY_A] } = {}) {
   };
   write(SIGNED_FILES.trust, trustDelegating(trustKeys));
   write(SIGNED_FILES.root, ROOT_DOC);
+  // The generator reads the README rule's cap from the tree it builds (contract 6.38.0).
+  write("policy/limits.json", fs.readFileSync(path.join(REPO_ROOT, "policy", "limits.json"), "utf8"));
   return { dir, git, write, commit, addListing, head: () => git("rev-parse", "HEAD") };
 }
 
@@ -1444,6 +1446,115 @@ export async function run() {
     const changed = structuredClone(doc);
     changed.signed.plugins[0].icon = { ...changed.signed.plugins[0].icon, size: 1 };
     assertEqual(withholdGainedMembers(changed, doc).ids.length, 0, "a changed member was withheld as if gained");
+  });
+
+  await test("contract 6.38.0: an omitted README at an equal serial is withheld, at a higher serial it publishes, and no other loss is", async () => {
+    const t = presentationTree("readme-loss");
+    t.commit("three listings with pictures and prose");
+    const issuedAt = new Date("2026-09-19T00:00:00Z");
+    const headIndex = signIndex(buildIndex({ root: t.dir, serial: 1 }), { signer: signerFor(KEY_A), issuedAt });
+    const headList = signRevocations(
+      { signed: { schema: REVOCATIONS_SCHEMA, serial: 1, revocations: [] } }, { signer: signerFor(KEY_A), issuedAt });
+    const head = headFrom({ index: headIndex, revocations: headList, trust: trustDelegating([KEY_A]), sha: t.head() });
+    const withReadme = (doc) => doc.signed.plugins.filter((p) => typeof p.readme === "string" && p.readme !== "").map((p) => p.id).sort().join(",");
+    assertEqual(withReadme(headIndex), "raster-plugin,webp-plugin", "the head does not carry the READMEs the test turns on");
+
+    // A commit OUTSIDE plugins/ pushes the inline build over the line: serial 1 still.
+    const limits = JSON.parse(fs.readFileSync(path.join(t.dir, "policy", "limits.json"), "utf8"));
+    t.write("policy/limits.json", { ...limits, max_index_bytes: 1000 });
+    const flip = t.commit("a cap the inline build is over");
+    assertEqual(withReadme(buildIndex({ root: t.dir, serial: 1 })), "", "the fixture's rule does not omit, so nothing is withheld below");
+    const limit = limits.max_index_bytes;
+    assertEqual(serialsAt({ root: t.dir, sha: flip }).index, 1, "the commit outside plugins/ moved the serial");
+    const equal = await catalogueGate({ root: t.dir, serial: 1, head, limit });
+    assert(!equal.failures.some((f) => f.includes("TRUST-28")), `the omission failed TRUST-28: ${equal.failures.join(" | ")}`);
+    assertEqual(withReadme(equal.candidate), "raster-plugin,webp-plugin", "the omission was signed at an equal serial");
+    const wantNote = readmeLossNote({ ids: ["raster-plugin", "webp-plugin"] }, 1);
+    assert(equal.notes.includes(wantNote), `no withheld-loss note: ${equal.notes.join(" | ")}`);
+    assertEqual(stableStringify(equal.candidate.signed.plugins), stableStringify(headIndex.signed.plugins), "signed is not the head's listings");
+
+    // A commit under plugins/ raises the serial and the omission publishes.
+    t.write("plugins/raster-plugin/README.md", `${README}\nOne more line.\n`);
+    const next = t.commit("a README edit");
+    assertEqual(serialsAt({ root: t.dir, sha: next }).index, 2, "the plugins/ commit did not raise the serial");
+    const raised = await catalogueGate({ root: t.dir, serial: 2, head, limit });
+    assertEqual(withReadme(raised.candidate), "", "the omission did not publish at the next serial");
+    assert(!raised.notes.includes(wantNote), "a note for a loss that is published");
+    assertEqual(raised.failures.join(" | "), "", "the omission at a higher serial failed");
+
+    // Only that loss: an entry with no readme_file, or a README that changed, is not restored.
+    const noFile = structuredClone(headIndex);
+    const lost = structuredClone(headIndex);
+    for (const p of lost.signed.plugins) { delete p.readme; delete p.readme_file; }
+    assertEqual(withholdReadmeLoss(lost, noFile).ids.length, 0, "a loss without readme_file was restored");
+    const changed = structuredClone(headIndex);
+    changed.signed.plugins[0].readme = "# other";
+    const cand = structuredClone(headIndex);
+    for (const p of cand.signed.plugins) delete p.readme;
+    const held = withholdReadmeLoss(cand, changed);
+    assertEqual(held.doc.signed.plugins[0].readme, "# other", "the head's text was not the one restored");
+    assert(typeof withheldNote === "function", "withheldNote is still the gain note");
+  });
+
+  await test("contract 6.39.0: the withheld README is measured against SERVE-49 after the restore; a changed README and a new entry are left alone; a gained pair with a lost README is withheld whole", async () => {
+    const t = presentationTree("readme-loss-size");
+    t.commit("three listings with pictures and prose");
+    const issuedAt = new Date("2026-09-19T00:00:00Z");
+    const headOf = (index) => headFrom({
+      index: signIndex(index, { signer: signerFor(KEY_A), issuedAt }),
+      revocations: signRevocations({ signed: { schema: REVOCATIONS_SCHEMA, serial: 1, revocations: [] } }, { signer: signerFor(KEY_A), issuedAt }),
+      trust: trustDelegating([KEY_A]), sha: t.head(),
+    });
+    const full = buildIndex({ root: t.dir, serial: 1 });
+    const head = headOf(full);
+    const limits = JSON.parse(fs.readFileSync(path.join(t.dir, "policy", "limits.json"), "utf8"));
+    t.write("policy/limits.json", { ...limits, max_index_bytes: 1000 });
+    t.commit("a cap the inline build is over");
+    const omitted = buildCatalogue({ root: t.dir, serial: 1 }).doc;
+    const omittedBytes = Buffer.byteLength(catalogueStringify(omitted), "utf8");
+    const restoredBytes = Buffer.byteLength(catalogueStringify(full), "utf8");
+    assert(omittedBytes < restoredBytes, "the omission did not shrink the fixture");
+
+    // 1. Over the wall only once the README is back: the plan fails, naming SERVE-49.
+    const tight = await catalogueGate({ root: t.dir, serial: 1, head, limit: omittedBytes });
+    assert(tight.failures.some((f) => f.includes("SERVE-49")), `the restored README was not measured: ${tight.failures.join(" | ")}`);
+    const roomy = await catalogueGate({ root: t.dir, serial: 1, head, limit: restoredBytes });
+    assertEqual(roomy.failures.join(" | "), "", "at the restored size exactly, the gate refused");
+
+    // 2. Direct calls.
+    const changed = structuredClone(full);
+    changed.signed.plugins[0].readme = "# other";
+    const cand = structuredClone(full);
+    for (const p of cand.signed.plugins) if (p.readme_file) delete p.readme;
+    const heldChanged = withholdReadmeLoss(cand, changed);
+    const restored = new Set(heldChanged.ids);
+    assert(restored.has(changed.signed.plugins[0].id), "the entry whose README differs in the head was not given the head's text");
+    // A README the candidate CHANGED (present, different) is left alone, for TRUST-28.
+    const edited = structuredClone(full);
+    edited.signed.plugins[0].readme = "# edited";
+    assertEqual(withholdReadmeLoss(edited, full).doc.signed.plugins[0].readme, "# edited", "a changed README was overwritten");
+    assertEqual(withholdReadmeLoss(edited, full).ids.includes(edited.signed.plugins[0].id), false, "a changed README was counted as a loss");
+    // A new entry has no head entry: skipped.
+    const withNew = structuredClone(cand);
+    withNew.signed.plugins.push({ id: "brand-new", readme_file: withNew.signed.plugins[0].readme_file });
+    const skipped = withholdReadmeLoss(withNew, full);
+    assertEqual(skipped.ids.includes("brand-new"), false, "a new entry was restored");
+    assertEqual(Object.hasOwn(skipped.doc.signed.plugins.at(-1), "readme"), false, "a new entry was given a README");
+    // `readme_file` gained and `readme` lost together: the loss pass restores, the gain pass withholds the pair.
+    const bare = structuredClone(full);
+    for (const p of bare.signed.plugins) { delete p.icon; delete p.readme_file; }
+    const both = withholdGainedMembers(withholdReadmeLoss(cand, bare).doc, bare);
+    assertEqual(stableStringify(both.doc.signed.plugins), stableStringify(bare.signed.plugins), "gained-and-lost was not withheld to the head");
+
+    // 3. The same through the gate: signed equals head, both notes.
+    const bareHead = headOf(bare);
+    const gate = await catalogueGate({ root: t.dir, serial: 1, head: bareHead, limit: limits.max_index_bytes });
+    assertEqual(gate.failures.join(" | "), "", "the gained-and-lost case failed");
+    assertEqual(stableStringify(gate.candidate.signed.plugins), stableStringify(bare.signed.plugins), "signed is not the head's listings");
+    const ids = ["raster-plugin", "webp-plugin"];
+    assert(gate.notes.includes(readmeLossNote({ ids }, 1)), `no README note: ${gate.notes.join(" | ")}`);
+    assert(gate.notes.includes(withheldNote({ ids, members: ["icon", "readme_file"] }, 1)),
+      `no gain note: ${gate.notes.join(" | ")}`);
   });
 
   await test("the Source-Commit sign.yml hands the signer is main's head at run start, which the equal-serial lineage above rests on", () => {

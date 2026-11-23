@@ -66,6 +66,7 @@ import { baselineFor, isVoidingRecord } from "../bot/lib/identity.mjs";
 import { canonicalGithubId, firstPartyClaimProblems, isFirstPartyRecord, loadFirstParty } from "./lib/first-party.mjs";
 import { INDEX_SCHEMA } from "../bot/lib/sign.mjs";
 import { ICON_FORMATS, MAX_README_BYTES, iconDataUri } from "../bot/lib/assets.mjs";
+import { FLOOR_READS_README_FILE, applyReadmeRule } from "./lib/index-budget.mjs";
 import { iconAsset, readmeAsset } from "./lib/catalogue-assets.mjs";
 import { FLAT_PROJECTION_KEYS } from "./lib/platform.mjs";
 
@@ -530,6 +531,24 @@ export function publisherKeyProblems(doc, publishers) {
   return problems;
 }
 
+/**
+ * `max_index_bytes` for the README rule (b), always from the tree being built
+ * and never from the generator's own checkout. Deliberate: the 90% line is an
+ * input of the generator (TRUST-4 determinism, and whoever writes the source can
+ * already drop READMEs), so the regeneration reads it from the same source
+ * commit. SERVE-49's wall is the other number and is read from the signer's own
+ * repository (`tools/signer/plan.mjs` `maxIndexBytes`), never from the tree it
+ * judges.
+ *
+ * A tree with no `policy/limits.json` (a fixture; a real source tree always has
+ * one, and tools/validate.mjs refuses its absence) has no line: `null`, rule (b)
+ * does not fire, and every reader of that tree decides the same.
+ */
+function maxIndexBytes(root) {
+  const file = path.join(root, "policy", "limits.json");
+  return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")).max_index_bytes : null;
+}
+
 export function buildIndex(opts = {}) {
   return buildCatalogue(opts).doc;
 }
@@ -544,7 +563,7 @@ export function buildIndex(opts = {}) {
  *
  * @returns {{doc: object, assets: Map<string, Buffer>}}
  */
-export function buildCatalogue({ root = REPO_ROOT, serial } = {}) {
+export function buildCatalogue({ root = REPO_ROOT, serial, floorReadsReadmeFile = FLOOR_READS_README_FILE } = {}) {
   const { errors, plugins } = loadSources(root);
   const { errors: pubErrors, publishers } = loadPublishers(root);
   errors.push(...pubErrors);
@@ -747,6 +766,14 @@ export function buildCatalogue({ root = REPO_ROOT, serial } = {}) {
       `meets one refuses the whole catalogue (contract §0.7):\n${unholdable.join("\n")}`,
     );
   }
+  // Contract 6.38.0 (BOT-109, TRUST-49): measured on this unsigned build, the
+  // same place the cap is first measured; the regeneration runs this same code.
+  // After the Unicode check, because catalogueStringify refuses what that names.
+  applyReadmeRule(doc, {
+    cap: maxIndexBytes(root),
+    floorReads: floorReadsReadmeFile,
+    stringify: catalogueStringify,
+  });
   return { doc, assets };
 }
 
