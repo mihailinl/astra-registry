@@ -14,7 +14,7 @@ import { cleanEnv, fixtureEnv } from "../lib/git-env.mjs";
 import { buildIndex, resolveSerial } from "../build-index.mjs";
 import { isShallow } from "../coverage/git.mjs";
 import { catalogueStringify, jcs, stableStringify } from "../lib/canonical.mjs";
-import { pluginsWithoutPublisher, withholdGainedOwnerIds } from "../signer/plan.mjs";
+import { pluginsWithoutPublisher, withheldNote, withholdGainedMembers } from "../signer/plan.mjs";
 import { validate as validateSchema } from "../lib/jsonschema.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { test, assert, assertEqual, assertCatalogueLayout, neverAsk, tmp, validateTree, errorsMatching } from "./harness.mjs";
@@ -383,18 +383,18 @@ export async function run() {
       console.log(`      (serial ${baseDoc.signed.serial} → ${serial}: the catalogue's version rose, so a difference publishes)`);
       return;
     }
-    // ID-77's introduction, and only that. The generator learned `owner_id` (6.34.0, then 6.35.2's effective
-    // baseline) after listings already existed, so the commit teaching it renders them differently at an
-    // unchanged serial, and nothing under plugins/ could honestly move with it. The signer withholds the gain
-    // until the next listing change raises the serial (`withholdGainedOwnerIds`, the same function here), so
-    // an entry GAINING `owner_id` where the base entry has none is not compared; an entry whose `owner_id`
-    // changes, or loses it, at an equal serial is red like any other difference.
-    const held = withholdGainedOwnerIds(buildIndex({ root: REPO_ROOT, serial }), baseDoc);
+    // A member's introduction, and only that. The generator learned `owner_id` (ID-77: 6.34.0, then 6.35.2's
+    // effective baseline) and the `icon`/`readme_file` pair (6.28.0) after listings already existed, so the
+    // commit teaching it renders them differently at an unchanged serial, and nothing under plugins/ could
+    // honestly move with it. The signer withholds the gain until the next listing change raises the serial
+    // (`withholdGainedMembers`, the same function here), so an entry GAINING one where the base entry has none
+    // is not compared; an entry whose member changes, or loses it, at an equal serial is red like any other
+    // difference.
+    const held = withholdGainedMembers(buildIndex({ root: REPO_ROOT, serial }), baseDoc);
     const before = stableStringify(pluginsWithoutPublisher(baseDoc)).split("\n");
     const after = stableStringify(pluginsWithoutPublisher(held.doc)).split("\n");
     if (held.ids.length) {
-      console.log(`      (${held.ids.length} entr${held.ids.length === 1 ? "y gains" : "ies gain"} \`owner_id\` (ID-77) at serial ${serial}; ` +
-        "withheld by the signer until the next listing change raises the serial)");
+      console.log(`      (${withheldNote(held, serial)}; the signer withholds it the same way)`);
     }
     let first = null;
     for (let i = 0; i < Math.max(before.length, after.length); i++) {

@@ -20,7 +20,7 @@ import { compareSemver } from "../lib/semver.mjs";
 import { validate as validateSchema } from "../lib/jsonschema.mjs";
 import { REPO_ROOT, loadSources } from "../lib/sources.mjs";
 import { stagingListingId } from "../lib/reserved.mjs";
-import { RESERVED_KEYS, SUPPORTED_KEYS, platformKeyFromManifest } from "../lib/platform.mjs";
+import { FLAT_PROJECTION_KEYS, RESERVED_KEYS, SUPPORTED_KEYS, platformKeyFromManifest } from "../lib/platform.mjs";
 import { CODES } from "../../bot/lib/codes.mjs";
 import { ICON_NAMES } from "../../bot/lib/assets.mjs";
 import { makeFixtures } from "../make-fixtures.mjs";
@@ -512,10 +512,12 @@ export async function run() {
     fs.cpSync(path.join(REPO_ROOT, "tests/fixtures/id-collision/plugins/dice-roller"), path.join(dir, "plugins/dice-roller"), { recursive: true });
     const vf = path.join(dir, "plugins/dice-roller/versions/1.0.0.json");
     const v = JSON.parse(fs.readFileSync(vf, "utf8"));
-    v.artifacts["macos-arm64"] = { ...v.artifacts["linux-x64"] };
-    v.artifacts["macos-arm64"].url = v.artifacts["macos-arm64"].url.replace("linux-x64", "macos-arm64");
-    v.artifacts["macos-arm64"].filename = v.artifacts["macos-arm64"].filename.replace("linux-x64", "macos-arm64");
-    v.artifacts["macos-arm64"].sha256 = "2".repeat(64);
+    // An Intel Mac: Astra ships a daemon for Apple silicon (`macos-arm64`,
+    // supported since 2026-11-10) and none for this.
+    v.artifacts["macos-x64"] = { ...v.artifacts["linux-x64"] };
+    v.artifacts["macos-x64"].url = v.artifacts["macos-x64"].url.replace("linux-x64", "macos-x64");
+    v.artifacts["macos-x64"].filename = v.artifacts["macos-x64"].filename.replace("linux-x64", "macos-x64");
+    v.artifacts["macos-x64"].sha256 = "2".repeat(64);
     fs.writeFileSync(vf, stableStringify(v));
     const { report } = await validateTree(dir);
     assert(errorsMatching(report, "reserved key with no host").length === 1,
@@ -584,15 +586,17 @@ export async function run() {
     //
     //   schema/index-v1.json's `$defs.platformKey`   EQUAL to the vocabulary —
     //       reserved names are in the schemas "so nobody else claims the names"
-    //   build-index's noarch expansion                EQUAL to SUPPORTED_KEYS —
-    //       "written under every supported platform key" (index-v1.json)
+    //   build-index's noarch expansion                EQUAL to FLAT_PROJECTION_KEYS
+    //       and `noarch`, a SUBSET of SUPPORTED_KEYS — the hosts a flat-field
+    //       daemon runs on; later hosts resolve `noarch` from releases[]
     //   the committed registry/v1/index.json          a SUBSET of SUPPORTED_KEYS —
     //       the validator refuses the reserved ones, so the index never carries one
     //   platform.mjs's MANIFEST.platform table         ONTO the vocabulary, one
     //       {os, arch} pair per key
     //   E_PLATFORM_UNSUPPORTED's remedy (bot/lib/codes.mjs, and generated from
     //       it into tools/codes-table.json and the token file)   NAMES
-    //       SUPPORTED_KEYS, and "macOS and arm64 names" describes RESERVED_KEYS
+    //       SUPPORTED_KEYS, and "Intel Mac and arm64 Linux and Windows names"
+    //       describes RESERVED_KEYS
     //
     // Measured on main (70df193) before this: widening or narrowing the index
     // schema's enum, and adding a pair to the manifest table, left every check
@@ -642,8 +646,10 @@ export async function run() {
     fs.writeFileSync(vf, stableStringify(v));
     const entry = buildIndex({ root: dir, serial: 1 }).signed.plugins.find((p) => p.id === "dice-roller");
     assert(entry && entry.download_url === art.url, "the noarch fixture did not reach the compatibility projection at all, so its keys prove nothing");
-    assertEqual(sorted(Object.keys(entry.platform_downloads)), sorted(SUPPORTED_KEYS),
-      "tools/build-index.mjs writes a noarch artifact under keys other than every supported key (PLATFORM_KEYS_FOR_NOARCH)");
+    assertEqual(sorted(Object.keys(entry.platform_downloads)), sorted([...FLAT_PROJECTION_KEYS, "noarch"]),
+      "tools/build-index.mjs writes a noarch artifact under keys other than FLAT_PROJECTION_KEYS (PLATFORM_KEYS_FOR_NOARCH)");
+    assertEqual(FLAT_PROJECTION_KEYS.filter((k) => !SUPPORTED_KEYS.includes(k) || k === "noarch").join(" "), "",
+      "FLAT_PROJECTION_KEYS names a key that is not a supported host");
     for (const [k, url] of Object.entries(entry.platform_downloads)) {
       assertEqual(url, art.url, `build-index wrote the noarch artifact's ${k} download as another URL`);
     }
@@ -678,11 +684,14 @@ export async function run() {
     const named = [...remedy.matchAll(/`([^`]+)`/g)].map((m) => m[1]).filter(isKeyShaped);
     assertEqual(sorted(named), sorted(SUPPORTED_KEYS),
       "E_PLATFORM_UNSUPPORTED's remedy tells an author the hosts that exist, and they are not tools/lib/platform.mjs's SUPPORTED_KEYS");
-    assert(/macOS and arm64 names are reserved/.test(remedy),
+    assert(/Intel Mac and arm64 Linux and Windows names are reserved/.test(remedy),
       "E_PLATFORM_UNSUPPORTED's remedy no longer says which names are reserved; this check holds the sentence it had");
-    const described = (k) => k.startsWith("macos-") || k.endsWith("-arm64");
+    // "Intel Mac" is `macos-x64`; "arm64 Linux and Windows" is `linux-arm64` and
+    // `windows-arm64`. Since 2026-11-10 `macos-arm64` is a host, so the sentence
+    // is no longer "macOS and arm64" and this predicate is no longer a prefix.
+    const described = (k) => k === "macos-x64" || /^(linux|windows)-arm64$/.test(k);
     assertEqual([...RESERVED_KEYS.filter((k) => !described(k)), ...SUPPORTED_KEYS.filter(described)].join(" "), "",
-      "\"macOS and arm64 names are reserved\" (E_PLATFORM_UNSUPPORTED's remedy) no longer describes RESERVED_KEYS");
+      "\"Intel Mac and arm64 Linux and Windows names are reserved\" (E_PLATFORM_UNSUPPORTED's remedy) no longer describes RESERVED_KEYS");
   });
 
 

@@ -32,7 +32,11 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fixtureEnv } from "../lib/git-env.mjs";
 
-import { buildIndex } from "../build-index.mjs";
+import { buildCatalogue, buildIndex } from "../build-index.mjs";
+import {
+  ASSETS_DIR, ASSETS_TOTAL_MAX_BYTES, ICON_ASSET_MAX_BYTES, README_ASSET_MAX_BYTES, assetFilesFor, namedAssets,
+} from "../lib/catalogue-assets.mjs";
+import { sha256Hex } from "../../bot/lib/assets.mjs";
 import { catalogueStringify, stableStringify } from "../lib/canonical.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { loadTestRoot } from "../testkeys/regenerate.mjs";
@@ -40,9 +44,12 @@ import { signIndex } from "../../bot/sign-index.mjs";
 import { signRevocations } from "../sign-revocations.mjs";
 import { REVOCATIONS_SCHEMA, TRUST_SCHEMA } from "../../bot/lib/sign.mjs";
 import { RETIREMENTS_PATH, RETIREMENTS_SCHEMA, WINDOW_EXEMPT_KEY_IDS } from "../signer/key-window.mjs";
-import { RESIGN_AFTER_HOURS, RESIGN_HOURS_BY_EVENT, SIGNED_FILES, fetchSignedHead, planRun, serialsAt } from "../signer/plan.mjs";
+import {
+  RESIGN_AFTER_HOURS, RESIGN_HOURS_BY_EVENT, SIGNED_FILES, fetchSignedHead, planRun, serialsAt, withholdGainedMembers,
+} from "../signer/plan.mjs";
 import { trailersOf } from "../served-set/provenance.mjs";
-import { buildSignedCommit, commitMessage, pushSigned, signRun, writeTree } from "../signer/run.mjs";
+import { headAssetFiles } from "../signer/pages.mjs";
+import { buildSignedCommit, commitMessage, pushSigned, readSignedTree, signRun, writeTree } from "../signer/run.mjs";
 import { test, assert, assertEqual, assertCatalogueLayout, tmp } from "./harness.mjs";
 
 const KEY_A = "TEST-ONLY-DO-NOT-TRUST-index-2026a";
@@ -1223,6 +1230,220 @@ export async function run() {
     assertEqual(broken.join("\n"), "", TRUST43A);
     assertEqual(`${seen.same} same, ${seen.descends} descending, ${seen.rises} rising`, "1 same, 2 descending, 1 rising",
       "the fixture's `signed` does not hold the pairs this case was built for, so the walk above asked less than it says");
+  });
+
+  // ── contract 6.28.0/6.29.0: the icon and the README as asset files ─────────
+  //
+  // BOT-109: the signer writes each file a listing's `icon` or `readme_file`
+  // names into the SAME `signed` commit as the catalogue, from the committed
+  // file under plugins/**. SERVE-115 refuses the whole commit when one is
+  // missing or is not what its member says, so every test below is about a
+  // commit the plugins service would otherwise refuse, or would serve wrong.
+
+  // A PNG and a WebP as far as every reader checks one: the signature bytes.
+  const PNG = (fill) => Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), Buffer.from(fill)]);
+  const WEBP = (fill) => Buffer.concat([Buffer.from("RIFF"), Buffer.from([1, 0, 0, 0]), Buffer.from("WEBP"), Buffer.from(fill)]);
+  const SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8"/></svg>\n';
+  const README = "# A listing\n\nProse long enough to be a README a store would show, with a non-ASCII word: café.\n";
+
+  const presentationTree = (name, opts) => {
+    const t = makeTree(name, opts);
+    t.addListing("raster-plugin");
+    t.write("plugins/raster-plugin/plugin.json", { ...listing("raster-plugin"), icon: "icon.png", readme: "README.md" });
+    fs.writeFileSync(path.join(t.dir, "plugins/raster-plugin/icon.png"), PNG("raster icon bytes"));
+    t.write("plugins/raster-plugin/README.md", README);
+    t.addListing("vector-plugin");
+    t.write("plugins/vector-plugin/plugin.json", { ...listing("vector-plugin"), icon: "icon.svg", readme: "README.md" });
+    t.write("plugins/vector-plugin/icon.svg", SVG);
+    t.write("plugins/vector-plugin/README.md", "");
+    t.addListing("webp-plugin");
+    t.write("plugins/webp-plugin/plugin.json", { ...listing("webp-plugin"), icon: "icon.webp", readme: "README.md" });
+    fs.writeFileSync(path.join(t.dir, "plugins/webp-plugin/icon.webp"), WEBP("webp icon bytes"));
+    // The same README bytes as raster-plugin's: one file, named twice.
+    t.write("plugins/webp-plugin/README.md", README);
+    return t;
+  };
+
+  await test("BOT-109: the members are derived from the committed files, the inline forms are unchanged, and an SVG or empty README has no pair", () => {
+    const t = presentationTree("assets-derive");
+    t.commit("three listings with pictures and prose");
+    const { doc, assets } = buildCatalogue({ root: t.dir, serial: 1 });
+    const by = Object.fromEntries(doc.signed.plugins.map((p) => [p.id, p]));
+    const png = fs.readFileSync(path.join(t.dir, "plugins/raster-plugin/icon.png"));
+    const readme = fs.readFileSync(path.join(t.dir, "plugins/raster-plugin/README.md"));
+
+    const r = by["raster-plugin"];
+    assertEqual(JSON.stringify(r.icon), JSON.stringify({
+      path: `assets/${sha256Hex(png)}.png`, sha256: sha256Hex(png), size: png.length, media_type: "image/png",
+    }), "the icon member is not the committed file's digest, size and type");
+    assertEqual(JSON.stringify(r.readme_file), JSON.stringify({
+      path: `assets/${sha256Hex(readme)}.md`, sha256: sha256Hex(readme), size: readme.length,
+    }), "the readme_file member is not the committed file's digest and size");
+    // 6.28.0's transition: the inline forms stay, byte for byte what they were.
+    assertEqual(r.icon_url, `data:image/png;base64,${png.toString("base64")}`, "the inline icon_url changed");
+    assertEqual(r.readme, README, "the inline readme changed");
+    assertEqual(by["webp-plugin"].icon.media_type, "image/webp", "a WebP icon's pair");
+    assert(by["webp-plugin"].icon.path.endsWith(".webp"), `a WebP icon's path: ${by["webp-plugin"].icon.path}`);
+
+    // SVG: 6.28.0's path rule has no extension for it, so the inline form alone.
+    const v = by["vector-plugin"];
+    assertEqual(v.icon, undefined, "an SVG icon was given a pair the service and the client both refuse");
+    assert(v.icon_url.startsWith("data:image/svg+xml;base64,"), `the SVG's inline icon_url: ${v.icon_url.slice(0, 40)}`);
+    // An empty README: the service refuses a zero-byte member, so no pair.
+    assertEqual(v.readme_file, undefined, "an empty README was given a zero-byte pair");
+    assertEqual(v.readme, "", "the empty README's inline form changed");
+
+    // The files: exactly the named set, shared README once, each its bytes.
+    const named = namedAssets(doc);
+    assertEqual(named.problems.join("; "), "", "the generator's own members break the service's rules");
+    assertEqual([...assets.keys()].sort().join(" "), named.assets.map((a) => a.rel).sort().join(" "),
+      "the generator's files are not exactly the set its members name");
+    assertEqual(assets.size, 3, "one PNG, one WebP and one README shared by two listings are three files");
+    assertEqual(assets.get(`${ASSETS_DIR}/${sha256Hex(png)}.png`).equals(png), true, "the icon file is not the committed bytes");
+  });
+
+  await test("BOT-109: a first `signed` commit holds the four documents and exactly the named asset files, with matching bytes", async () => {
+    const t = presentationTree("assets-commit", { trustKeys: [BOOTSTRAP] });
+    const sourceCommit = t.commit("three listings with pictures and prose");
+    const record = await signRun({
+      root: t.dir, sourceCommit, head: { present: false }, now: "2026-09-19T00:00:00Z",
+      available: [signerFor(BOOTSTRAP)],
+    });
+    assertEqual(record.refusals.join("; "), "", "the first run refused");
+    assertEqual(record.commit, true, "the first run committed nothing");
+    const doc = JSON.parse(record.files[SIGNED_FILES.index]);
+    const named = namedAssets(doc).assets.map((a) => a.rel).sort();
+    assertEqual(named.length, 3, "the signed catalogue does not name the three files");
+    assertEqual(Object.keys(record.files).sort().join(" "), [...Object.values(SIGNED_FILES), ...named].sort().join(" "),
+      "the record's files are not the four documents and the named assets");
+    assert(record.notes.some((n) => n.includes("3 asset file(s)") && n.includes(String(ASSETS_TOTAL_MAX_BYTES))),
+      `no note of the asset total: ${record.notes.join(" | ")}`);
+
+    // Through the disk, as sign.yml's two steps hand it over, and into a commit.
+    const out = path.join(tmp, "assets-commit-out");
+    writeTree({ out, files: record.files });
+    const read = readSignedTree(out);
+    assertEqual(read.problems.join("; "), "", "the commit step refused the tree the signing step wrote");
+    const sha = buildSignedCommit({ root: t.dir, files: read.files, parent: null, message: "first\n" });
+    const inTree = t.git("ls-tree", "-r", "--name-only", sha).split("\n").sort();
+    assertEqual(inTree.join(" "), [...Object.values(SIGNED_FILES), ...named].sort().join(" "),
+      "the `signed` commit holds something other than the documents and the named files");
+    // SERVE-115's check, over the commit itself: every named file, its bytes.
+    const blob = (rel) => execFileSync("git", ["-C", t.dir, "show", `${sha}:${rel}`], { env: fixtureEnv(t.dir) });
+    const check = assetFilesFor(doc, (a) => blob(a.rel));
+    assertEqual(check.problems.join("; "), "", "a file in the commit is not what its member says");
+    const png = fs.readFileSync(path.join(t.dir, "plugins/raster-plugin/icon.png"));
+    assertEqual(blob(`${ASSETS_DIR}/${sha256Hex(png)}.png`).equals(png), true,
+      "the committed icon is not the listing's committed bytes");
+
+    // Pages serves the head's asset files beside its index (CLIENT-104
+    // resolves a path against the host the index came from).
+    const pages = headAssetFiles({ root: t.dir, sha });
+    assertEqual(Object.keys(pages).sort().join(" "), named.join(" "), "Pages would not serve exactly the head's asset files");
+    for (const rel of named) assertEqual(pages[rel].equals(read.files[rel]), true, `Pages would serve other bytes for ${rel}`);
+
+    // The commit step holds the tree to the catalogue once more.
+    const victim = path.join(out, named[0]);
+    const bytes = fs.readFileSync(victim);
+    fs.rmSync(victim);
+    assert(readSignedTree(out).problems.some((p) => p.includes("no bytes")), "a missing asset file reached the commit");
+    fs.writeFileSync(victim, Buffer.concat([bytes, Buffer.from("x")]));
+    assert(readSignedTree(out).problems.some((p) => p.includes("bytes and its member says")), "an altered asset file reached the commit");
+    fs.writeFileSync(victim, bytes);
+    fs.writeFileSync(path.join(out, ASSETS_DIR, `${"0".repeat(64)}.png`), bytes);
+    assert(readSignedTree(out).problems.some((p) => p.includes("names no such file")), "a file nothing names reached the commit");
+  });
+
+  await test("BOT-109: a carried catalogue's asset files come from the `signed` head it was published in, and a head without them commits nothing", async () => {
+    const t = presentationTree("assets-carry", { trustKeys: [KEY_B] });
+    const first = t.commit("three listings");
+    const published = buildCatalogue({ root: t.dir, serial: 1 });
+    const headIndex = signIndex(published.doc, { signer: signerFor(KEY_B), issuedAt: new Date("2026-09-19T00:00:00Z") });
+    const headList = signRevocations(
+      { signed: { schema: REVOCATIONS_SCHEMA, serial: 1, revocations: [] } },
+      { signer: signerFor(KEY_B), issuedAt: new Date("2026-09-19T00:00:00Z") },
+    );
+    const documents = { index: headIndex, revocations: headList, trust: trustDelegating([KEY_B]) };
+    const headFiles = Object.fromEntries(Object.entries(SIGNED_FILES).map(([n, rel]) =>
+      [rel, n === "index" ? catalogueStringify(headIndex) : stableStringify(n === "root" ? ROOT_DOC : documents[n])]));
+    const headSha = buildSignedCommit({
+      root: t.dir, files: { ...headFiles, ...Object.fromEntries(published.assets) }, parent: null, message: "head\n",
+    });
+
+    // A new icon on main, and a catalogue no key may sign yet: a carry.
+    const oldPng = fs.readFileSync(path.join(t.dir, "plugins/raster-plugin/icon.png"));
+    fs.writeFileSync(path.join(t.dir, "plugins/raster-plugin/icon.png"), PNG("a different picture"));
+    t.write("tools/revocations/ASTRA-2026-0001.json", advisory("ASTRA-2026-0001", "raster-plugin"));
+    const sourceCommit = t.commit("a new icon and an advisory");
+    const carry = (sha) => signRun({
+      root: t.dir, sourceCommit, head: headFrom({ ...documents, sha }), now: "2026-09-19T02:00:00Z",
+      available: [signerFor(KEY_B)], delegatedAt: new Map([[KEY_B, "2026-09-19T00:00:00Z"]]),
+    });
+
+    const record = await carry(headSha);
+    assertEqual(record.documents.index.decision, "carry", "the fixture's catalogue was not carried");
+    assertEqual(record.refusals.join("; "), "", "the carry was refused");
+    assertEqual(record.commit, true, "the withdrawal list waited for the catalogue");
+    const oldRel = `${ASSETS_DIR}/${sha256Hex(oldPng)}.png`;
+    assert(Buffer.isBuffer(record.files[oldRel]) && record.files[oldRel].equals(oldPng),
+      "the carried catalogue's icon file is not the head's bytes");
+    const named = namedAssets(JSON.parse(record.files[SIGNED_FILES.index])).assets.map((a) => a.rel).sort();
+    assertEqual(Object.keys(record.files).filter((f) => f.startsWith(`${ASSETS_DIR}/`)).sort().join(" "), named.join(" "),
+      "the commit holds files the carried catalogue does not name (the new icon), or lacks one it does");
+
+    // The same carry over a head commit that does not hold the files: SERVE-115
+    // would refuse the commit, so the run makes none — the list waits too.
+    const broken = await carry(first);
+    assertEqual(broken.commit, false, "a commit whose catalogue names files it does not hold was made");
+    assert(broken.codes.includes("SIGNER_ASSET_REFUSED"), `the refusal's code: ${broken.codes.join(" ")}`);
+    assert(broken.refusals.some((r) => r.includes("BOT-109") && r.includes("SERVE-115")), broken.refusals.join(" | "));
+  });
+
+  await test("BOT-109 and 6.29.0: a file over its cap, a total over 32 MiB and a malformed member are refused before any file is read", () => {
+    const hex = (i) => i.toString(16).padStart(64, "0");
+    const icon = (i, size) => ({ path: `assets/${hex(i)}.png`, sha256: hex(i), size, media_type: "image/png" });
+    const docOf = (plugins) => ({ signed: { plugins } });
+    let reads = 0;
+    const lookup = () => { reads++; return null; };
+
+    const cases = [
+      ["an icon one byte over its cap", [{ id: "a", icon: icon(1, ICON_ASSET_MAX_BYTES + 1) }], "outside 1..131072"],
+      ["a README one byte over its cap", [{ id: "a", readme_file: { path: `assets/${hex(2)}.md`, sha256: hex(2), size: README_ASSET_MAX_BYTES + 1 } }], "outside 1..16384"],
+      ["a zero-byte file", [{ id: "a", icon: icon(3, 0) }], "outside 1.."],
+      ["a path whose hex is not its sha256", [{ id: "a", icon: { ...icon(4, 10), sha256: hex(5) } }], "whose name is not its `sha256`"],
+      ["a path with a host", [{ id: "a", icon: { ...icon(6, 10), path: `https://example.invalid/assets/${hex(6)}.png` } }], "not assets/<sha256>"],
+      ["a path with ..", [{ id: "a", icon: { ...icon(7, 10), path: `assets/../${hex(7)}.png` } }], "not assets/<sha256>"],
+      ["an SVG pair", [{ id: "a", icon: { ...icon(8, 10), path: `assets/${hex(8)}.svg`, media_type: "image/svg+xml" } }], "not assets/<sha256>"],
+      ["a media type the extension disagrees with", [{ id: "a", icon: { ...icon(9, 10), media_type: "image/webp" } }], "media_type"],
+      ["one file named with two sizes", [{ id: "a", icon: icon(10, 10) }, { id: "b", icon: icon(10, 11) }], "listing a says it is 10"],
+      ["257 icons at their cap, over the total", Array.from({ length: 257 }, (_, i) => ({ id: `p${i}`, icon: icon(100 + i, ICON_ASSET_MAX_BYTES) })), "over the 33554432"],
+    ];
+    for (const [what, plugins, word] of cases) {
+      const made = assetFilesFor(docOf(plugins), lookup);
+      assert(made.problems.some((p) => p.includes(word)), `${what} was not refused for its reason: ${made.problems.join(" | ") || "(accepted)"}`);
+      assertEqual(Object.keys(made.files).length, 0, `${what} still produced files to commit`);
+    }
+    assertEqual(reads, 0, "a file was read for a catalogue whose members are refused (6.29.0: the index decides first)");
+
+    // At the total exactly, accepted: the cap is not one byte early.
+    const atCap = Array.from({ length: 256 }, (_, i) => ({ id: `p${i}`, icon: icon(1000 + i, ICON_ASSET_MAX_BYTES) }));
+    assertEqual(namedAssets(docOf(atCap)).problems.join("; "), "", "256 icons at their cap, exactly 32 MiB, was refused");
+    assertEqual(namedAssets(docOf(atCap)).total, ASSETS_TOTAL_MAX_BYTES, "the fixture is not at the total");
+  });
+
+  await test("an entry that only gains the asset pair at an equal serial is withheld, not carried, like owner_id", () => {
+    const t = presentationTree("assets-withhold");
+    t.commit("three listings");
+    const { doc } = buildCatalogue({ root: t.dir, serial: 1 });
+    const before = structuredClone(doc);
+    for (const p of before.signed.plugins) { delete p.icon; delete p.readme_file; }
+    const held = withholdGainedMembers(doc, before);
+    assertEqual(JSON.stringify(held.doc), JSON.stringify(before), "the gained pair was not withheld");
+    assertEqual(held.members.join(","), "icon,readme_file", `withheld members: ${held.members.join(",")}`);
+    // A CHANGED pair is not a gain, and stays to be refused by TRUST-28.
+    const changed = structuredClone(doc);
+    changed.signed.plugins[0].icon = { ...changed.signed.plugins[0].icon, size: 1 };
+    assertEqual(withholdGainedMembers(changed, doc).ids.length, 0, "a changed member was withheld as if gained");
   });
 
   await test("the Source-Commit sign.yml hands the signer is main's head at run start, which the equal-serial lineage above rests on", () => {

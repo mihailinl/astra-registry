@@ -494,6 +494,24 @@ await test("two platforms in one release become two artifact keys", async () => 
   assertEqual(Object.keys(r.derived.version.artifacts).sort().join(","), "linux-x64,windows-x64", "both hosts listed");
 });
 
+// companion-cat 0.1.8, 2026-11-22: AstraPlugins' plugin-release/v1 builds a
+// Rust plugin for linux-x64, macos-arm64 and windows-x64, and the registry
+// refused the release whole as E_ASSET_FILENAME ("…-macos-arm64.astraplugin is
+// not <id>-<version>-<platform>.astraplugin"), because the file name's platform
+// suffix is matched against SUPPORTED_KEYS and `macos-arm64` was reserved.
+const THREE_HOSTS = [
+  { name: "dice-roller-0.2.0-linux-x64.astraplugin", bytes: makeBundle({ os: "linux" }) },
+  { name: "dice-roller-0.2.0-macos-arm64.astraplugin", bytes: makeBundle({ os: "macos", arch: "aarch64" }) },
+  { name: "dice-roller-0.2.0-windows-x64.astraplugin", bytes: makeBundle({ os: "windows" }) },
+];
+
+await test("a plugin-release/v1 release with a macos-arm64 bundle beside linux-x64 and windows-x64 lists all three hosts", async () => {
+  const root = registryWith({});
+  const r = await run({ assets: THREE_HOSTS, root });
+  assert(!r.blocked, JSON.stringify(errorCodes(r)));
+  assertEqual(Object.keys(r.derived.version.artifacts).sort().join(","), "linux-x64,macos-arm64,windows-x64", "all three hosts listed");
+});
+
 await test("everything except the repository and the tag comes out of the bundle", async () => {
   const root = registryWith({});
   const r = await run({
@@ -3090,6 +3108,12 @@ await test("verify: a conforming release yields every identity value from the ce
   const digest = crypto.createHash("sha256").update(makeBundle()).digest("hex");
   assert(onDisk.includes(`${digest}.astraplugin`), `the verified bytes are left for check, under their digest: ${onDisk.join(", ")}`);
   assert(onDisk.includes("verify-outcome.txt"), "and the upload is never empty");
+});
+
+await test("verify: companion-cat 0.1.8's shape — linux-x64, macos-arm64 and windows-x64 bundles — verifies rather than E_ASSET_FILENAME", async () => {
+  const { v } = await verifyRun({ assets: THREE_HOSTS });
+  assertEqual(v.outcome, "ok", JSON.stringify(v).slice(0, 300));
+  assertEqual(v.plugin_id, "dice-roller", "the id comes from the attested asset names");
 });
 
 await test("verify: a certificate naming another repository id than the download's writes nothing and alerts (BOT-21)", async () => {
