@@ -629,23 +629,22 @@ export function overBound(counted, { bound = TAKEDOWN_BOUND, label = "takedown" 
 export function boundLedger(counted, { bound = TAKEDOWN_BOUND, safetyBound = SAFETY_TAKEDOWN_BOUND, staging = null } = {}) {
   // Contract 6.41.0: two sets and two counts. An id is in at most one: a safety
   // one until an ordinary withdrawal of it moves it over, and never back.
-  const ordinaryIds = new Set();
-  const safetyIds = new Set();
-  for (const x of counted?.ids ?? []) (x.safety === true ? safetyIds : ordinaryIds).add(x.id);
+  const windowOrdinary = new Set();
+  const windowSafety = new Set();
+  for (const x of counted?.ids ?? []) (x.safety === true ? windowSafety : windowOrdinary).add(x.id);
+  const run = new Map(); // id -> which kinds THIS run charged it as
+  let both = 0;          // ids this run charged as both, which count once for the alarm
   const known = typeof counted?.count === "number";
-  let safetyCount = known ? (typeof counted.safetyCount === "number" ? counted.safetyCount : safetyIds.size) : null;
+  let safetyCount = known ? (typeof counted.safetyCount === "number" ? counted.safetyCount : windowSafety.size) : null;
   let ordinaryCount = known ? (typeof counted.ordinaryCount === "number" ? counted.ordinaryCount : counted.count - safetyCount) : null;
   let unknown = known ? null : (counted?.unknown ?? "no count was made, and no reason was given for it");
   const admitted = [];
-  // Ids charged as ordinary in THIS run that a safety decision then also names: see `spend`.
-  const alsoSafety = new Set();
-  const runOrdinary = new Set(); // ids this run itself charged as ordinary
   const measure = (safety) => (safety
     ? overBound({ count: safetyCount, unknown }, { bound: safetyBound, label: "safety takedown" })
     : overBound({ count: ordinaryCount, unknown }, { bound, label: "takedown" }));
   return {
     /** Every withdrawal, safety ones included: what the alarm counts. */
-    get count() { return ordinaryCount === null ? null : ordinaryCount + safetyCount; },
+    get count() { return ordinaryCount === null ? null : ordinaryCount + safetyCount - both; },
     get ordinaryCount() { return ordinaryCount; },
     get safetyCount() { return safetyCount; },
     get unknown() { return unknown; },
@@ -668,28 +667,26 @@ export function boundLedger(counted, { bound = TAKEDOWN_BOUND, safetyBound = SAF
       }
       for (const id of ids) {
         if (staging && id === staging) continue;
-        if (ordinaryIds.has(id)) {
-          // A safety decision on an id this run already charged as ordinary (a held
-          // takedown admitted ahead of it). The held one is then refused as
-          // target_changed and git records only the safety record, so the NEXT run
-          // counts this id as safety: charge it here too, once, so the gate matches.
-          if (safety && runOrdinary.has(id) && !alsoSafety.has(id)) {
-            alsoSafety.add(id);
-            if (safetyCount !== null) safetyCount += 1;
-          }
-          continue;
-        }
-        if (safetyIds.has(id)) {
+        // ONE RULE. An id git already counts moves from safety to ordinary at most
+        // once (it was withdrawn both ways) and costs nothing otherwise. An id first
+        // charged in THIS run counts against the kind of every charge it gets, and
+        // lowers nothing: two decisions on one id can both be admitted ahead of the
+        // commit, which then applies only the first and refuses the other
+        // (target_changed), so git records one kind while this run spent both.
+        if (windowOrdinary.has(id)) continue;
+        if (windowSafety.has(id)) {
           if (safety) continue;
-          safetyIds.delete(id);
-          ordinaryIds.add(id);
-          runOrdinary.add(id);
+          windowSafety.delete(id);
+          windowOrdinary.add(id);
           if (safetyCount !== null) { safetyCount -= 1; ordinaryCount += 1; }
           continue;
         }
-        (safety ? safetyIds : ordinaryIds).add(id);
-        if (!safety) runOrdinary.add(id);
-        admitted.push(id);
+        const charged = run.get(id) ?? { ordinary: false, safety: false };
+        if (charged[safety ? "safety" : "ordinary"]) continue;
+        if (!run.has(id)) admitted.push(id);
+        else both += 1;
+        charged[safety ? "safety" : "ordinary"] = true;
+        run.set(id, charged);
         if (safety) { if (safetyCount !== null) safetyCount += 1; }
         else if (ordinaryCount !== null) ordinaryCount += 1;
       }

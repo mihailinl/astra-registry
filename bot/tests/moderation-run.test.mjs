@@ -5582,3 +5582,24 @@ test("6.41.0: a 40-character basis is ignored, never refused: the entry compiles
   const record = JSON.parse(fs.readFileSync(path.join(root, job.paths.find((p) => /-widgets-delist\.json$/.test(p))), "utf8"));
   assert.equal(record.basis, undefined, "an unhonoured basis reached the record");
 });
+
+test("6.41.0: two bound holds on one id, a safety one held first and an ordinary one later, cannot free a safety slot for a fresh safety takedown", async () => {
+  const root = withDocuments(crowd5());
+  withRemote(root);
+  safetyWithdrawnInGit(root, ["gizmos", "doohickeys"], "2026-09-20T11:00:00Z"); // safety 2 of 3
+  sh(["push", "-q", "origin", "HEAD:main"], root);
+  const hold = (d, held_at) => {
+    writeAll(root, { [holdEntryPath(d.service_decision_id)]: holdEntry(d, { held_for: "bound", held_at }) });
+    return commitAt(root, held_at, `registry: moderation (1 hold(s)) for ${d.plugin_id}`);
+  };
+  hold(safetyOf("widgets", 0), "2026-09-19T12:00:00Z");
+  hold(takedownOf("widgets", 1), "2026-09-19T12:30:00Z");
+  sh(["push", "-q", "origin", "HEAD:main"], root);
+  const job = await measuredJob(root, [safetyOf("sprockets", 2)], { bound: 10, safetyBound: 3 });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.held.map((h) => [h.service_decision_id, h.held_for]), [[SDIS[2], "bound"]],
+    `the ordinary hold on widgets freed a safety slot: ${job.logs.join(" | ")}`);
+  assert.equal(runApply(root, dated("2026-09-20T12:35:00Z")).status, 0);
+  const next = countWindow(root, { now: new Date("2026-09-20T12:40:00Z") });
+  assert.ok(next.safetyCount <= 3, `the next run counts safety ${next.safetyCount} against a bound of 3`);
+});
