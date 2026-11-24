@@ -5553,3 +5553,32 @@ test("6.41.0: the alarm counts every withdrawal, safety ones included", async ()
   assert.deepEqual(job.results.compiled, [SDIS[0]], job.logs.join("\n"));
   assert.deepEqual(takedownAlertOf(root), ["widgets"], "the 4th withdrawal of the day, 3 of them safety, raised no alarm");
 });
+
+test("6.41.0: held ordinary takedowns admitted ahead of fresh safety ones on the same ids cannot push the safety count past its bound", async () => {
+  const root = withDocuments(crowd5());
+  withRemote(root);
+  safetyWithdrawnInGit(root, ["gizmos", "doohickeys"], "2026-09-20T11:00:00Z"); // safety 2 of 3
+  sh(["push", "-q", "origin", "HEAD:main"], root);
+  boundHold(root, "widgets", SDIS[0], "2026-09-19T12:00:00Z");
+  boundHold(root, "gadgets", SDIS[1], "2026-09-19T12:30:00Z");
+  sh(["push", "-q", "origin", "HEAD:main"], root);
+  // Both holds fit the ordinary bound; the fresh safety decisions name the same ids.
+  const job = await measuredJob(root, [safetyOf("widgets", 2), safetyOf("gadgets", 3)], { bound: 10, safetyBound: 3 });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.compiled.filter((id) => [SDIS[2], SDIS[3]].includes(id)), [SDIS[2]],
+    `two safety admissions went past a safety count of 2 of 3: ${job.logs.join(" | ")}`);
+  assert.deepEqual(job.results.held.map((h) => [h.service_decision_id, h.held_for]), [[SDIS[3], "bound"]]);
+  assert.equal(runApply(root, dated("2026-09-20T12:35:00Z")).status, 0);
+  const next = countWindow(root, { now: new Date("2026-09-20T12:40:00Z") });
+  assert.ok(next.safetyCount <= 3, `the next run counts safety ${next.safetyCount} against a bound of 3`);
+});
+
+test("6.41.0: a 40-character basis is ignored, never refused: the entry compiles as an ordinary takedown", async () => {
+  const root = crowd();
+  const job = await measuredJob(root, [safetyOf("widgets", 0, { basis: "x".repeat(40) })], { safetyBound: 3 });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.compiled, [SDIS[0]]);
+  assert.deepEqual(job.results.refused ?? [], []);
+  const record = JSON.parse(fs.readFileSync(path.join(root, job.paths.find((p) => /-widgets-delist\.json$/.test(p))), "utf8"));
+  assert.equal(record.basis, undefined, "an unhonoured basis reached the record");
+});

@@ -313,9 +313,8 @@
           "maxLength": 64
         },
         "basis": {
-          "$comment": "Contract 6.41.0 (TRUST-26): `\"safety\"` on an `M_YANK`, `M_DELIST`, `M_DEPRECATE` or `M_REVOKE` an admin decided under `malicious`, `harmful_behaviour`, `account_compromise`, `security_defect` or `privacy`. The bot honours it on exactly that and ignores any other value or placement, so this is a plain string and not an enum: an enum would turn a value the bot ignores into a refusal (SCOPE-3).",
-          "type": "string",
-          "maxLength": 32
+          "$comment": "Contract 6.41.0 (TRUST-26): `\"safety\"` on an `M_YANK`, `M_DELIST`, `M_DEPRECATE` or `M_REVOKE` an admin decided under `malicious`, `harmful_behaviour`, `account_compromise`, `security_defect` or `privacy`. The bot honours it on exactly that and ignores any other value or placement, so this is a plain string, with no length cap and no enum: an enum would turn a value the bot ignores into a refusal (SCOPE-3).",
+          "type": "string"
         },
         "declared_interest": {
           "type": "boolean"

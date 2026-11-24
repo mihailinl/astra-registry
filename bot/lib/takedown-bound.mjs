@@ -637,6 +637,9 @@ export function boundLedger(counted, { bound = TAKEDOWN_BOUND, safetyBound = SAF
   let ordinaryCount = known ? (typeof counted.ordinaryCount === "number" ? counted.ordinaryCount : counted.count - safetyCount) : null;
   let unknown = known ? null : (counted?.unknown ?? "no count was made, and no reason was given for it");
   const admitted = [];
+  // Ids charged as ordinary in THIS run that a safety decision then also names: see `spend`.
+  const alsoSafety = new Set();
+  const runOrdinary = new Set(); // ids this run itself charged as ordinary
   const measure = (safety) => (safety
     ? overBound({ count: safetyCount, unknown }, { bound: safetyBound, label: "safety takedown" })
     : overBound({ count: ordinaryCount, unknown }, { bound, label: "takedown" }));
@@ -665,15 +668,27 @@ export function boundLedger(counted, { bound = TAKEDOWN_BOUND, safetyBound = SAF
       }
       for (const id of ids) {
         if (staging && id === staging) continue;
-        if (ordinaryIds.has(id)) continue;
+        if (ordinaryIds.has(id)) {
+          // A safety decision on an id this run already charged as ordinary (a held
+          // takedown admitted ahead of it). The held one is then refused as
+          // target_changed and git records only the safety record, so the NEXT run
+          // counts this id as safety: charge it here too, once, so the gate matches.
+          if (safety && runOrdinary.has(id) && !alsoSafety.has(id)) {
+            alsoSafety.add(id);
+            if (safetyCount !== null) safetyCount += 1;
+          }
+          continue;
+        }
         if (safetyIds.has(id)) {
           if (safety) continue;
           safetyIds.delete(id);
           ordinaryIds.add(id);
+          runOrdinary.add(id);
           if (safetyCount !== null) { safetyCount -= 1; ordinaryCount += 1; }
           continue;
         }
         (safety ? safetyIds : ordinaryIds).add(id);
+        if (!safety) runOrdinary.add(id);
         admitted.push(id);
         if (safety) { if (safetyCount !== null) safetyCount += 1; }
         else if (ordinaryCount !== null) ordinaryCount += 1;
