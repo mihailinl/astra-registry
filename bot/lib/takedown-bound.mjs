@@ -627,13 +627,13 @@ export function overBound(counted, { bound = TAKEDOWN_BOUND, label = "takedown" 
  * @param {{bound?: number, staging?: string|null}} [opts]
  */
 export function boundLedger(counted, { bound = TAKEDOWN_BOUND, safetyBound = SAFETY_TAKEDOWN_BOUND, staging = null } = {}) {
-  // Contract 6.41.0: two sets and two counts. An id is in at most one: a safety
-  // one until an ordinary withdrawal of it moves it over, and never back.
+  // Contract 6.41.0: two counts, each only ever raised within a run (see `spend`).
   const windowOrdinary = new Set();
   const windowSafety = new Set();
   for (const x of counted?.ids ?? []) (x.safety === true ? windowSafety : windowOrdinary).add(x.id);
   const run = new Map(); // id -> which kinds THIS run charged it as
   let both = 0;          // ids this run charged as both, which count once for the alarm
+  const windowMoved = new Set(); // window-safety ids this run also charged as ordinary
   const known = typeof counted?.count === "number";
   let safetyCount = known ? (typeof counted.safetyCount === "number" ? counted.safetyCount : windowSafety.size) : null;
   let ordinaryCount = known ? (typeof counted.ordinaryCount === "number" ? counted.ordinaryCount : counted.count - safetyCount) : null;
@@ -657,7 +657,7 @@ export function boundLedger(counted, { bound = TAKEDOWN_BOUND, safetyBound = SAF
      * Spend what one compiled takedown withdraws. An unresolved entry makes the
      * rest of the run's count unknown, which holds every takedown after it. An id
      * already spent costs nothing again, except that an ordinary withdrawal of an
-     * id counted as safety moves it to the ordinary count (it was withdrawn both ways).
+     * id counted as safety also adds to the ordinary count; no count is ever lowered.
      */
     spend({ ids = [], unresolved = [] } = {}, { safety = false } = {}) {
       if (unresolved.length) {
@@ -667,18 +667,23 @@ export function boundLedger(counted, { bound = TAKEDOWN_BOUND, safetyBound = SAF
       }
       for (const id of ids) {
         if (staging && id === staging) continue;
-        // ONE RULE. An id git already counts moves from safety to ordinary at most
-        // once (it was withdrawn both ways) and costs nothing otherwise. An id first
-        // charged in THIS run counts against the kind of every charge it gets, and
-        // lowers nothing: two decisions on one id can both be admitted ahead of the
-        // commit, which then applies only the first and refuses the other
-        // (target_changed), so git records one kind while this run spent both.
+        // ONE RULE: a run never lowers a count. An id git already counts as
+        // ordinary costs nothing. An id git counts as safety costs nothing again as
+        // safety, and an ordinary charge of it adds to the ordinary count once while
+        // the safety count keeps it: the ordinary decision may still be refused at
+        // the commit (a held one is charged before it is compiled), and git would
+        // then still count the id as safety. The next run's recount from git moves
+        // it if both landed. An id first charged in THIS run counts against the
+        // kind of every charge it gets, for the same reason: two decisions on one
+        // id can both be admitted ahead of the commit, which then applies only the
+        // first and refuses the other (target_changed). Over-counting holds a
+        // takedown for one run at most; under-counting would let a bound be passed.
         if (windowOrdinary.has(id)) continue;
         if (windowSafety.has(id)) {
-          if (safety) continue;
-          windowSafety.delete(id);
-          windowOrdinary.add(id);
-          if (safetyCount !== null) { safetyCount -= 1; ordinaryCount += 1; }
+          if (safety || windowMoved.has(id)) continue;
+          windowMoved.add(id);
+          both += 1;
+          if (ordinaryCount !== null) ordinaryCount += 1;
           continue;
         }
         const charged = run.get(id) ?? { ordinary: false, safety: false };

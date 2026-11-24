@@ -771,10 +771,27 @@ test("6.41.0: an id withdrawn with and without the basis counts against the ordi
   assert.deepEqual([got.count, got.ordinaryCount, got.safetyCount], [2, 1, 1], got.detail.join("\n"));
   assert.deepEqual(got.ids.map((x) => [x.id, x.safety]), [["p0", false], ["p1", true]]);
 
-  // The same, within one run's ledger: an ordinary spend of a safety-counted id moves it over.
+  // Within one run's ledger no count is lowered: an ordinary spend of a safety-counted id
+  // adds to the ordinary count once and the safety count keeps it, because that ordinary
+  // decision may still be refused at the commit and git would then count p1 as safety.
+  // The alarm counts the id once. The next run's recount from git moves it if both landed.
   const ledger = boundLedger({ count: 1, ordinaryCount: 0, safetyCount: 1, ids: [{ id: "p1", why: [], safety: true }] });
   ledger.spend({ ids: ["p1"] });
-  assert.deepEqual([ledger.ordinaryCount, ledger.safetyCount, ledger.admitted], [1, 0, []]);
+  ledger.spend({ ids: ["p1"] });
+  assert.deepEqual([ledger.ordinaryCount, ledger.safetyCount, ledger.count, ledger.admitted], [1, 1, 1, []]);
+});
+
+test("6.41.0: a held ordinary takedown on a window-safety id frees no safety slot before its commit", () => {
+  // Safety at the bound in git, p1 among them. A held ordinary delist of p1 is admitted
+  // (charged before it is compiled) and later refused at the commit, so git keeps p1 as
+  // safety. Had the charge lowered the safety count, a fresh safety takedown would pass
+  // the gate this run and the next run would count one over the bound.
+  const ids = [0, 1, 2].map((i) => ({ id: `p${i}`, why: [], safety: true }));
+  const ledger = boundLedger({ count: 3, ordinaryCount: 0, safetyCount: 3, ids }, { safetyBound: 3 });
+  assert.equal(ledger.over({ safety: true }), true);
+  ledger.spend({ ids: ["p1"] });
+  assert.equal(ledger.over({ safety: true }), true, "an ordinary charge must not free a safety slot");
+  assert.deepEqual([ledger.safetyCount, ledger.ordinaryCount], [3, 1]);
 });
 
 test("6.41.0: a basis on a record that is not a safety takedown, or on a hand commit with no record, counts ordinary", () => {
