@@ -156,7 +156,8 @@ jobs:
       # R4: signs and verifies the once-per-state memory (review of #480);
       # absent, every red pages and nothing is saved.
       ASTRA_ALERT_STATE_HMAC_KEY: ${{ secrets.ASTRA_ALERT_STATE_HMAC_KEY }}
-      ASTRA_DEADMAN_URL_RELEASE_CANARY: ${{ secrets.ASTRA_DEADMAN_URL_RELEASE_CANARY }}
+      # ASTRA_DEADMAN_URL_RELEASE_CANARY is not mapped: `release-canary` is `created: false` in
+      # bot/lib/alert-checks.mjs while the cron is commented. Map it when the cron goes live.
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

@@ -472,6 +472,25 @@ await test("the heartbeat posts to exactly the URL the check's own secret carrie
   assert.equal(r.calls[0].init.method, "POST");
 });
 
+await test("a check the receiver does not hold is a logged no-op, never a failure, and needs no URL secret (20/20 plan limit)", async () => {
+  const canary = CHECKS.find((c) => c.name === "release-canary");
+  assert.equal(canary.created, false, "release-canary's cron is commented, so its dead-man is not created on the receiver");
+  const r = recorder();
+  const said = [];
+  const out = await postHeartbeat({ check: "release-canary", env: {}, fetchImpl: r.fetchImpl, log: { log: (m) => said.push(m), error: (m) => said.push(m) } });
+  assert.equal(out.code, 0, said.join("\n"));
+  assert.deepEqual(r.calls, [], "something was posted for a check that is not on the receiver");
+  assert.deepEqual(said, ["check not created on the receiver: release-canary"]);
+  assert.ok(!alertsEnvironmentSecrets().includes("ASTRA_DEADMAN_URL_RELEASE_CANARY"), "the environment list still requires a secret for it");
+  // The rule on the table: created:false needs created_disarmed and no armed_at.
+  assert.deepEqual(tableProblems([{ ...canary }]), []);
+  assert.match(tableProblems([{ ...canary, created_disarmed: false }]).join(" "), /not created on the receiver/);
+  assert.match(tableProblems([{ ...canary, armed_at: "2026-09-24T11:22:44Z" }]).join(" "), /not created on the receiver/);
+  // A created check with no secret still fails closed, as before.
+  const served = await postHeartbeat({ check: "served-set", env: {}, fetchImpl: r.fetchImpl, log: quiet });
+  assert.equal(served.code, 1);
+});
+
 await test("a check name nothing in the table knows is refused before any POST", async () => {
   const r = recorder();
   const out = await postHeartbeat({
@@ -890,7 +909,7 @@ await test("the list environment `alerts` is built from is the required secrets,
   assert.deepEqual(secrets.filter((s) => optional.includes(s)), [],
     "an optional secret is in the REQUIRED list: the owner's step-8 diff would show it missing on every correct " +
     "environment that does without it, and a diff that differs when nothing is wrong is a diff nobody reads");
-  const pings = CHECKS.filter((c) => c.party === "registry").reduce((n, c) => n + c.signals.length, 0);
+  const pings = CHECKS.filter((c) => c.party === "registry" && c.created !== false).reduce((n, c) => n + c.signals.length, 0);
   assert.equal(secrets.length, REQUIRED_SECRETS.length + pings,
     `${secrets.length} secrets: the required channel secrets and one ping URL per registry check signal (${pings}) ` +
     "are the whole list");

@@ -132,6 +132,7 @@ import {
   effectiveCategories,
   cutoverAt,
   fileNameFor,
+  isSafetyTakedown,
   loadEntries,
   reasonProblems,
   SOURCE_DIR as MODERATION_DIR,
@@ -278,7 +279,7 @@ export const ENTRY_ALLOWLIST = Object.freeze({
   moderator: Object.freeze([
     "service_decision_id", "code", "category", "plugin_id", "versions", "decided_at",
     "reason", "reverses", "appeal_of", "outcome", "severity", "action",
-    "moderator", "declared_interest", "corrects", "low_tools",
+    "moderator", "declared_interest", "corrects", "low_tools", "basis",
   ]),
   author: Object.freeze([
     "service_decision_id", "code", "category", "plugin_id", "versions", "decided_at", "reason",
@@ -1268,6 +1269,7 @@ function compileYank(root, d, listing, { decidedAt, date, reason, batch = null }
     reason,
     category: d.category ?? (author ? "author_request" : undefined),
     service_decision_id: d.service_decision_id,
+    ...(isSafetyTakedown(d) ? { basis: "safety" } : {}),
     ...(d.declared_interest !== undefined ? { declared_interest: d.declared_interest } : {}),
   };
   if (entry.category === undefined) delete entry.category;
@@ -1464,6 +1466,7 @@ function compileDelist(root, d, listing, { decidedAt, date, reason, batch = null
     reason,
     category: d.category ?? (author ? "author_request" : undefined),
     service_decision_id: d.service_decision_id,
+    ...(isSafetyTakedown(d) ? { basis: "safety" } : {}),
     ...(d.declared_interest !== undefined ? { declared_interest: d.declared_interest } : {}),
   };
   if (entry.category === undefined) delete entry.category;
@@ -1636,6 +1639,7 @@ function compileAdvisory(root, d, listing, { decidedAt, date, reason, batch = nu
     advisory: id,
     ...(d.category !== undefined ? { category: d.category } : {}),
     service_decision_id: d.service_decision_id,
+    ...(isSafetyTakedown(d) ? { basis: "safety" } : {}),
     ...(d.declared_interest !== undefined ? { declared_interest: d.declared_interest } : {}),
   };
 
