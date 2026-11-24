@@ -404,6 +404,8 @@ const SD_VALUES = Object.freeze({
   action: "block_install",
   moderator: "amoderator",
   declared_interest: false,
+  // 6.41.0: an admin's safety takedown.
+  basis: "safety",
   // 6.33.0: the Low tools an M_REVIEW approved.
   low_tools: ["read_state"],
 });
@@ -897,7 +899,7 @@ test("an answer missing `shadow` is read as shadow and alerts", () => {
 test("an entry carrying an unnamed member is accepted, and the member reaches no file", () => {
   // M-1, both halves, with the floor written before either mutation.
   const named = ENTRY_ALLOWLIST.moderator;
-  assert.equal(named.length, 16, `BOT-80 names 16 members for a moderator decision (\`corrects\` since 6.7.0, \`low_tools\` with Astra #377) and this list has ${named.length}`);
+  assert.equal(named.length, 17, `BOT-80 names 17 members for a moderator decision (\`corrects\` since 6.7.0, \`low_tools\` with Astra #377, \`basis\` since 6.41.0) and this list has ${named.length}`);
 
   const root = estate();
   const entry = decision({
@@ -1351,7 +1353,7 @@ test("with `list` down, a reversal held before contract 6.6.0 is released in one
 // before the repair on this same shape: `main` returned 0, and the add died.
 async function commitJob(root, {
   entries, submissions = [], shadow = false, now = new Date("2026-09-20T12:30:00Z"), env = {},
-  coverage = () => ({ status: "green", codes: [] }), bound = FIXTURE_BOUND,
+  coverage = () => ({ status: "green", codes: [] }), bound = FIXTURE_BOUND, safetyBound = null,
 }) {
   const out = path.join(root, "moderation");
   const logs = [];
@@ -1378,6 +1380,7 @@ async function commitJob(root, {
       // hands in a red one.
       coverage,
       bound,
+      safetyBound,
     });
     const paths = fs.readFileSync(path.join(out, "paths.txt"), "utf8").split("\n").filter(Boolean);
     const results = JSON.parse(fs.readFileSync(path.join(out, "results.json"), "utf8"));
@@ -3278,8 +3281,8 @@ function withdrawnInGit(root, ids, when) {
 const takedownOf = (id, i) => decision({ service_decision_id: SDIS[i], plugin_id: id, code: "M_DELIST", category: "broken", moderator: "amoderator" });
 
 /** The commit job as the workflow runs it: no bound handed in from outside. */
-async function measuredJob(root, entries, { env = {}, now = new Date("2026-09-20T12:30:00Z"), bound = FIXTURE_BOUND, shadow = false } = {}) {
-  return commitJob(root, { entries, now, env: { ASTRA_OVER_BOUND: "", ...env }, bound, shadow });
+async function measuredJob(root, entries, { env = {}, now = new Date("2026-09-20T12:30:00Z"), bound = FIXTURE_BOUND, safetyBound = null, shadow = false } = {}) {
+  return commitJob(root, { entries, now, env: { ASTRA_OVER_BOUND: "", ...env }, bound, safetyBound, shadow });
 }
 
 test("M-T3.4: a batch of four takedowns under a bound of three, with none spent today, applies three and holds the fourth", async () => {
@@ -5473,4 +5476,80 @@ test("passkey acts (review 9): many acts' plugin ids are cut and said, and MOD-8
   for (let i = 0; i < 30; i++) assert.ok(v.ids.includes(`p${i}`), `MOD-8's id p${i} was cut for an act's`);
   assert.ok(v.codes.includes("OPERATOR_ACT_IDS_ELIDED") && v.codes.includes("OPERATOR_ACT_DENY"));
   assert.equal(JSON.parse(fs.readFileSync(path.join(out, "a.json"), "utf8")).length, 20, "every act is still announced by its code");
+});
+
+// Contract 6.41.0 (TRUST-26, F33): an admin's safety takedown counts against its
+// own bound, and not against the ordinary one. The fixtures run both bounds at 3
+// (`safetyBound`, like `bound`, is this file's own: the CLI passes none), and
+// `bot/tests/takedown-bound.test.mjs` holds the real 10 and 30.
+const safetyOf = (id, i, over = {}) => ({ ...takedownOf(id, i), category: "malicious", basis: "safety", ...over });
+
+/** What the bot commits for an applied safety delist: the listing edit AND its `basis` record, in one commit. */
+function safetyWithdrawnInGit(root, ids, when, { basis = "safety" } = {}) {
+  for (const id of ids) {
+    const file = path.join(root, "plugins", id, "plugin.json");
+    const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+    fs.writeFileSync(file, `${JSON.stringify({ ...doc, unlisted: true }, null, 2)}\n`);
+    writeAll(root, {
+      [`bot/moderation/${when.slice(0, 10)}-${id}-delist.json`]: {
+        date: when.slice(0, 10), action: "delist", plugin: id, category: "malicious",
+        reason: MODERATOR_REASON, service_decision_id: `0192f3a4-5b6c-7d8e-9f01-2345678920${String(SAFE_N++).padStart(2, "0")}`,
+        ...(basis ? { basis } : {}),
+      },
+    });
+  }
+  sh(["add", "-A"], root);
+  sh(["commit", "-q", "-m", `registry: moderation for ${ids.join(", ")}`], root, dated(when));
+}
+let SAFE_N = 10;
+
+test("6.41.0: a safety takedown applies beside a full ordinary bound, writes `basis` into its own record, and an ordinary one beside it is still held", async () => {
+  const root = crowd({ more: ["sprockets"] });
+  withdrawnInGit(root, PEERS, "2026-09-20T11:30:00Z"); // three ordinary: the bound of 3 is full
+  const job = await measuredJob(root, [safetyOf("widgets", 0), takedownOf("sprockets", 1)], { safetyBound: 3 });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.compiled, [SDIS[0]], "the safety takedown counted against the full ordinary bound");
+  assert.deepEqual(job.results.held.map((h) => [h.service_decision_id, h.held_for]), [[SDIS[1], "bound"]],
+    "an ordinary takedown beside a full ordinary bound went through");
+  const record = JSON.parse(fs.readFileSync(path.join(root, job.paths.find((p) => /-widgets-delist\.json$/.test(p))), "utf8"));
+  assert.equal(record.basis, "safety", "the basis was not recorded in the decision's own record");
+});
+
+test("6.41.0: 3 safety withdrawals fill the safety bound, the 4th is held `bound` and releases in the first run whose window admits it", async () => {
+  const root = withDocuments(crowd({ more: ["sprockets"] }));
+  const origin = withRemote(root);
+  safetyWithdrawnInGit(root, PEERS, "2026-09-20T11:30:00Z");
+  sh(["push", "-q", "origin", "HEAD:main"], root);
+  const first = await measuredJob(root, [safetyOf("widgets", 0)], { safetyBound: 3 });
+  assert.equal(first.code, 0, first.logs.join("\n"));
+  assert.deepEqual(first.results.held.map((h) => [h.service_decision_id, h.held_for]), [[SDIS[0], "bound"]],
+    "the 4th safety takedown under a safety bound of 3 was not held");
+  assert.equal(runApply(root, dated("2026-09-20T12:35:00Z")).status, 0);
+  assert.ok(!unlistedOn(root, "widgets"));
+
+  // Still full a minute before the window frees; released, by the safety ledger, once it admits it.
+  const full = await measuredJob(root, [], { now: new Date("2026-09-21T11:29:00Z"), safetyBound: 3 });
+  assert.deepEqual(full.results.released_holds, [], "a safety hold released while the safety window was full");
+  const room = await measuredJob(root, [], { now: new Date("2026-09-21T11:31:00Z"), safetyBound: 3 });
+  assert.deepEqual(room.results.released_holds, [SDIS[0]], room.logs.join(" | "));
+  assert.equal(runApply(root, dated("2026-09-21T11:35:00Z")).status, 0);
+  assert.ok(unlistedOn(root, "widgets"), "the released safety takedown did not delist");
+  assert.ok(headOf(origin));
+});
+
+test("6.41.0: a `basis` on another category or code is ignored, and the takedown is held by the ordinary bound", async () => {
+  const root = crowd();
+  withdrawnInGit(root, PEERS, "2026-09-20T11:30:00Z");
+  const job = await measuredJob(root, [safetyOf("widgets", 0, { category: "broken" })], { safetyBound: 3 });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.held.map((h) => h.held_for), ["bound"], "a safety basis on category `broken` was honoured");
+  assert.deepEqual(job.results.refused ?? [], [], "a basis the bot does not honour must never refuse the decision");
+});
+
+test("6.41.0: the alarm counts every withdrawal, safety ones included", async () => {
+  const root = crowd();
+  safetyWithdrawnInGit(root, PEERS, "2026-09-20T11:30:00Z"); // 3 safety withdrawals today
+  const job = await measuredJob(root, [safetyOf("widgets", 0)], { bound: 10, safetyBound: 10 });
+  assert.deepEqual(job.results.compiled, [SDIS[0]], job.logs.join("\n"));
+  assert.deepEqual(takedownAlertOf(root), ["widgets"], "the 4th withdrawal of the day, 3 of them safety, raised no alarm");
 });

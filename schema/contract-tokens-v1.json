@@ -1,6 +1,6 @@
 {
-  "contract_version": "6.40.0",
-  "source_commit": "2b3f24faf7fbac5ff5d7bd61da539ca65eef4c90",
+  "contract_version": "6.41.0",
+  "source_commit": "a09bbc4ddf06a6a80750856856a6e96d0f6fd1d3",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -3115,6 +3115,12 @@
               "source": "BOT-80"
             },
             {
+              "name": "basis",
+              "required": false,
+              "why": "6.41.0: an admin's safety takedown may carry `basis` and no entry must. The `when` vocabulary has no form for 'optional, and only on these codes': `if` would require it on every takedown and `iff` on every admin safety takedown, which the bot cannot tell apart. So no condition is published, and TRUST-26 says what the bot does with one on any other code or category: it ignores it and counts the takedown against the ordinary bound.",
+              "source": "BOT-80"
+            },
+            {
               "name": "moderator",
               "required": "conditional",
               "when": {
@@ -3368,6 +3374,12 @@
                 }
               },
               "why": "`low_tools` is the set of tools the moderator saw declared Low and approved (6.33.0): a review of a version whose record lists Low tools marks it reviewed only when this set equals the record's, and a client then runs those tools without asking. Relaxed to `if`, a takedown may carry it and the bot would copy a meaningless approval into its record. Dropped, every review of a release that declares Low tools leaves it unreviewed, which is safe but makes the declaration useless.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "basis",
+              "required": false,
+              "why": "6.41.0: an admin's safety takedown may carry `basis` and no entry must. The `when` vocabulary has no form for 'optional, and only on these codes': `if` would require it on every takedown and `iff` on every admin safety takedown, which the bot cannot tell apart. So no condition is published, and TRUST-26 says what the bot does with one on any other code or category: it ignores it and counts the takedown against the ordinary bound.",
               "source": "BOT-80"
             },
             {

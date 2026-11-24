@@ -260,14 +260,59 @@ export const APPEAL_RESPONSE_DAYS = 7;
 // panel's day, and `TAKEDOWN_ALERT_AT` below pages the owner, with the ids a
 // revert names, from the fourth withdrawal of a day on.
 //
-// Not done here, and why: the report also excludes an ADMIN's SAFETY takedown
-// from the count. A service decision carries `category` and a `moderator`
-// handle and nothing that says the deciding account is an admin (BOT-80's
-// allowlist, `schema/moderation-work-v2.json`), and an unsigned role the
-// service asserts is exactly what a compromised panel would assert. The
-// exclusion waits for the plugins service to send that fact in a form this
-// bot can verify (an owner-signed operator act, as `confirm` is).
+// **Contract 6.41.0 builds the exclusion the report also asked for** (F33; it
+// stayed unbuilt from 6.32.0 because a service decision carried nothing that
+// said an admin decided it). An ADMIN's SAFETY takedown now counts against its
+// own bound, `SAFETY_TAKEDOWN_BOUND` below, and not against this one. The
+// service sets `basis: "safety"` on a BOT-80 entry only for an `M_YANK`,
+// `M_DELIST`, `M_DEPRECATE` or `M_REVOKE` an admin decided under one of five
+// categories (`SAFETY_CATEGORIES`). The bot honours it on exactly that, writes
+// it into the decision's own `bot/moderation/` record in the same commit, and
+// `countWindow` reads it ONLY from there: an unsigned member on the wire could
+// not move a count by itself, and a hand commit has no such record, so it
+// counts as ordinary. A `basis` on any other code or category is ignored, never
+// refused. Releasing a held takedown is unchanged (MOD-52, TRUST-48).
 export const TAKEDOWN_BOUND = 10;
+
+/**
+ * Contract 6.41.0: listed plugin ids an admin's safety takedowns may withdraw in
+ * the trailing 24 h, a bound separate from `TAKEDOWN_BOUND`. Above it the bot
+ * holds under MOD-9 exactly as over the ordinary bound. POLICY.md §7 states it.
+ */
+export const SAFETY_TAKEDOWN_BOUND = 30;
+
+/** The service-decision codes, and the log actions they write, that a safety `basis` can ride on. */
+export const SAFETY_CODES = Object.freeze(["M_YANK", "M_DELIST", "M_DEPRECATE", "M_REVOKE"]);
+export const SAFETY_ACTIONS = Object.freeze(["yank", "delist", "deprecate", "revoke"]);
+/** The categories a safety `basis` is honoured under (contract 6.41.0, TRUST-26). */
+export const SAFETY_CATEGORIES = Object.freeze([
+  "malicious", "harmful_behaviour", "account_compromise", "security_defect", "privacy",
+]);
+
+/**
+ * Is this BOT-80 decision an admin's safety takedown the bot honours? Only
+ * `basis === "safety"` on one of the four codes under one of the five
+ * categories; anything else is an ordinary takedown, and is never refused for
+ * carrying a `basis`.
+ */
+export function isSafetyTakedown(decision) {
+  return decision?.basis === "safety"
+    && SAFETY_CODES.includes(decision.code)
+    && SAFETY_CATEGORIES.includes(decision.category);
+}
+
+/**
+ * Is this `bot/moderation/` log entry the record of an honoured safety
+ * takedown? The same test as `isSafetyTakedown`, over the record's `action`,
+ * and a record carries a `service_decision_id` (a hand break-glass entry has
+ * none). `countWindow` reads the basis from here and from nowhere else.
+ */
+export function isSafetyRecord(entry) {
+  return entry?.basis === "safety"
+    && SAFETY_ACTIONS.includes(entry.action)
+    && SAFETY_CATEGORIES.includes(entry.category)
+    && typeof entry.service_decision_id === "string";
+}
 
 /**
  * Contract 6.32.0: above this many listed plugin ids withdrawn in the trailing
@@ -676,6 +721,15 @@ export function checkEntry(doc, where = "<entry>", { cutoverAt = null } = {}) {
     bad("declared_interest is a flag (MOD-12): true when a moderator declared a conflict, and never a name");
   }
 
+  // Contract 6.41.0's `basis`: written only for an honoured safety takedown, so
+  // a record that carries it anywhere else is one the bot did not write.
+  if (doc.basis !== undefined && !isSafetyRecord(doc)) {
+    bad(
+      `basis ${JSON.stringify(doc.basis)} is only "safety", on a yank, delist, deprecate or revoke with a ` +
+      `service_decision_id and a category of ${SAFETY_CATEGORIES.join(", ")} (contract 6.41.0, TRUST-26)`,
+    );
+  }
+
   for (const key of Object.keys(doc)) {
     if (!ENTRY_MEMBERS.includes(key)) {
       bad(`unknown field ${JSON.stringify(key)}`);
@@ -698,7 +752,7 @@ export function checkEntry(doc, where = "<entry>", { cutoverAt = null } = {}) {
 export const ENTRY_MEMBERS = [
   "$comment", "date", "action", "plugin", "versions", "reason", "advisory", "appeal",
   "category", "reverses", "appeal_of", "outcome", "service_decision_id", "declared_interest",
-  "corrects", "previous_category", "low_tools",
+  "corrects", "previous_category", "low_tools", "basis",
 ];
 
 /**

@@ -204,7 +204,7 @@ import { ID_PATTERN } from "../tools/lib/ids.mjs";
 const ID_RE = new RegExp(ID_PATTERN);
 import { run as coverageRun, stagingListingId } from "../tools/moderation-coverage.mjs";
 import { VERDICT_SCHEMA, runUrl, verdictProblems } from "./lib/alert-verdict.mjs";
-import { SOURCE_DIR as MODERATION_DIR, loadEntries as loadLogEntries } from "./lib/moderation.mjs";
+import { SOURCE_DIR as MODERATION_DIR, isSafetyTakedown, loadEntries as loadLogEntries } from "./lib/moderation.mjs";
 import {
   SETTLED_FILE,
   acceptRows,
@@ -801,14 +801,15 @@ export function compileAll(entries, { root = REPO_ROOT, overBound = null, ledger
   const held = [];
   for (const entry of entries) {
     const takedown = isTakedown(entry);
-    const over = ledger ? takedown && ledger.over() : overBound === true;
+    const safety = takedown && isSafetyTakedown(entry);
+    const over = ledger ? takedown && ledger.over({ safety }) : overBound === true;
     const result = compileDecision(entry, { root, overBound: over, batch });
     if (result.outcome === "refused") refused.push(result);
     else if (result.outcome === "held") held.push(result);
     else {
       compiled.push(result);
       recordInBatch(batch, result);
-      if (ledger && takedown) ledger.spend(withdrawnBy(result, head));
+      if (ledger && takedown) ledger.spend(withdrawnBy(result, head), { safety });
     }
   }
   return { compiled, refused, held, batch };
@@ -1657,7 +1658,9 @@ export function admitHeldTakedowns(root = REPO_ROOT, { ledger = null, head = nul
   const confirmed = (h) => h.confirm?.service_decision_id === id(h);
   const spend = (h) => {
     const result = compileDecision(h.entry.decision, { root, overBound: false, release: h.entry.held_for });
-    if (ledger && result.outcome === "compiled") ledger.spend(withdrawnBy(result, listing));
+    if (ledger && result.outcome === "compiled") {
+      ledger.spend(withdrawnBy(result, listing), { safety: isSafetyTakedown(h.entry.decision) });
+    }
   };
   for (const h of holds) {
     if (!confirmed(h) || h.entry.held_for === "unbound_yank" || !isTakedown(h.entry.decision)) continue;
@@ -1666,7 +1669,7 @@ export function admitHeldTakedowns(root = REPO_ROOT, { ledger = null, head = nul
   }
   for (const h of holds) {
     if (!BOUND_GATED_KINDS.includes(h.entry.held_for) || confirmed(h)) continue;
-    if (!ledger || ledger.over()) {
+    if (!ledger || ledger.over({ safety: isSafetyTakedown(h.entry.decision) })) {
       out.waiting.push(id(h));
       continue;
     }
@@ -2474,7 +2477,7 @@ export function listRefusals(text, { entries = [] } = {}) {
 }
 
 export async function main(argv = [], {
-  env = process.env, log = console, fetchImpl = fetch, now = new Date(), coverage = coverageRun, pin = null, bound = null,
+  env = process.env, log = console, fetchImpl = fetch, now = new Date(), coverage = coverageRun, pin = null, bound = null, safetyBound = null,
 } = {}) {
   // The owner's passkeys, from THIS checkout by literal path (operator-acts
   // design §2.2). `pin` is this file's own tests', as `fetchImpl` is: the CLI
@@ -2597,8 +2600,9 @@ export async function main(argv = [], {
     // `bound` is this file's own tests', as `pin` is: their fixtures are an
     // estate of five plugins written for the bound of 3. The CLI passes none,
     // and no input of the workflow's can name one.
-    const ledger = boundLedger(counted, { staging: stagingListingId(root), ...(bound !== null ? { bound } : {}) });
+    const ledger = boundLedger(counted, { staging: stagingListingId(root), ...(bound !== null ? { bound } : {}), ...(safetyBound !== null ? { safetyBound } : {}) });
     log.log(`bound  ${ledger.reason()}`);
+    log.log(`bound  ${ledger.reason({ safety: true })}`);
 
     // Re-checked, never trusted: `list` is a different job and its outputs
     // travel through the run's metadata. Re-reading them through the same
@@ -2735,7 +2739,7 @@ export async function main(argv = [], {
     // Compiled in both modes: in shadow for timing (OPEN-OPS-13), and so that a
     // compile that throws is red in shadow too rather than first at R3's exit.
     const compiledAll = compileAll(fresh, { root, ledger });
-    if (ledger.admitted.length) log.log(`bound  this run withdraws ${ledger.admitted.join(", ")}; ${ledger.reason()}`);
+    if (ledger.admitted.length) log.log(`bound  this run withdraws ${ledger.admitted.join(", ")}; ${ledger.reason()}; ${ledger.reason({ safety: true })}`);
     // Contract 6.32.0: above TAKEDOWN_ALERT_AT a day, the ids this run
     // withdraws go to the `settled` job's alarm once the push has landed.
     // Live only: a shadow compile withdraws nothing it writes.

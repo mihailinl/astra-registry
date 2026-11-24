@@ -661,7 +661,7 @@ export function triggersOf(sha, repo, view = firstParentView(sha, repo)) {
 }
 
 /** The records a commit itself carries, which may cover its own triggers. */
-function coversInCommit(sha, repo, changes = changedPaths(sha, repo)) {
+export function coversInCommit(sha, repo, changes = changedPaths(sha, repo)) {
   const added = { entries: [], authorActions: [] };
   for (const { status, path: p } of changes) {
     if (status !== "A") continue;

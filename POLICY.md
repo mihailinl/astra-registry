@@ -279,6 +279,14 @@ once, with the plugins each moderation run took away, so a wrong takedown can
 be reverted. A withdrawal the operator makes by hand is already a person's act,
 and counts like any other.
 
+**An administrator's safety takedown counts against its own bound of 30** in
+the same trailing 24 hours, and not against the 10: a yank, delist, deprecation
+or revocation an administrator decides as `malicious`, `harmful_behaviour`,
+`account_compromise`, `security_defect` or `privacy`. Above 30 it waits for the
+window exactly as above, and the alert from the fourth withdrawal still counts
+every withdrawal, safety ones included. A plugin taken away both ways in the
+window counts against the 10.
+
 What counts toward the takedown bound is read from this repository's git history,
 whatever route a withdrawal took: every listed plugin delisted or yanked, and
 every listed plugin newly matched by a signed advisory, sibling plugins

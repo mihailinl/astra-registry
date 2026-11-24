@@ -49,6 +49,7 @@ what a reader of a commit, an alarm or a transparency page was given.
 | `outcome` | **Required** on an `appeal`, refused elsewhere. `stands` or `reversed`. |
 | `service_decision_id` | Optional. §0.7's lowercase UUID, for an entry a service decision produced (BOT-81). |
 | `declared_interest` | Optional, and a **flag**: `true` when a moderator declared a conflict (MOD-12). Never a name — this document carries no `moderator` member and `tools/priv-scan.mjs` permits no handle in any of its members. |
+| `basis` | Optional, and only ever `"safety"` (contract 6.41.0, TRUST-26): written by the bot on a yank, delist, deprecate or revoke it applied for an admin's safety takedown, with a `service_decision_id` and a category of `malicious`, `harmful_behaviour`, `account_compromise`, `security_defect` or `privacy`. The takedown count reads it from this record in the same commit and from nowhere else; such a withdrawal counts against the safety bound of 30 and not the bound of 10. |
 | `low_tools` | Only on a `review`, and only when a version it moved declares Low tools in `[tools.danger]`: `{ "<version>": ["tool", …] }`, each list sorted and unique — the Low tools that version was reviewed with. Astra runs a reviewed release's Low tools without asking, so `compileReview` moves such a version only when the `M_REVIEW` decision's `low_tools` names exactly the record's set. |
 
 `$comment` is allowed, and five of the entries here carry one.

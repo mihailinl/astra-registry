@@ -47,8 +47,8 @@ import path from "node:path";
 import test, { after } from "node:test";
 
 import { holdKindFor } from "../lib/holds.mjs";
-import { TAKEDOWN_BOUND } from "../lib/moderation.mjs";
-import { WINDOW_HOURS, countWindow, idsMatchedBy, overBound } from "../lib/takedown-bound.mjs";
+import { SAFETY_TAKEDOWN_BOUND, TAKEDOWN_BOUND, isSafetyRecord, isSafetyTakedown } from "../lib/moderation.mjs";
+import { WINDOW_HOURS, boundLedger, countWindow, idsMatchedBy, overBound, takedownAlert } from "../lib/takedown-bound.mjs";
 
 const tmpRoots = [];
 after(() => {
@@ -683,4 +683,123 @@ test("an origin: advisory is unknown as soon as a listing stops being a GitHub s
   const got = idsMatchedBy({ kind: "identity", value: "origin:example.invalid" }, { listed });
   assert.deepEqual(got.ids, []);
   assert.match(got.unresolved ?? "", /origin host/);
+});
+
+// ── contract 6.41.0: an admin's safety takedown has its own bound of 30 ─────
+//
+// The count reads `basis` from the decision's own record in the SAME commit
+// (`bot/moderation/*.json`) and from nothing else. These build real history, as
+// the cases above do; the 10 and the 30 are the real constants.
+
+/** `n` listings `p0..p<n-1>`, committed outside the window. */
+function crowdOf(name, n) {
+  const f = fixture(name);
+  f.reserved();
+  for (let i = 0; i < n; i++) f.listing(`p${i}`);
+  f.commit("base", { at: hoursAgo(30) });
+  return f;
+}
+let RECORD_N = 10;
+/** One commit that delists `ids`, with a record per id carrying `basis` (or not), or none at all. */
+function delistCommit(f, ids, { basis = "safety", record = true, category = "malicious", action = "delist", message = "mod: delist", at = hoursAgo(1) } = {}) {
+  for (const id of ids) {
+    f.listing(id, { unlisted: true });
+    if (record) {
+      f.write(`bot/moderation/2026-09-20-${id}-${action}.json`, {
+        date: "2026-09-20", action, plugin: id, category, reason: "a long enough reason to be a reason",
+        service_decision_id: `0192f3a4-5b6c-7d8e-9f01-2345678930${String(RECORD_N++).padStart(2, "0")}`,
+        ...(basis ? { basis } : {}),
+      });
+    }
+  }
+  return f.commit(message, { at });
+}
+const ids = (from, to) => Array.from({ length: to - from }, (_, i) => `p${from + i}`);
+const ledgerOf = (f) => boundLedger(count(f.dir));
+
+test("6.41.0: the constants are 10 and 30, and only the four codes under the five categories are honoured", () => {
+  assert.equal(TAKEDOWN_BOUND, 10);
+  assert.equal(SAFETY_TAKEDOWN_BOUND, 30);
+  for (const code of ["M_YANK", "M_DELIST", "M_DEPRECATE", "M_REVOKE"]) {
+    assert.equal(isSafetyTakedown({ code, category: "privacy", basis: "safety" }), true, code);
+  }
+  for (const d of [
+    { code: "M_RELIST", category: "privacy", basis: "safety" },
+    { code: "M_UNREVOKE", category: "malicious", basis: "safety" },
+    { code: "A_YANK", category: "malicious", basis: "safety" },
+    { code: "M_REVOKE", category: "spam", basis: "safety" },
+    { code: "M_DELIST", category: "legal", basis: "safety" },
+    { code: "M_DELIST", category: "malicious", basis: "Safety" },
+    { code: "M_DELIST", category: "malicious" },
+  ]) assert.equal(isSafetyTakedown(d), false, JSON.stringify(d));
+  assert.equal(isSafetyRecord({ action: "relist", category: "malicious", basis: "safety", service_decision_id: "x" }), false);
+});
+
+test("6.41.0: ten ordinary withdrawals and an eleventh that is an honoured safety one — the safety one applies", () => {
+  const f = crowdOf("safety-11", 11);
+  delistCommit(f, ids(0, 10), { record: false, message: "mod: ten ordinary" });
+  delistCommit(f, ids(10, 11), { message: "mod: one safety" });
+  const got = count(f.dir);
+  assert.deepEqual([got.count, got.ordinaryCount, got.safetyCount], [11, 10, 1]);
+  const ledger = boundLedger(count(f.dir, { now: NOW }));
+  assert.equal(ledger.over(), true, "ten ordinary fill the ordinary bound");
+  assert.equal(ledger.over({ safety: true }), false, "the safety one is not held by the ordinary bound");
+});
+
+test("6.41.0: 30 safety withdrawals fill the safety bound, the 31st is over it, and the ordinary bound is untouched", () => {
+  const f = crowdOf("safety-31", 31);
+  delistCommit(f, ids(0, 29), { message: "mod: 29 safety" });
+  assert.equal(ledgerOf(f).over({ safety: true }), false, "29 of 30 used");
+  delistCommit(f, ids(29, 30), { message: "mod: the 30th safety" });
+  const ledger = ledgerOf(f);
+  assert.deepEqual([ledger.safetyCount, ledger.ordinaryCount, ledger.count], [30, 0, 30]);
+  assert.equal(ledger.over({ safety: true }), true, "the 31st safety takedown must wait for the window");
+  assert.equal(ledger.over(), false, "safety withdrawals spent the ordinary bound");
+  assert.match(ledger.reason({ safety: true }), /safety takedown bound is 30/);
+  // And an unknown count is over for both.
+  const unknown = boundLedger({ count: null, unknown: "no walk" });
+  assert.deepEqual([unknown.over(), unknown.over({ safety: true })], [true, true]);
+});
+
+test("6.41.0: an id withdrawn with and without the basis counts against the ordinary bound", () => {
+  const f = crowdOf("safety-both", 2);
+  delistCommit(f, ["p0"], { message: "mod: safety delist of p0" });
+  f.version("p0", "1.0.0", { yanked: true });
+  f.commit("hand: yank p0", { at: hoursAgo(0.5) });
+  delistCommit(f, ["p1"], { message: "mod: safety delist of p1" });
+  const got = count(f.dir);
+  assert.deepEqual([got.count, got.ordinaryCount, got.safetyCount], [2, 1, 1], got.detail.join("\n"));
+  assert.deepEqual(got.ids.map((x) => [x.id, x.safety]), [["p0", false], ["p1", true]]);
+
+  // The same, within one run's ledger: an ordinary spend of a safety-counted id moves it over.
+  const ledger = boundLedger({ count: 1, ordinaryCount: 0, safetyCount: 1, ids: [{ id: "p1", why: [], safety: true }] });
+  ledger.spend({ ids: ["p1"] });
+  assert.deepEqual([ledger.ordinaryCount, ledger.safetyCount, ledger.admitted], [1, 0, []]);
+});
+
+test("6.41.0: a basis on a record that is not a safety takedown, or on a hand commit with no record, counts ordinary", () => {
+  const f = crowdOf("safety-ignored", 6);
+  delistCommit(f, ["p0"], { category: "broken", message: "mod: basis on `broken`" });
+  delistCommit(f, ["p1"], { action: "yank-ish", message: "mod: record with an action that carries no basis" });
+  // A hand commit: no record at all, a trailer that says whatever it likes.
+  delistCommit(f, ["p2", "p3"], { record: false, message: "hand: delist\n\nBasis: safety\nService-Decision: 0192f3a4-5b6c-7d8e-9f01-234567893099\nModeration-Exempt: operator: fixture" });
+  // A record with no service decision (a hand break-glass entry) is not the bot's record.
+  f.listing("p4", { unlisted: true }).write("bot/moderation/2026-09-20-p4-delist.json", {
+    date: "2026-09-20", action: "delist", plugin: "p4", category: "malicious", reason: "a long enough reason to be a reason", basis: "safety",
+  }).commit("hand: delist with a bare record");
+  const got = count(f.dir);
+  assert.deepEqual([got.count, got.ordinaryCount, got.safetyCount], [5, 5, 0], got.detail.join("\n"));
+});
+
+test("6.41.0: the alarm counts every withdrawal: the 4th of a day alarms when 3 of them are safety", () => {
+  const f = crowdOf("safety-alarm", 4);
+  delistCommit(f, ids(0, 3), { message: "mod: three safety" });
+  const ledger = ledgerOf(f);
+  assert.equal(takedownAlert(ledger), null, "three withdrawals alarmed");
+  ledger.spend({ ids: ["p3"] });
+  assert.deepEqual(takedownAlert(ledger), { count: 4, ids: ["p3"] });
+  // And a safety 4th alarms the same.
+  const again = ledgerOf(f);
+  again.spend({ ids: ["p3"] }, { safety: true });
+  assert.deepEqual(takedownAlert(again), { count: 4, ids: ["p3"] });
 });

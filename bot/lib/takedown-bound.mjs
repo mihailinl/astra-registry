@@ -14,7 +14,10 @@
 // ── THE COUNT IS OF THE TREE, NOT OF A TRAILER ──────────────────────────────
 //
 // TRUST-26 names no commit trailer. It states two exclusions and only two: a
-// MOD-52 revert, and MOD-16's staging listing by its reserved id. An earlier
+// MOD-52 revert, and MOD-16's staging listing by its reserved id. (Since 6.41.0
+// an admin's safety takedown is not an exclusion but a second bound, and it is
+// told apart by the decision record its own commit carries — never a trailer —
+// so a commit with no such record still counts every withdrawal, as below.) An earlier
 // reading of this task counted only commits carrying `Service-Decision:`, and
 // the attack that removed it (M-2) is worth keeping in front of the next
 // person, because the scenario is one day and not an edge:
@@ -154,9 +157,9 @@
 import { KINDS } from "../../tools/lib/revocations.mjs";
 import { REPO_ROOT } from "../../tools/lib/sources.mjs";
 import { commitMeta, firstParent, git, isShallow, jsonAt } from "../../tools/coverage/git.mjs";
-import { stagingListingId, triggersOf } from "../../tools/moderation-coverage.mjs";
+import { coversInCommit, stagingListingId, triggersOf } from "../../tools/moderation-coverage.mjs";
 
-import { TAKEDOWN_ALERT_AT, TAKEDOWN_BOUND } from "./moderation.mjs";
+import { SAFETY_TAKEDOWN_BOUND, TAKEDOWN_ALERT_AT, TAKEDOWN_BOUND, isSafetyRecord } from "./moderation.mjs";
 
 /**
  * TRUST-26's window. Trailing, from `now`, over HEAD's first-parent line, on
@@ -332,7 +335,7 @@ function advisoryMatchesAt(sha, file, repo, cache) {
 // ── the count ───────────────────────────────────────────────────────────────
 
 function unknownWindow(since, why) {
-  return { count: null, ids: [], since, head: null, examined: 0, unknown: why, detail: [why] };
+  return { count: null, ordinaryCount: null, safetyCount: null, ids: [], since, head: null, examined: 0, unknown: why, detail: [why] };
 }
 
 /**
@@ -403,6 +406,17 @@ function unknownWindow(since, why) {
  * widened that hole had it kept the flag; it throws instead, and the throw
  * is an unknown.
  *
+ * **A withdrawal is a safety one only by its own commit's record (contract
+ * 6.41.0).** Each withdrawal is read as safety when the SAME commit added a
+ * `bot/moderation/` entry for it that `isSafetyRecord` accepts: `basis:
+ * "safety"`, a yank/delist/deprecate/revoke, one of the five categories, a
+ * service decision id. Never from a trailer, never from anything a hand commit
+ * can assert without that record — a commit with no such record counts every
+ * withdrawal as ordinary, whatever its trailers say, which is the M-2
+ * property above. An id withdrawn in the window both ways is ordinary.
+ * `count` is every id; `ordinaryCount` and `safetyCount` split it, and the
+ * ordinary bound reads the first, the safety bound the second.
+ *
  * A zero is never bare. `head` and `examined` come back with it, so "nothing
  * was withdrawn today" can be told apart from "the walk looked at nothing",
  * which are the same number and not the same fact.
@@ -466,24 +480,31 @@ export function countWindow(repo = REPO_ROOT, { now = new Date(), windowHours = 
   const detail = [];
   const skipped = [];
 
-  const add = (id, sha, why) => {
+  const safe = new Map(); // id -> true while every withdrawal of it was a safety one
+  const add = (id, sha, why, safety = false) => {
     if (staging && id === staging) {
       skipped.push(`${sha.slice(0, 8)} ${why}, and ${id} is policy/reserved-ids.json's staging_listing_id (MOD-16)`);
       return;
     }
     if (!withdrawn.has(id)) withdrawn.set(id, []);
-    withdrawn.get(id).push(`${sha.slice(0, 8)} ${why}`);
+    withdrawn.get(id).push(`${sha.slice(0, 8)} ${why}${safety ? " [safety]" : ""}`);
+    safe.set(id, (safe.get(id) ?? true) && safety);
   };
 
   for (const sha of shas) {
     const { triggers } = triggersOf(sha, repo);
+    // The safety records THIS commit added, and nothing else (see above).
+    const records = triggers.length ? coversInCommit(sha, repo).entries.filter(isSafetyRecord) : [];
     for (const t of triggers) {
       switch (t.kind) {
         case "delist":
-          add(t.id, sha, `delisted ${t.id} (${t.path} turned unlisted)`);
+          add(t.id, sha, `delisted ${t.id} (${t.path} turned unlisted)`,
+            records.some((e) => e.action === "delist" && e.plugin === t.id));
           break;
         case "yank":
-          add(t.id, sha, `yanked ${t.id}@${t.version}`);
+          add(t.id, sha, `yanked ${t.id}@${t.version}`,
+            records.some((e) => e.action === "yank" && e.plugin === t.id
+              && (!Array.isArray(e.versions) || e.versions.length === 0 || e.versions.includes(t.version))));
           break;
         case "advisory-written": {
           // NEWLY matched, against the same file at the parent. Re-signing,
@@ -495,7 +516,8 @@ export function countWindow(repo = REPO_ROOT, { now = new Date(), windowHours = 
           unresolved.push(...after.unresolved);
           for (const id of after.ids) {
             if (before.ids.has(id)) continue;
-            add(id, sha, `advisory ${t.advisory} newly withdraws ${id}`);
+            add(id, sha, `advisory ${t.advisory} newly withdraws ${id}`,
+              records.some((e) => e.advisory === t.advisory));
           }
           break;
         }
@@ -526,9 +548,12 @@ export function countWindow(repo = REPO_ROOT, { now = new Date(), windowHours = 
     return { count: null, ids: [], since, head, examined: shas.length, unknown: why, detail: [...detail, why] };
   }
 
+  const safetyCount = [...safe.values()].filter(Boolean).length;
   return {
     count: withdrawn.size,
-    ids: [...withdrawn].sort().map(([id, why]) => ({ id, why })),
+    ordinaryCount: withdrawn.size - safetyCount,
+    safetyCount,
+    ids: [...withdrawn].sort().map(([id, why]) => ({ id, why, safety: safe.get(id) === true })),
     since,
     head,
     examined: shas.length,
@@ -557,13 +582,13 @@ export function countWindow(repo = REPO_ROOT, { now = new Date(), windowHours = 
  *        a `countWindow` result, or a bare count.
  * @returns {{over: boolean, reason: string}}
  */
-export function overBound(counted, { bound = TAKEDOWN_BOUND } = {}) {
+export function overBound(counted, { bound = TAKEDOWN_BOUND, label = "takedown" } = {}) {
   const result = typeof counted === "number" || counted === null ? { count: counted, unknown: null } : counted;
   if (result.count === null) {
     return {
       over: true,
       reason:
-        `the takedown bound cannot be counted, so every takedown is held for an operator: ` +
+        `the ${label} bound cannot be counted, so every takedown is held for an operator: ` +
         `${result.unknown ?? "no count and no reason, which is itself the defect"}`,
     };
   }
@@ -571,13 +596,13 @@ export function overBound(counted, { bound = TAKEDOWN_BOUND } = {}) {
     return {
       over: true,
       reason:
-        `${result.count} listed plugin id(s) were withdrawn in the trailing ${WINDOW_HOURS} h and the bound ` +
+        `${result.count} listed plugin id(s) were withdrawn in the trailing ${WINDOW_HOURS} h and the ${label} bound ` +
         `is ${bound}, so a takedown now waits until the window makes room for it (TRUST-26, MOD-9)`,
     };
   }
   return {
     over: false,
-    reason: `${result.count} of ${bound} withdrawals used in the trailing ${WINDOW_HOURS} h`,
+    reason: `${result.count} of ${bound} ${label} withdrawals used in the trailing ${WINDOW_HOURS} h`,
   };
 }
 
@@ -601,34 +626,57 @@ export function overBound(counted, { bound = TAKEDOWN_BOUND } = {}) {
  * @param {{count: number|null, ids?: {id: string}[], unknown?: string|null}} counted a `countWindow` result
  * @param {{bound?: number, staging?: string|null}} [opts]
  */
-export function boundLedger(counted, { bound = TAKEDOWN_BOUND, staging = null } = {}) {
-  const spent = new Set((counted?.ids ?? []).map((x) => x.id));
-  let count = typeof counted?.count === "number" ? counted.count : null;
-  let unknown = count === null ? (counted?.unknown ?? "no count was made, and no reason was given for it") : null;
+export function boundLedger(counted, { bound = TAKEDOWN_BOUND, safetyBound = SAFETY_TAKEDOWN_BOUND, staging = null } = {}) {
+  // Contract 6.41.0: two sets and two counts. An id is in at most one: a safety
+  // one until an ordinary withdrawal of it moves it over, and never back.
+  const ordinaryIds = new Set();
+  const safetyIds = new Set();
+  for (const x of counted?.ids ?? []) (x.safety === true ? safetyIds : ordinaryIds).add(x.id);
+  const known = typeof counted?.count === "number";
+  let safetyCount = known ? (typeof counted.safetyCount === "number" ? counted.safetyCount : safetyIds.size) : null;
+  let ordinaryCount = known ? (typeof counted.ordinaryCount === "number" ? counted.ordinaryCount : counted.count - safetyCount) : null;
+  let unknown = known ? null : (counted?.unknown ?? "no count was made, and no reason was given for it");
   const admitted = [];
+  const measure = (safety) => (safety
+    ? overBound({ count: safetyCount, unknown }, { bound: safetyBound, label: "safety takedown" })
+    : overBound({ count: ordinaryCount, unknown }, { bound, label: "takedown" }));
   return {
-    get count() { return count; },
+    /** Every withdrawal, safety ones included: what the alarm counts. */
+    get count() { return ordinaryCount === null ? null : ordinaryCount + safetyCount; },
+    get ordinaryCount() { return ordinaryCount; },
+    get safetyCount() { return safetyCount; },
     get unknown() { return unknown; },
     get admitted() { return [...admitted]; },
-    /** Is the next takedown over the bound? */
-    over() { return overBound({ count, unknown }, { bound }).over; },
+    /** Is the next takedown over its bound? `safety` asks the safety bound (`isSafetyTakedown`). */
+    over({ safety = false } = {}) { return measure(safety).over; },
     /** Why, in the words `overBound` uses. */
-    reason() { return overBound({ count, unknown }, { bound }).reason; },
+    reason({ safety = false } = {}) { return measure(safety).reason; },
     /**
      * Spend what one compiled takedown withdraws. An unresolved entry makes the
-     * rest of the run's count unknown, which holds every takedown after it.
+     * rest of the run's count unknown, which holds every takedown after it. An id
+     * already spent costs nothing again, except that an ordinary withdrawal of an
+     * id counted as safety moves it to the ordinary count (it was withdrawn both ways).
      */
-    spend({ ids = [], unresolved = [] } = {}) {
+    spend({ ids = [], unresolved = [] } = {}, { safety = false } = {}) {
       if (unresolved.length) {
-        count = null;
+        ordinaryCount = null;
+        safetyCount = null;
         unknown = `a takedown this run compiled cannot be counted: ${unresolved.join(" | ")}`;
       }
       for (const id of ids) {
         if (staging && id === staging) continue;
-        if (spent.has(id)) continue;
-        spent.add(id);
+        if (ordinaryIds.has(id)) continue;
+        if (safetyIds.has(id)) {
+          if (safety) continue;
+          safetyIds.delete(id);
+          ordinaryIds.add(id);
+          if (safetyCount !== null) { safetyCount -= 1; ordinaryCount += 1; }
+          continue;
+        }
+        (safety ? safetyIds : ordinaryIds).add(id);
         admitted.push(id);
-        if (count !== null) count += 1;
+        if (safety) { if (safetyCount !== null) safetyCount += 1; }
+        else if (ordinaryCount !== null) ordinaryCount += 1;
       }
     },
   };

@@ -222,6 +222,7 @@ await test("the members holdEntry copies are the members the schema names, in bo
     action: "disable",
     moderator: "mod-a",
     declared_interest: false,
+    basis: "safety",
   };
   assertEqual(Object.keys(EVERY_MEMBER).slice().sort().join(","), named.slice().sort().join(","),
     "the fixture and schema/hold-v1.json no longer name the same decision members, so this test is " +
