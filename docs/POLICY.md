@@ -471,8 +471,9 @@ with a check. Since contract 3.0.0 an approval there clears only a change of han
   contract 5.8.0). An approval clears a hold and nothing
   else.
 - **Every approval is shown to an operator, and an approved change of hands
-  waits for nothing after that** (since contract 6.32.0, for a change of
-  hands the operator window is **0 hours**; an approval that clears
+  waits for no operator window** (since contract 6.32.0, for a change of
+  hands the operator window is **0 hours**; the 6 hours after its notice,
+  above, still apply to a changed binding; an approval that clears
   `R_DOM_ACCESS_HOLD` still waits **6 hours** after the alert is reported
   delivered, or until an operator OK, as below until 6.31). The
   alert goes out in the run that publishes the approved release, and names
@@ -831,7 +832,7 @@ whoever serves the bytes could invent.
 
 | tier | what it says | evidence | how it is withdrawn |
 |---|---|---|---|
-| `astra_team` | published by the Astra project itself | membership of this repository — the claim IS the reviewed file | deleting the file |
+| `astra_team` | published by the Astra project itself | membership of this repository, and the owner id listed in `policy/first-party.json` (the build refuses the badge without both) — the claim IS the reviewed file | deleting the file |
 | `verified` | the registry has confirmed who this account is | a URL on a domain the publisher controls, serving their owner login | the re-check stops finding it, or `expires_at` passes |
 | *(no record)* | **no claim at all** | — | — |
 

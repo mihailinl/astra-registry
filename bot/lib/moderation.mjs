@@ -294,16 +294,6 @@ export const TAKEDOWN_ALERT_AT = 3;
 // be the same number in the same unit, and a reader who reuses this one for
 // it has welded two policies together that the owner answered separately.
 
-/**
- * BOT-28: the author objection window for an approved update with no delay
- * reason — the hours between the plugins service accepting the author's
- * notice (`accepted_at`, or `ended_at` for `previous_ended`) and the run that
- * may publish. With none committed such an update waits. Since contract
- * 5.8.0 only an update a second account is in waits it (`R_BINDING_CHANGED`,
- * or no binding line): `bot/lib/service-decide.mjs`'s `noticeExempt`.
- */
-export const APPROVED_UPDATE_WINDOW_HOURS = 6;
-
 /** Which advisory actions a log entry of each kind is allowed to be backed by. */
 export const BACKING = {
   deprecate: ["warn"],

@@ -2063,6 +2063,7 @@ await test("M-T3.2 — the takedown bound the code enforces is the one a documen
 // which is FLOW-42's lesson in M-T3.2's scan arriving again.
 await test("reg.61a — the approved-update window is the owner's and POLICY.md publishes it once; no document states an approval maximum (5.8.0)", async () => {
   const m = await import("../lib/moderation.mjs");
+  const enforced = await import("../lib/service-decide.mjs");
   const { execFileSync } = await import("node:child_process");
   const WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9 };
   const N = "(\\d+|one|two|three|four|five|six|seven|eight|nine)";
@@ -2073,7 +2074,7 @@ await test("reg.61a — the approved-update window is the owner's and POLICY.md 
   const withdrawn = new RegExp(`\\bapprovals?\\s+(?:is|are)\\s+honoured\\s+for\\s+${N}\\s+days?\\b`, "gi");
   const numbers = [
     {
-      name: "APPROVED_UPDATE_WINDOW_HOURS", owner: 6, unit: "hours", open: "OPEN-OWNER-6", rule: "BOT-28",
+      name: "UPDATE_WINDOW_HOURS", owner: 6, unit: "hours", open: "OPEN-OWNER-6", rule: "BOT-28",
       shut: "an approved update with no delay reason waits for ever",
       re: new RegExp(`\\bapproved\\s+updates?\\s+waits?\\s+${N}\\s+hours?\\b`, "gi"),
       form: "approved update waits <n> hours",
@@ -2096,9 +2097,9 @@ await test("reg.61a — the approved-update window is the owner's and POLICY.md 
       "no longer keeps");
   }
   for (const n of numbers) {
-    const value = m[n.name];
+    const value = enforced[n.name];
     assertEqual(value, n.owner,
-      `bot/lib/moderation.mjs's ${n.name} is ${JSON.stringify(value)}. The owner set ${n.owner} ${n.unit} on ` +
+      `bot/lib/service-decide.mjs's ${n.name} is ${JSON.stringify(value)}. The owner set ${n.owner} ${n.unit} on ` +
       `2026-09-13 (${n.open}) and contract ${n.rule} carries his number; a different one is his to give and a ` +
       "contract edit to record, and a constant moved together with the document would read as consistent here");
     const claims = tracked.flatMap((rel) => {
@@ -2115,10 +2116,37 @@ await test("reg.61a — the approved-update window is the owner's and POLICY.md 
       `\`${n.form}\`; until a document does, ${n.rule} fails closed — ${n.shut}`);
     for (const c of claims) {
       assertEqual(c.value, value,
-        `${c.where} publishes ${c.value} ${n.unit} and bot/lib/moderation.mjs keeps ${value}. The published ` +
+        `${c.where} publishes ${c.value} ${n.unit} and bot/lib/service-decide.mjs enforces ${value}. The published ` +
         "number is the promise; the constant is what keeps it");
     }
   }
+});
+
+// One rule, one constant. The 6-hour wait of an approved change of hands was
+// once kept in two places: the enforced `UPDATE_WINDOW_HOURS` in
+// service-decide.mjs and a copy in moderation.mjs that the POLICY.md check
+// above pinned while no code read it. So a test went green on a number nothing
+// enforced. Any second numeric definition named like it fails here.
+await test("BOT-28 — exactly one UPDATE_WINDOW_HOURS number is defined under bot/lib and tools", () => {
+  const defs = [];
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(path.join(REPO_ROOT, dir), { withFileTypes: true })) {
+      const rel = `${dir}/${e.name}`;
+      if (e.isDirectory()) { if (e.name !== "node_modules") walk(rel); continue; }
+      if (!/\.(mjs|js|cjs)$/.test(e.name)) continue;
+      const lines = fs.readFileSync(path.join(REPO_ROOT, rel), "utf8").split("\n");
+      lines.forEach((l, i) => {
+        if (/\b(?:const|let|var)\s+\w*UPDATE_WINDOW_HOURS\w*\s*=\s*\d/.test(l)) defs.push(`${rel}:${i + 1}`);
+      });
+    }
+  };
+  walk("bot/lib");
+  walk("tools");
+  assertEqual(defs.length, 1,
+    `${defs.length} numeric definitions of an UPDATE_WINDOW_HOURS constant (${defs.join(", ")}). The approved-update ` +
+    "wait has one constant, bot/lib/service-decide.mjs's; a second one is a number the POLICY.md check can pin " +
+    "without any code enforcing it");
+  assertEqual(defs[0].startsWith("bot/lib/service-decide.mjs:"), true, `the one definition is at ${defs[0]}`);
 });
 
 // ROLL-47's row C6, the half of it reg.61a owns. POLICY.md §7 promised an

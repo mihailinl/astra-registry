@@ -124,8 +124,12 @@ export const UPDATE_WINDOW_HOURS = 6;
  *
  * **0 since contract 6.32.0** (the owner's over-security cleanup of
  * 2026-11-18, report row "После одобрения смены владельца плагина релиз ждёт
- * 6 ч"). An approved change of hands publishes in the run that reads the
- * approval, and TRUST-14's alert still goes out in that same run, carrying the
+ * 6 ч"). The operator window is 0: an approval is not held for the alert.
+ * That is not the author's window, `UPDATE_WINDOW_HOURS` above, which stays:
+ * an approved `R_BINDING_CHANGED` update still waits it after its notice
+ * (BOT-28), until the client's "plugin changed owner" prompt ships (owner
+ * decision D1 pending). TRUST-14's alert still goes out in the run that
+ * publishes, carrying the
  * fingerprint, digest, held record and binding a deny (TRUST-33) or a revert
  * (MOD-52) names — the plugins service's buttons, not this bot's. The channel
  * not reporting delivery (`W_ALERT_UNDELIVERED`) no longer holds the release;
