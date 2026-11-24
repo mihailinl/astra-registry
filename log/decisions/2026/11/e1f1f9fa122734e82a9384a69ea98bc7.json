@@ -1,0 +1,16 @@
+{
+  "actor": "author",
+  "decided_at": "2026-11-24T13:32:30Z",
+  "decision_id": "e1f1f9fa122734e82a9384a69ea98bc7",
+  "fingerprint": "c1322403e983b173",
+  "reasons": [
+    "A_STOP"
+  ],
+  "repo": "YaniChap/game-buddy",
+  "repository_id": "1453242887",
+  "schema": "astra.registry.decision/1",
+  "state": "stopped",
+  "submission_id": "e5cfa3a1-93d8-4793-a214-dfca6699fafa",
+  "tag": "v0.2.7",
+  "trigger": "stop"
+}
