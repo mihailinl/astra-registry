@@ -1029,6 +1029,8 @@ test("every job that calls the alert action is in `alerts` and names checks that
       }
       for (const signal of signals) {
         const secret = secretName(check, signal);
+        // A check not created on the receiver has no URL to map (`created: false`).
+        if (CHECKS.find((c) => c.name === check)?.created === false) continue;
         if (!named.has(secret)) problems.push(`${where(job)} posts ${signal} to ${check} and never maps ${secret}`);
       }
     }
@@ -1151,6 +1153,12 @@ test("a registry check is armed exactly when a workflow here posts to it on a li
         `Armed with nothing running to feed it, it can only page falsely, and it starts on the day the owner ` +
         `creates the receiver (R1). Set \`created_disarmed: true\` in bot/lib/alert-checks.mjs; it arms at its ` +
         `first heartbeat.`,
+      );
+    }
+    if (check.created === false && live.length > 0) {
+      problems.push(
+        `${check.name} is \`created: false\` (not on the receiver) and a poster for it has a live schedule. The ` +
+        "commit that uncomments the cron flips `created` in bot/lib/alert-checks.mjs in the same change.",
       );
     }
     if (!armed && live.length > 0) {

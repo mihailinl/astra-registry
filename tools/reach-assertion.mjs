@@ -52,7 +52,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { CHECKS, secretName } from "../bot/lib/alert-checks.mjs";
+import { CHECKS, isCreated, secretName } from "../bot/lib/alert-checks.mjs";
 import { VERDICT_SCHEMA, runUrl } from "../bot/lib/alert-verdict.mjs";
 
 /** The verdict's receiver-check name. It is no receiver check: this job posts no heartbeat. */
@@ -61,9 +61,11 @@ export const CHECK = "reach-assertion";
 // Floors, written before the loops they guard: every loop below over an empty
 // table is green about nothing. Fourteen ping URLs are what `alerts` holds on
 // 2026-09-25 (thirteen registry checks, `alarm-ack` twice); four service check
-// names are what contract 2.12.0 records. Floors, not equalities: a check
-// added is not a broken walk.
-export const CREDENTIAL_FLOOR = 14;
+// names are what contract 2.12.0 records. Thirteen since `release-canary` is
+// `created: false` (its dead-man is not on the receiver while its cron is
+// commented); it goes back to fourteen with the cron. Floors, not equalities:
+// a check added is not a broken walk.
+export const CREDENTIAL_FLOOR = 13;
 export const SERVICE_NAME_FLOOR = 4;
 
 export const CREDENTIAL_SHAPE =
@@ -90,7 +92,7 @@ export function fingerprint(uuid) {
 /** Every ping credential the registry holds: one per registry check and signal. */
 export function credentials(checks = CHECKS) {
   return checks
-    .filter((c) => c.party === "registry" && typeof c.name === "string")
+    .filter((c) => c.party === "registry" && typeof c.name === "string" && isCreated(c))
     .flatMap((c) => c.signals.map((signal) => ({ check: c.name, signal, secret: secretName(c.name, signal) })));
 }
 

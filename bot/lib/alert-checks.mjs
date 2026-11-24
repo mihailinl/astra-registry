@@ -355,8 +355,19 @@ export const CHECKS = [
     // on main posts the first heartbeat, which arms the receiver's check, and
     // the commit that uncomments the cron records that post's `armed_at` here
     // (`bot/tests/workflows.test.mjs` is red on a live cron until it does).
+    //
+    // **Not created on the receiver at all (`created: false`).** The
+    // healthchecks.io account is at its 20/20 plan limit and the plugins
+    // service needs a slot; this check is a dead one, since nothing posts to it
+    // while the cron is commented. So the receiver does not hold it, no URL
+    // secret exists for it, and a dispatch's heartbeat is a logged no-op
+    // (`bot/heartbeat.mjs`). THE COMMIT THAT UNCOMMENTS THE CRON MUST FLIP
+    // `created` to true (or delete the line) in the same change, create the
+    // check, and set its secret: `bot/tests/workflows.test.mjs` is red on a live
+    // cron beside `created: false`.
     source: "B-T1.6 (BOT-88), .github/workflows/release-canary.yml",
     interval_seconds: 604800,
+    created: false,
     created_disarmed: true,
     armed_at: null,
     signals: ["success"],
@@ -614,6 +625,15 @@ export function boundMinutes(check) {
   return Math.max(MIN_BOUND_MINUTES, floor, threeIntervals);
 }
 
+/**
+ * Does the receiver hold this check? Absent means yes. `created: false` is a
+ * row kept in the table, with its workflow and interval, for a check that is
+ * not on the receiver yet (it would take a plan slot while nothing posts to it).
+ */
+export function isCreated(check) {
+  return check.created !== false;
+}
+
 /** @returns {object|undefined} the check with this name */
 export function findCheck(name) {
   return CHECKS.find((c) => c.name === name);
@@ -655,7 +675,7 @@ export function secretName(name, signal = "success") {
 export function alertsEnvironmentSecrets() {
   const out = ["ASTRA_ALERT_TELEGRAM_TOKEN", "ASTRA_ALERT_CHAT_ID"];
   for (const check of CHECKS) {
-    if (check.party !== "registry") continue;
+    if (check.party !== "registry" || !isCreated(check)) continue;
     for (const signal of check.signals) out.push(secretName(check.name, signal));
   }
   return out;
@@ -713,6 +733,15 @@ export function tableProblems(checks = CHECKS) {
     }
     if (check.armed_at !== null && !check.created_disarmed) {
       problems.push(`${where}: armed_at is recorded for a check that was never disarmed`);
+    }
+    if (check.created !== undefined && typeof check.created !== "boolean") {
+      problems.push(`${where}: created is true or false when it is there at all`);
+    }
+    if (check.created === false && (check.created_disarmed !== true || check.armed_at !== null)) {
+      problems.push(
+        `${where}: a check that is not created on the receiver must be created_disarmed: true with armed_at: null — ` +
+        `nothing can have armed a check the receiver does not hold`,
+      );
     }
   }
   return problems;

@@ -446,7 +446,8 @@ test("release-canary.yml: the verify job reads, holds no secret and no write, an
   const alert = job(text, "alert");
   assert.match(alert, /environment: alerts/);
   assert.match(alert, /check: release-canary/);
-  assert.match(alert, /ASTRA_DEADMAN_URL_RELEASE_CANARY: \$\{\{ secrets\.ASTRA_DEADMAN_URL_RELEASE_CANARY \}\}/);
+  // `release-canary` is `created: false` (20/20 receiver plan), so no URL secret is mapped until its cron is live.
+  assert.doesNotMatch(alert, /ASTRA_DEADMAN_URL_RELEASE_CANARY: \$\{\{/);
 });
 
 test("release-canary.yml: its weekly schedule runs hours after the canary's Monday 06:17 tag", () => {

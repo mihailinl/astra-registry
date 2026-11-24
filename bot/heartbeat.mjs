@@ -43,6 +43,7 @@ import {
   alertsEnvironmentSecrets,
   boundMinutes,
   findCheck,
+  isCreated,
   secretName,
   tableProblems,
 } from "./lib/alert-checks.mjs";
@@ -157,6 +158,13 @@ export async function postHeartbeat({
       `URL for it and must not: no credential the registry holds may resolve a check the plugins service posts ` +
       `to, and none of the service's may resolve a registry check (attack M-5).`,
     ]);
+  }
+
+  // Not on the receiver (`created: false`): nothing to post to, and nothing is
+  // wrong. A dispatch of its workflow stays green with no URL secret.
+  if (!isCreated(known)) {
+    log.log(`check not created on the receiver: ${check}`);
+    return { code: 0, url: null, problems: [] };
   }
 
   const name = secretName(check, signal);
