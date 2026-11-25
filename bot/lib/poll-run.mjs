@@ -136,7 +136,7 @@ export const JOB_IO = Object.freeze({
     job: "remember", step: "remember",
     reads: [
       "POLL_MODE", "BOT_STATE_HMAC_KEY", "ASTRA_POLL_LISTINGS", "ASTRA_POLLED", "ASTRA_REGISTERED",
-      "ASTRA_SWEPT", "ASTRA_SWEEP_DUE", "ASTRA_SWEEP_RESULT",
+      "ASTRA_SWEPT", "ASTRA_SWEEP_DUE", "ASTRA_SWEEP_RESULT", "ASTRA_CLAIM_ANSWERED",
     ],
     writes: ["verdict", "changed"],
   }),
@@ -145,6 +145,31 @@ export const JOB_IO = Object.freeze({
 /** The two modes `POLL_MODE` may name, declared once beside the claim job that also reads it. */
 export { POLL_MODES as MODES } from "./service-jobs.mjs";
 import { POLL_MODES as MODES } from "./service-jobs.mjs";
+
+/**
+ * How many ingest runs in a row the service may answer `claim` in shadow
+ * before the owner is paged (registry fix No. 2): three, half an hour at
+ * BOT-51's 600 s. One or two is the ordinary gap between a bot-code merge and
+ * the acknowledgement that ends it; three is a hold nobody has acted on.
+ */
+export const SHADOW_RUNS_ALARM = 3;
+
+/**
+ * The streak, carried in the memory as `shadow: { runs, since }` and absent
+ * when the last answer was live. A run with no claim answer (`none`, or
+ * `claim` skipped) leaves it as it was: it says nothing either way.
+ */
+export function nextShadow(memory, answered, now) {
+  const prior = memory.shadow ?? null;
+  if (answered === "live") {
+    if (!prior) return memory;
+    const { shadow: _gone, ...rest } = memory;
+    return rest;
+  }
+  if (answered !== "shadow") return memory;
+  const at = `${now.toISOString().slice(0, 19)}Z`;
+  return { ...memory, shadow: { runs: (prior?.runs ?? 0) + 1, since: prior?.since ?? at } };
+}
 
 /** BOT-87: the sweep is daily. */
 export const SWEEP_INTERVAL_SECONDS = 86400;
@@ -467,8 +492,8 @@ export function sweepRemote(listings, lsRemote = lsRemoteTags) {
  *   registered: {repo: string, tag: string}[], swept: object|null, sweepDue: boolean,
  *   sweepFailed: boolean, now: Date, mode: string, run?: string|null}} o
  */
-export function composeRemember({ memory, discarded, listings, polled, registered, swept, sweepDue: due, sweepFailed, now, mode, run = null }) {
-  let next = memory;
+export function composeRemember({ memory, discarded, listings, polled, registered, swept, sweepDue: due, sweepFailed, now, mode, run = null, claimAnswered = "none" }) {
+  let next = nextShadow(memory, claimAnswered, now);
   const notes = [];
   if (polled) next = rememberPoll(next, polled, registered, now, notes);
   let alerts = [];
@@ -491,7 +516,8 @@ export function composeRemember({ memory, discarded, listings, polled, registere
   }
   const stale = staleListings(next, listings, now);
   const unregistered = mode === "live" ? alerts : [];
-  const verdict = bot87Verdict({ unregistered, stale, discarded, failed, run });
+  const shadowRuns = next.shadow?.runs ?? 0;
+  const verdict = bot87Verdict({ unregistered, stale, discarded, failed, run, shadowRuns: shadowRuns >= SHADOW_RUNS_ALARM ? shadowRuns : 0 });
   return {
     memory: next,
     verdict,
@@ -614,6 +640,7 @@ function cmdRemember(env) {
     now,
     mode,
     run: runUrl(env),
+    claimAnswered: read("ASTRA_CLAIM_ANSWERED"),
   });
   const lines = [`BOT-87 (${mode}): ${r.verdict.status}${r.verdict.codes ? ` — ${r.verdict.codes.join(", ")}` : ""}`];
   for (const a of r.wouldAlarm) lines.push(`would alarm ${BOT_87_CODES.unregistered}: ${a.repo}@${a.tag} (${a.id}, ${a.sha})`);
@@ -622,6 +649,7 @@ function cmdRemember(env) {
   for (const f of r.failed) lines.push(`sweep failed: ${f.id} (${f.repo}): ${f.error}`);
   for (const n of r.notes ?? []) lines.push(`note ${n}`);
   if (discarded) lines.push(`the cached memory was discarded: ${discarded}`);
+  if (r.memory.shadow) lines.push(`the service answered claim in shadow ${r.memory.shadow.runs} run(s) in a row, since ${r.memory.shadow.since}; the owner is paged at ${SHADOW_RUNS_ALARM}`);
   for (const l of lines) console.log(l);
   summary(["### remember", "", ...lines.map((l) => `- ${l}`)], env);
   // Against what the cache held, not against the seeded copy: a seed that

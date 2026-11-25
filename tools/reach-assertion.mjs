@@ -59,13 +59,13 @@ import { VERDICT_SCHEMA, runUrl } from "../bot/lib/alert-verdict.mjs";
 export const CHECK = "reach-assertion";
 
 // Floors, written before the loops they guard: every loop below over an empty
-// table is green about nothing. Fourteen ping URLs are what `alerts` holds on
-// 2026-09-25 (thirteen registry checks, `alarm-ack` twice); four service check
-// names are what contract 2.12.0 records. Thirteen since `release-canary` is
-// `created: false` (its dead-man is not on the receiver while its cron is
-// commented); it goes back to fourteen with the cron. Floors, not equalities:
-// a check added is not a broken walk.
-export const CREDENTIAL_FLOOR = 13;
+// table is green about nothing. Fourteen ping URLs are what the table names
+// since registry fix No. 2: thirteen registry checks created on the receiver
+// (`release-canary` is `created: false` while its cron is commented, and goes
+// back with it), `run-watchdog` among them, `alarm-ack` twice. Four service
+// check names are what contract 2.12.0 records. Floors, not equalities: a
+// check added is not a broken walk.
+export const CREDENTIAL_FLOOR = 14;
 export const SERVICE_NAME_FLOOR = 4;
 
 export const CREDENTIAL_SHAPE =
@@ -93,7 +93,12 @@ export function fingerprint(uuid) {
 export function credentials(checks = CHECKS) {
   return checks
     .filter((c) => c.party === "registry" && typeof c.name === "string" && isCreated(c))
-    .flatMap((c) => c.signals.map((signal) => ({ check: c.name, signal, secret: secretName(c.name, signal) })));
+    .flatMap((c) => c.signals.map((signal) => ({
+      check: c.name, signal, secret: secretName(c.name, signal),
+      // The owner's act that creates the check, while it is still to do
+      // (`receiver_pending` in bot/lib/alert-checks.mjs).
+      ...(c.receiver_pending ? { pending: c.receiver_pending } : {}),
+    })));
 }
 
 /** Every service check name recorded, which is what each credential is POSTed at. */
@@ -132,6 +137,13 @@ export async function reach({ env = process.env, fetchImpl = fetch, checks = CHE
     // fetch strips surrounding white space from a URL, and so does this.
     const value = typeof raw === "string" ? raw.trim() : "";
     const m = CREDENTIAL_SHAPE.exec(value);
+    if (!value && c.pending) {
+      // A check the owner has not created: nothing can resolve it, so its
+      // absence refuses nothing and holds back no POST of the others. Said,
+      // not counted, exactly as the alert job's heartbeat says it.
+      lines.push(`warn  ${c.secret} (${label(c)}) is not set: the check waits on the owner (${c.pending}); not posted`);
+      continue;
+    }
     if (!value) {
       red("REACH_CREDENTIAL_NOT_ONE_CHECK", `${c.secret} (${label(c)}) is not set in this job; not posted`);
       continue;
