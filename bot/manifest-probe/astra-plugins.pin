@@ -292,6 +292,22 @@ env:
 #
 # `23134b8` is AstraPlugins master's tip (origin/master, 2026-11-13). R3 still has
 # not exited, so no operator acknowledgement applies.
+#
+# Bumped to `bf8856c` (AstraPlugins #220's merge) so the probe stops restating
+# `[tools.danger]`. `declared_low_tools` in main.rs was a second copy of Astra's
+# rule, written from raw TOML because the crate had no reader; the crate has one
+# now (`PluginManifest::tool_danger`, Astra #377 via AstraPlugins #219), and the
+# probe calls it. Like `wakeword`, this bump IS meant to change how a manifest is
+# judged, by what the crate gained since `23134b8` and nothing else:
+#   * `[plugin] target` (79d9fd4a): at most 16 entries, no duplicate, each a Steam
+#     appid without a leading zero, `epic-<name>` or `gog-<id>`; a hand-added
+#     `local-<hex>` key is refused by name. Refusals surface as E_MANIFEST_INVALID
+#     with the crate's sentence; the probe adds no field for the value.
+#   * the game-key grammar (bd7bb72c, src/game_key.rs) is what `target` is checked with.
+#   * `[tools]` is read (kept as a raw value) and never refused: a malformed
+#     `[tools]` or a level other than "low" is ignored, as before.
+# `Cargo.lock` moves with it (the crate is 0.1.3).
+#
 
-ASTRA_PLUGINS_REF=23134b8beeab67d7f33283b37b5415a2e8441e79
+ASTRA_PLUGINS_REF=bf8856c524cd5fd7531172f2e921808b217d68f4
 ASTRA_PLUGINS_URL=https://github.com/mihailinl/AstraPlugins.git

@@ -337,7 +337,7 @@ fn probe(request: &Request) -> Response {
             .map(|u| u.contributions.iter().map(|c| c.id.clone()).collect())
             .unwrap_or_default(),
         has_config_schema: manifest.config.is_some(),
-        low_tools: declared_low_tools(&request.plugin_toml),
+        low_tools: manifest.tool_danger().low.into_iter().collect(),
     };
 
     Response {
@@ -393,39 +393,6 @@ fn reserved_item_keys(plugin_toml: &str) -> Option<Finding> {
         );
     }
     None
-}
-
-/// The tools `[tools.danger]` declares Low, sorted and unique.
-///
-/// **The same rule as Astra's `ToolDangerDeclarations::read`** in
-/// `astra-rs/astra-plugin-manifest/src/manifest.rs` (Astra #377): `tools` must
-/// be a table, `tools.danger` must be a table, and an entry is declared Low only
-/// when its value is exactly the string `"low"` and its name is not empty after
-/// trimming. Anything else declares nothing: a non-table `tools` or
-/// `tools.danger`, another value, an empty name.
-///
-/// The vendored crate at the pin does not read `[tools]` at all —
-/// `PluginManifest` ignores unknown top-level keys — so the rule is restated
-/// here, from the raw text. Once the vendored `astra-plugin-manifest` exposes
-/// `PluginManifest::tool_danger` (after AstraPlugins re-vendors Astra #377),
-/// this must switch to it: two copies of one rule drift, and the copy that
-/// drifts is the one a reviewer is shown.
-fn declared_low_tools(plugin_toml: &str) -> Vec<String> {
-    let Ok(top) = plugin_toml.parse::<toml::Table>() else {
-        return Vec::new();
-    };
-    let Some(toml::Value::Table(tools)) = top.get("tools") else {
-        return Vec::new();
-    };
-    let Some(toml::Value::Table(danger)) = tools.get("danger") else {
-        return Vec::new();
-    };
-    let low: std::collections::BTreeSet<String> = danger
-        .iter()
-        .filter(|(name, value)| !name.trim().is_empty() && value.as_str() == Some("low"))
-        .map(|(name, _)| name.clone())
-        .collect();
-    low.into_iter().collect()
 }
 
 /// The crate's prose, mapped onto a code the docs describe and a stranger can
@@ -2073,9 +2040,27 @@ id = "sink-panel"
         assert!(v["known_capabilities"].as_array().unwrap().contains(&"dom_access".into()));
     }
 
-    /// `[tools.danger]` read by Astra #377's rule. A reviewer approves a version
-    /// whose Low tools Astra will then run without asking, so the list the bot
-    /// records must be exactly the list Astra reads — no more, no fewer.
+    /// `[plugin] target` came in with the pin bump to AstraPlugins bf8856c5. The
+    /// probe has no rule of its own for it: the crate refuses a hand-added game
+    /// or a malformed key, and the refusal reaches the author as the crate's
+    /// sentence under the generic code. Held here so a pin move that silently
+    /// stopped refusing (or started refusing a valid key) is red.
+    #[test]
+    fn a_plugin_target_is_judged_by_the_crate() {
+        let with = |target: &str| probe(&req(&GOOD.replacen("[plugin]", &format!("[plugin]\ntarget = {target}"), 1)));
+        assert!(with(r#"["3527290", "epic-fortnite", "gog-1207658930"]"#).ok);
+        for bad in [r#"["local-0123456789abcdef"]"#, r#"["0620"]"#, r#"["620", "620"]"#] {
+            let r = with(bad);
+            assert!(!r.ok, "{bad}");
+            assert!(r.findings.iter().any(|f| f.message.contains("plugin.target")), "{bad}: {:?}", r.findings);
+        }
+    }
+
+    /// `[tools.danger]` as the crate reads it (`PluginManifest::tool_danger`,
+    /// Astra #377). A reviewer approves a version whose Low tools Astra will
+    /// then run without asking, so the list the bot records must be exactly the
+    /// list Astra reads. The probe holds no copy of the rule: this test pins the
+    /// wire (sorted, unique, only `"low"`) and the crate's own tests pin the rule.
     #[test]
     fn low_tools_are_read_by_astras_rule() {
         let low = |extra: &str| -> Vec<String> {
@@ -2095,6 +2080,8 @@ id = "sink-panel"
         assert!(low("[tools.danger]\nroll = \"Low\"\nflip = true\nwipe = [\"low\"]\n").is_empty());
         // an empty name, and one that is empty after trimming
         assert_eq!(low("[tools.danger]\n\"\" = \"low\"\n\"  \" = \"low\"\nroll = \"low\"\n"), vec!["roll"]);
+        // a padded name is kept as written (the crate trims only to test emptiness)
+        assert_eq!(low("[tools.danger]\n\" roll \" = \"low\"\n"), vec![" roll "]);
         // `tools` not a table, `tools.danger` not a table
         assert!(low("tools = \"low\"\n").is_empty());
         assert!(low("[tools]\ndanger = \"low\"\n").is_empty());
