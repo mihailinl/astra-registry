@@ -48,7 +48,7 @@ runs:
     - name: Restore the newest state for this alert job
       if: inputs.mode == 'restore'
       continue-on-error: true
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: .astra-alert-state
         key: astra-alert-state-${{ inputs.key }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -73,7 +73,7 @@ runs:
 
     - name: Save it under a new key
       if: inputs.mode == 'save' && steps.write.outputs.saved == 'true'
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: .astra-alert-state
         key: astra-alert-state-${{ inputs.key }}-${{ github.run_id }}-${{ github.run_attempt }}

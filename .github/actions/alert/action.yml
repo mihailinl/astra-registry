@@ -68,10 +68,10 @@
 # **The calling job, in full.** Two things about it are not optional and both
 # are checked by `bot/tests/workflows.test.mjs`: the environment, and the
 # `env:` block, because an environment secret is not ambient — a job sees one
-# only where it says so. The block lists the three channel secrets — the
-# optional copy chat among them, so that a copy chat the owner sets later
-# reaches every job and not only some — and the whole ping URL of each check
-# THIS job posts to, and nothing else.
+# only where it says so. The block lists the four channel secrets — the
+# optional copy chat and owner chat among them, so that a chat the owner sets
+# later reaches every job and not only some — and the whole ping URL of each
+# check THIS job posts to, and nothing else.
 #
 # **Both of those used to be caught twice, and since 2026-09-19 are caught
 # once.** A job with no environment, or with no `env:` block, sees none of the
@@ -92,9 +92,10 @@
 #         ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
 #         ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
 #         ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+#         ASTRA_ALERT_OWNER_CHAT_ID: ${{ secrets.ASTRA_ALERT_OWNER_CHAT_ID }}
 #         ASTRA_DEADMAN_URL_SERVED_SET: ${{ secrets.ASTRA_DEADMAN_URL_SERVED_SET }}
 #       steps:
-#         - uses: actions/checkout@v4
+#         - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 #           with:
 #             ref: ${{ github.sha }}
 #             sparse-checkout: |
@@ -236,7 +237,7 @@ runs:
       run: |
         set -euo pipefail
         present=0
-        for name in ASTRA_ALERT_TELEGRAM_TOKEN ASTRA_ALERT_CHAT_ID ASTRA_ALERT_COPY_CHAT_ID; do
+        for name in ASTRA_ALERT_TELEGRAM_TOKEN ASTRA_ALERT_CHAT_ID ASTRA_ALERT_COPY_CHAT_ID ASTRA_ALERT_OWNER_CHAT_ID; do
           value="${!name:-}"
           if [ -n "${value//[[:space:]]/}" ]; then
             present=$((present + 1))
@@ -245,7 +246,7 @@ runs:
 
         if [ "$present" -eq 0 ]; then
           echo "configured=false" >> "$GITHUB_OUTPUT"
-          line="THE ALARM CHANNEL DOES NOT EXIST YET. None of ASTRA_ALERT_TELEGRAM_TOKEN, ASTRA_ALERT_CHAT_ID and ASTRA_ALERT_COPY_CHAT_ID is present in this job, so this repository cannot reach a person at all: nothing was sent, no BOT-85 heartbeat was posted, and this job is green because a repository whose channel has never been created is not a repository with a defect. The act that creates it is registry plan RC-R1-0's owner approval, the R1 row of the plan's 2.12 — environment alerts in astra-registry, admitting only main, holding the registry's own Telegram bot token, the id of the one alarm group the owner and KNICE share, and one ASTRA_DEADMAN_URL_<CHECK> per receiver check (a separate copy chat, ASTRA_ALERT_COPY_CHAT_ID, is optional), with the receiver account created beside it. Until that act, the workflow that says so is .github/workflows/alarm-drill.yml, which is red once a week for exactly this reason and is the one workflow whose whole subject is this question."
+          line="THE ALARM CHANNEL DOES NOT EXIST YET. None of ASTRA_ALERT_TELEGRAM_TOKEN, ASTRA_ALERT_CHAT_ID, ASTRA_ALERT_COPY_CHAT_ID and ASTRA_ALERT_OWNER_CHAT_ID is present in this job, so this repository cannot reach a person at all: nothing was sent, no BOT-85 heartbeat was posted, and this job is green because a repository whose channel has never been created is not a repository with a defect. The act that creates it is registry plan RC-R1-0's owner approval, the R1 row of the plan's 2.12 — environment alerts in astra-registry, admitting only main, holding the registry's own Telegram bot token, the id of the one alarm group the owner and KNICE share, and one ASTRA_DEADMAN_URL_<CHECK> per receiver check (a separate copy chat, ASTRA_ALERT_COPY_CHAT_ID, and the owner's quiet chat, ASTRA_ALERT_OWNER_CHAT_ID, are optional), with the receiver account created beside it. Until that act, the workflow that says so is .github/workflows/alarm-drill.yml, which is red once a week for exactly this reason and is the one workflow whose whole subject is this question."
           # One line, once: the annotation form is also what the raw log shows,
           # so a second bare echo of it would be the same sentence twice in the
           # place a reader is skimming.

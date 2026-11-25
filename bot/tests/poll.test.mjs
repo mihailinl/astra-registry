@@ -116,6 +116,7 @@ const POLL_SURFACE = [
   "RECHECK_BUDGET",
   "REGISTRY_WAIT_SPARED_HOURS",
   "SEAL_SCHEMA",
+  "SHADOW_RUNS_CODE",
   "STATE_ENVIRONMENT",
   "STATE_KEY_ENV",
   "STATE_KEY_MIN_BYTES",
@@ -1152,6 +1153,39 @@ test("the waiting set holds DEFER_KEEP tags a repository, the oldest; a full mem
   const kept = Object.values(bounded.repos[KEY].deferred).map((w) => w.since).sort();
   assert.equal(kept.length, poll.DEFER_KEEP);
   assert.equal(kept[0], "2026-09-10T00:00:00Z", "the oldest are kept: they are the nearest to being told");
+});
+
+test("registry fix No. 2: three claim answers in shadow in a row page the owner; a live one ends the streak; no answer counts nothing", () => {
+  const listings = quietListings();
+  let memory = poll.newMemory("2026-11-10T00:00:00Z");
+  const remember = (claimAnswered, min) => {
+    const r = run.composeRemember({ memory, discarded: null, listings, polled: null, registered: [], swept: null,
+      sweepDue: false, sweepFailed: false, now: new Date(Date.parse("2026-11-10T00:00:00Z") + min * 60_000), mode: "live", claimAnswered });
+    memory = r.memory;
+    assert.equal(poll.memoryProblem(r.memory), null, "the memory with a streak is not one load accepts");
+    return r;
+  };
+  const codes = (r) => r.verdict.codes ?? [];
+  assert.ok(!codes(remember("shadow", 0)).includes(poll.SHADOW_RUNS_CODE));
+  assert.ok(!codes(remember("none", 10)).includes(poll.SHADOW_RUNS_CODE), "a run with no answer counted, or paged");
+  const second = remember("shadow", 20);
+  assert.equal(second.memory.shadow.runs, 2);
+  assert.ok(!codes(second).includes(poll.SHADOW_RUNS_CODE), "two shadow runs paged; the ordinary gap before an acknowledgement is not an alarm");
+  const third = remember("shadow", 30);
+  assert.equal(run.SHADOW_RUNS_ALARM, 3);
+  assert.deepEqual(codes(third), [poll.SHADOW_RUNS_CODE], "the third shadow run in a row did not page");
+  assert.equal(third.verdict.status, "red");
+  assert.equal(third.memory.shadow.since, "2026-11-10T00:00:00Z", "the streak forgot when it began");
+  assert.ok(third.changed, "the streak moved and the memory would not be saved");
+  const live = remember("live", 40);
+  assert.equal(live.memory.shadow, undefined, "a live answer did not end the streak");
+  assert.equal(live.verdict.status, "green");
+  assert.equal(poll.memoryProblem({ ...poll.newMemory("2026-11-10T00:00:00Z"), shadow: { runs: 0, since: "x" } }), "shadow is not {runs, since}");
+  // The wiring the count rides on: claim's output, into remember's env, and JOB_IO lists it.
+  const wf = fs.readFileSync(path.join(REPO_ROOT, ".github", "workflows", "plugins-ingest.yml"), "utf8");
+  assert.match(wf, /\n {6}answered: \$\{\{ steps\.claim\.outputs\.answered \}\}\n/);
+  assert.match(wf, /\n {10}ASTRA_CLAIM_ANSWERED: \$\{\{ needs\.claim\.outputs\.answered \}\}\n/);
+  assert.ok(run.JOB_IO.remember.reads.includes("ASTRA_CLAIM_ANSWERED"));
 });
 
 test("a tag named after an Object.prototype member waits and is remembered like any other", async () => {
