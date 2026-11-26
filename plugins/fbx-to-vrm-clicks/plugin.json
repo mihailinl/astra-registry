@@ -1,0 +1,25 @@
+{
+  "$comment": "Derived from VolodymyrXK/fbx-to-vrm-clicks@v1.3.2 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "schema": "astra.registry.plugin/1",
+  "id": "fbx-to-vrm-clicks",
+  "name": "FBX to VRM in a couple of clicks",
+  "summary": "Turns MMD (.pmx/.pmd) and FBX character models into VRM avatars, saved next to the original. For more precise tuning, use the built-in editor.",
+  "license": "GPL-3.0-only",
+  "source": {
+    "kind": "github",
+    "repo": "VolodymyrXK/fbx-to-vrm-clicks"
+  },
+  "added_at": "2026-11-26",
+  "description": "Turns MMD (.pmx/.pmd) and FBX character models into VRM avatars, saved next to the original. For more precise tuning, use the built-in editor.",
+  "author": {
+    "name": "VovaBOOMs"
+  },
+  "icon": "icon.png",
+  "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "Из FBX в VRM за пару кликов",
+      "summary": "Превращает модели MMD (.pmx/.pmd) и FBX в аватары VRM и сохраняет рядом с исходником. Для более точной настройки используйте встроенный редактор."
+    }
+  }
+}

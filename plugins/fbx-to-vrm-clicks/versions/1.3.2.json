@@ -1,0 +1,28 @@
+{
+  "$comment": "Derived from VolodymyrXK/fbx-to-vrm-clicks@v1.3.2. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "fbx-to-vrm-clicks",
+  "version": "1.3.2",
+  "published_at": "2026-11-26T21:22:50Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "VolodymyrXK/fbx-to-vrm-clicks",
+    "tag": "v1.3.2",
+    "commit": "7a06b21a719ed8ef689d98cd948ab551d6d7c3b9"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/VolodymyrXK/fbx-to-vrm-clicks/releases/download/v1.3.2/fbx-to-vrm-clicks-1.3.2-noarch.astraplugin",
+      "filename": "fbx-to-vrm-clicks-1.3.2-noarch.astraplugin",
+      "sha256": "199f01f5aa3ab590b84fd6a1758c658f6c554863ebebd09f3d79e338b398a1d7",
+      "size": 507326
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "tools"
+  ],
+  "low_tools": [],
+  "permissions": {}
+}
