@@ -1,0 +1,24 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:3cf336cba9326f623c1bf6b00fe00c057c84b32b06fb0500d9832e90bd7ef832"
+  ],
+  "commit": "371043b7852925e6a487cd4b48dd0d200aead4e0",
+  "decided_at": "2026-11-26T21:18:32Z",
+  "decision_id": "23a2e51a308a3df8393a05bc8a7ae3e3",
+  "fingerprint": "512a6ed55415e522",
+  "plugin_id": "fbx-to-vrm-clicks",
+  "reasons": [
+    "E_HOST_RPC_UNDECLARED"
+  ],
+  "repo": "VolodymyrXK/fbx-to-vrm-clicks",
+  "repository_id": "1473626870",
+  "repository_owner_id": "230037260",
+  "run": "45897034476/1",
+  "schema": "astra.registry.decision/1",
+  "state": "refused",
+  "submission_id": "58bfe778-c396-4da4-95aa-b315814775df",
+  "tag": "v1.3.1",
+  "trigger": "ci",
+  "version": "1.3.1"
+}
