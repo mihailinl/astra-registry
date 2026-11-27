@@ -1,7 +1,38 @@
 {
   "schema": "astra.registry.operator-passkeys/1",
   "aud": "astra-registry:1331176498",
-  "rp_id": "",
-  "origins": [],
-  "keys": []
+  "rp_id": "astra-registry-acts.github.io",
+  "origins": [
+    "https://astra-registry-acts.github.io"
+  ],
+  "keys": [
+    {
+      "acts": [
+        "approve",
+        "deny",
+        "confirm",
+        "cancel",
+        "revert",
+        "revoke_key"
+      ],
+      "added": "2026-11-27",
+      "alg": "ES256",
+      "credential_id": "LPULuO8FngnP7vVTpWL-99B4iptkJ7_XiZhIuY5s5O4",
+      "device_bound": "no",
+      "endorsed_by": "",
+      "endorsement": null,
+      "enrolment": {
+        "body": "{\"acts\":[\"approve\",\"deny\",\"confirm\",\"cancel\",\"revert\",\"revoke_key\"],\"alg\":\"ES256\",\"aud\":\"astra-registry:1331176498\",\"credential_id\":\"LPULuO8FngnP7vVTpWL-99B4iptkJ7_XiZhIuY5s5O4\",\"iat\":\"2026-11-27T17:49:33Z\",\"kid\":\"s24ultra\",\"public_key\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYeyi5REK0QEtPGcIw5AH3CwmHjM2dngh8dTXUYRhH9iY57zknQVoOboHUEH4_ZuE6s7C_D0vJ60RcEYLkuRqOQ\",\"schema\":\"astra.registry.passkey-enrol/1\"}",
+        "assertion": {
+          "authenticator_data": "CkDflJazbaWyAtNGiiiFuKCkUGjzFurxfRe_VOYmWp0dAAAAAA",
+          "client_data_json": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoicGt1a1JKT3VKX0tIYXFvZkV3TFNzWUx2WTFrWmh0UWJvbUV6QWk1S0JYayIsIm9yaWdpbiI6Imh0dHBzOi8vYXN0cmEtcmVnaXN0cnktYWN0cy5naXRodWIuaW8iLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+          "credential_id": "LPULuO8FngnP7vVTpWL-99B4iptkJ7_XiZhIuY5s5O4",
+          "signature": "MEYCIQClFy8GvVvC0PdloMW2xCjNDlCKSwHH7MH5FO6cX8YChgIhAKt27_CNytpDBxU18Etc_Qvhp8bp4trdBcp_gjsKSHQt"
+        }
+      },
+      "kid": "s24ultra",
+      "public_key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYeyi5REK0QEtPGcIw5AH3CwmHjM2dngh8dTXUYRhH9iY57zknQVoOboHUEH4_ZuE6s7C_D0vJ60RcEYLkuRqOQ",
+      "status": "pending"
+    }
+  ]
 }
