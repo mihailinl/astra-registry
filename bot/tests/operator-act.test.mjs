@@ -557,7 +557,7 @@ test("a key's fingerprint is four groups of the first 16 hex of SHA-256(SPKI)", 
 
 // ── the pin (design §2.2–§2.3, §4.6; review findings 4, 5 and 10) ───────────
 
-import { loadPin, pinProblems, revokedRecordProblems } from "../lib/operator-act.mjs";
+import { loadPin, pinProblems, revokedRecordProblems, verifyAssertion } from "../lib/operator-act.mjs";
 import { checkOperatorPasskeys } from "../../tools/validate.mjs";
 
 /** A key enrolled as the act page enrols one: self-signed, and endorsed when `by` is given. */
@@ -573,11 +573,17 @@ function enrolled(alg, opts = {}, by = null) {
 const pinWith = (...keys) => A.pinOf(keys.map((k) => ({ ...(k.pinKey ?? k) })));
 const withStatus = (k, status) => ({ ...k.pinKey, status });
 
-test("the committed pin is the empty one, and it passes alone", () => {
+test("the committed pin is the owner's genesis key, and it passes alone", () => {
+  // The owner enrolled s24ultra on 2026-11-27 (owner-run-2026-11-15-registry-passkey-genesis.md). It is pinned
+  // `pending`; a second change makes it `active` after he compared its fingerprint with the act page's.
   const pin = loadPin();
-  assert.deepEqual(pin.keys, []);
   assert.equal(pin.aud, "astra-registry:1331176498");
+  assert.equal(pin.rp_id, "astra-registry-acts.github.io");
+  assert.deepEqual(pin.origins, ["https://astra-registry-acts.github.io"]);
+  assert.deepEqual(pin.keys.map((k) => [k.kid, k.status, k.endorsed_by]), [["s24ultra", "pending", ""]]);
   assert.deepEqual(pinProblems(pin, { base: undefined }), []);
+  const [key] = pin.keys;
+  assert.equal(verifyAssertion({ key, bodyText: key.enrolment.body, assertion: key.enrolment.assertion, pin }).ok, true);
 });
 
 test("a genesis key alone passes; a second genesis passes only when every key before it is revoked", () => {
